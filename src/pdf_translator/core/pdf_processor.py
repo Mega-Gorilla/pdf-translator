@@ -66,8 +66,44 @@ CONTROL_CHAR_MAP: dict[int, str] = {
     0xFF: "",  # ÿ (often encoding error) -> remove
 }
 
+# Unicode characters not supported by standard PDF fonts (WinAnsiEncoding)
+# Map to ASCII equivalents for compatibility
+UNICODE_TO_ASCII_MAP: dict[int, str] = {
+    # Math operators
+    0x2217: "*",  # ∗ ASTERISK OPERATOR -> *
+    0x00D7: "x",  # × MULTIPLICATION SIGN -> x
+    0x00F7: "/",  # ÷ DIVISION SIGN -> /
+    0x2212: "-",  # − MINUS SIGN -> -
+    0x2013: "-",  # – EN DASH -> -
+    0x2014: "--",  # — EM DASH -> --
+    0x2018: "'",  # ' LEFT SINGLE QUOTATION -> '
+    0x2019: "'",  # ' RIGHT SINGLE QUOTATION -> '
+    0x201C: '"',  # " LEFT DOUBLE QUOTATION -> "
+    0x201D: '"',  # " RIGHT DOUBLE QUOTATION -> "
+    0x2026: "...",  # … HORIZONTAL ELLIPSIS -> ...
+    0x2022: "*",  # • BULLET -> *
+    0x2032: "'",  # ′ PRIME -> '
+    0x2033: '"',  # ″ DOUBLE PRIME -> "
+    0x00B0: "o",  # ° DEGREE SIGN -> o
+    0x00B7: ".",  # · MIDDLE DOT -> .
+    0x2264: "<=",  # ≤ LESS-THAN OR EQUAL TO -> <=
+    0x2265: ">=",  # ≥ GREATER-THAN OR EQUAL TO -> >=
+    0x2260: "!=",  # ≠ NOT EQUAL TO -> !=
+    0x00B1: "+/-",  # ± PLUS-MINUS SIGN -> +/-
+    0x221E: "inf",  # ∞ INFINITY -> inf
+    0x2248: "~=",  # ≈ ALMOST EQUAL TO -> ~=
+    0x221A: "sqrt",  # √ SQUARE ROOT -> sqrt
+    0x03B1: "alpha",  # α GREEK SMALL LETTER ALPHA
+    0x03B2: "beta",  # β GREEK SMALL LETTER BETA
+    0x03B3: "gamma",  # γ GREEK SMALL LETTER GAMMA
+    0x03B4: "delta",  # δ GREEK SMALL LETTER DELTA
+    0x03C0: "pi",  # π GREEK SMALL LETTER PI
+    0x03C3: "sigma",  # σ GREEK SMALL LETTER SIGMA
+    0x03BC: "mu",  # μ GREEK SMALL LETTER MU
+}
 
-def normalize_text(text: str) -> str:
+
+def normalize_text(text: str, ascii_fallback: bool = False) -> str:
     """Normalize text by replacing control characters.
 
     This handles PDF-specific issues like soft hyphens represented
@@ -75,6 +111,8 @@ def normalize_text(text: str) -> str:
 
     Args:
         text: Raw text from PDF extraction
+        ascii_fallback: If True, also convert unsupported Unicode characters
+                       to ASCII equivalents for standard PDF font compatibility
 
     Returns:
         Normalized text with control characters replaced
@@ -84,6 +122,8 @@ def normalize_text(text: str) -> str:
         code = ord(char)
         if code in CONTROL_CHAR_MAP:
             result.append(CONTROL_CHAR_MAP[code])
+        elif ascii_fallback and code in UNICODE_TO_ASCII_MAP:
+            result.append(UNICODE_TO_ASCII_MAP[code])
         else:
             result.append(char)
     return "".join(result)
@@ -293,36 +333,22 @@ class PDFProcessor:
             Transform object or None
         """
         try:
-            # Create ctypes variables for the matrix components
-            a = ctypes.c_double()
-            b = ctypes.c_double()
-            c = ctypes.c_double()
-            d = ctypes.c_double()
-            e = ctypes.c_double()
-            f = ctypes.c_double()
+            # Use pypdfium2's high-level API to get the matrix
+            matrix = obj.get_matrix()
+            if matrix is None:
+                return None
 
-            success = pdfium.raw.FPDFPageObj_GetMatrix(
-                obj.raw,
-                ctypes.byref(a),
-                ctypes.byref(b),
-                ctypes.byref(c),
-                ctypes.byref(d),
-                ctypes.byref(e),
-                ctypes.byref(f),
+            transform = Transform(
+                a=matrix.a,
+                b=matrix.b,
+                c=matrix.c,
+                d=matrix.d,
+                e=matrix.e,
+                f=matrix.f,
             )
-
-            if success:
-                transform = Transform(
-                    a=a.value,
-                    b=b.value,
-                    c=c.value,
-                    d=d.value,
-                    e=e.value,
-                    f=f.value,
-                )
-                # Only return if not identity transform
-                if not transform.is_identity():
-                    return transform
+            # Only return if not identity transform
+            if not transform.is_identity():
+                return transform
             return None
         except Exception:
             return None
@@ -843,9 +869,13 @@ class PDFProcessor:
                     # Use intelligent fallback based on font family
                     font = self._get_fallback_font(original_font)
 
+                # Normalize text for standard font compatibility
+                # (convert unsupported Unicode to ASCII equivalents)
+                text_to_insert = normalize_text(text_obj.text, ascii_fallback=True)
+
                 self.insert_text_object(
                     page_num=page_num,
-                    text=text_obj.text,
+                    text=text_to_insert,
                     bbox=text_obj.bbox,
                     font=font,
                     color=text_obj.color,
