@@ -123,7 +123,7 @@
     },
     "Transform": {
       "type": "object",
-      "description": "アフィン変換行列 [a, b, c, d, e, f] - 回転・スケール・傾斜を表現",
+      "description": "アフィン変換行列 [a, b, c, d, e, f] - 回転・スケール・傾斜を表現。テキスト挿入時に適用される変換を保持。bboxは変換適用後の座標であり、transformは挿入時に同じ変換を再現するために使用する。",
       "properties": {
         "a": { "type": "number", "default": 1.0, "description": "水平スケール" },
         "b": { "type": "number", "default": 0.0, "description": "垂直傾斜" },
@@ -142,7 +142,7 @@
         "x1": { "type": "number", "description": "右上X座標" },
         "y1": { "type": "number", "description": "右上Y座標" }
       },
-      "description": "PDF座標系（原点は左下）"
+      "description": "PDF座標系（原点は左下）。変換適用後の最終座標を格納する。"
     },
     "Font": {
       "type": "object",
@@ -355,6 +355,15 @@ class Page:
 class PDFDocument:
     pages: list[Page]
     metadata: dict
+
+    def to_json(self) -> str:
+        """中間データをJSON文字列として出力"""
+        ...
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "PDFDocument":
+        """JSON文字列から中間データを読み込み"""
+        ...
 ```
 
 ### 4.2 主要関数
@@ -472,7 +481,7 @@ processor.save("edited.pdf")
 | 3 | テキスト削除 | `remove_text_objects()` |
 | 4 | テキスト挿入 | `insert_text_object()` |
 | 5 | JSON入出力・適用 | `to_json()`, `apply()` |
-| 6 | ラウンドトリップテスト | `tests/test_pdf_processor.py` |
+| 6 | テキスト層編集テスト | `tests/test_pdf_processor.py` |
 
 ### 6.2 ファイル構成
 
@@ -501,17 +510,19 @@ src/pdf_translator/core/
 
 `_archive/Index_PDF_Translation/` に格納されているコードは **AGPL-3.0-only** でライセンスされています。
 
-**実装時の注意**:
-- アーカイブコードを**そのままコピーしない**こと
-- API呼び出しの「挙動確認」として参照することは許容される
-- 新規実装は Apache-2.0 ライセンスで作成すること
+**本プロジェクトの方針**:
+- アーカイブコードを**そのままコピーしない**
+- 新規実装は Apache-2.0 ライセンスで作成する
+- アーカイブは「挙動確認」や「設計の参考」として参照するに留める
 
-**許容される参照方法**:
-- pypdfium2のAPI呼び出し方法の確認
-- データ構造の設計参考（ただし独自に再設計）
-- テストケースの参考
+**参照時の指針**:
+- pypdfium2のAPI呼び出し方法の確認 → OK
+- データ構造の設計参考（ただし独自に再設計すること） → OK
+- テストケースの参考 → OK
 
-**禁止される行為**:
+**避けるべき行為**:
 - 関数・クラスのコピー＆ペースト
 - ロジックの直接移植
 - コメントを含むコードのコピー
+
+> **注**: これは法的助言ではなく、本プロジェクトにおけるライセンスリスク軽減のための運用方針です。
