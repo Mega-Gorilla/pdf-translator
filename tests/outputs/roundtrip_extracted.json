@@ -1,0 +1,3294 @@
+{
+  "version": "1.0.0",
+  "metadata": {
+    "source_file": "roundtrip.pdf",
+    "created_at": "2025-12-16T19:42:32.173259",
+    "page_count": 1
+  },
+  "pages": [
+    {
+      "page_number": 0,
+      "width": 595.2760009765625,
+      "height": 841.8900146484375,
+      "rotation": 0,
+      "text_objects": [
+        {
+          "id": "text_p0_i0",
+          "bbox": {
+            "x0": 117.81715393066406,
+            "y0": 750.4120483398438,
+            "x1": 479.0258483886719,
+            "y1": 763.2662353515625
+          },
+          "text": "LLaMA: Open and Efficient Foundation Language Models",
+          "font": {
+            "name": "Times-Bold",
+            "size": 14.346199989318848,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i1",
+          "bbox": {
+            "x0": 130.23110961914062,
+            "y0": 712.37841796875,
+            "x1": 205.1782684326172,
+            "y1": 722.9109497070312
+          },
+          "text": "Hugo Touvron\r\n",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i2",
+          "bbox": {
+            "x0": 204.46058654785156,
+            "y0": 720.19140625,
+            "x1": 208.27029418945312,
+            "y1": 727.5159301757812
+          },
+          "text": "n\r\n",
+          "font": {
+            "name": "Helvetica",
+            "size": 7.970099925994873,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i3",
+          "bbox": {
+            "x0": 204.4725341796875,
+            "y0": 712.7012329101562,
+            "x1": 303.98760986328125,
+            "y1": 723.401123046875
+          },
+          "text": "n\r\n, Thibaut Lavril ",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i4",
+          "bbox": {
+            "x0": 286.20855712890625,
+            "y0": 720.19140625,
+            "x1": 290.01824951171875,
+            "y1": 727.5159301757812
+          },
+          "text": "v\r\n\r\n",
+          "font": {
+            "name": "Helvetica",
+            "size": 7.970099925994873,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i5",
+          "bbox": {
+            "x0": 286.22052001953125,
+            "y0": 712.7012329101562,
+            "x1": 391.6893005371094,
+            "y1": 723.401123046875
+          },
+          "text": "vril , Gautier Izacard",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i6",
+          "bbox": {
+            "x0": 377.1865539550781,
+            "y0": 720.19140625,
+            "x1": 380.9962463378906,
+            "y1": 727.5159301757812
+          },
+          "text": "ar\r\n\r\n",
+          "font": {
+            "name": "Helvetica",
+            "size": 7.970099925994873,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i7",
+          "bbox": {
+            "x0": 377.1985168457031,
+            "y0": 712.7012329101562,
+            "x1": 484.2334289550781,
+            "y1": 723.401123046875
+          },
+          "text": "ard, Xavier Martinet",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i8",
+          "bbox": {
+            "x0": 111.34771728515625,
+            "y0": 698.0123291015625,
+            "x1": 484.80426025390625,
+            "y1": 708.9752197265625
+          },
+          "text": "Marie-Anne Lachaux, Timothee Lacroix, Baptiste Rozière, Naman Goyal",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i9",
+          "bbox": {
+            "x0": 134.2775421142578,
+            "y0": 683.5994262695312,
+            "x1": 463.97802734375,
+            "y1": 694.311279296875
+          },
+          "text": "Eric Hambro, Faisal Azhar, Aurelien Rodriguez, Armand Joulin\r\n",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i10",
+          "bbox": {
+            "x0": 207.2275390625,
+            "y0": 673.6806030273438,
+            "x1": 286.86114501953125,
+            "y1": 682.1568603515625
+          },
+          "text": "Edouard Grave",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i11",
+          "bbox": {
+            "x0": 287.1115417480469,
+            "y0": 677.0233764648438,
+            "x1": 290.9212341308594,
+            "y1": 684.347900390625
+          },
+          "text": "\r\n",
+          "font": {
+            "name": "Helvetica",
+            "size": 7.970099925994873,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i12",
+          "bbox": {
+            "x0": 287.1235046386719,
+            "y0": 669.2333374023438,
+            "x1": 406.61572265625,
+            "y1": 679.9332275390625
+          },
+          "text": "\r\n, Guillaume Lample ",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i13",
+          "bbox": {
+            "x0": 389.0755310058594,
+            "y0": 677.0233764648438,
+            "x1": 392.8852233886719,
+            "y1": 684.347900390625
+          },
+          "text": "mp\r\n",
+          "font": {
+            "name": "Helvetica",
+            "size": 7.970099925994873,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i14",
+          "bbox": {
+            "x0": 277.83990478515625,
+            "y0": 651.5368041992188,
+            "x1": 317.6507263183594,
+            "y1": 659.7022094726562
+          },
+          "text": "Meta AI",
+          "font": {
+            "name": "Times-Roman",
+            "size": 11.9552001953125,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i15",
+          "bbox": {
+            "x0": 157.97315979003906,
+            "y0": 618.021240234375,
+            "x1": 202.3389129638672,
+            "y1": 626.4257202148438
+          },
+          "text": "Abstract",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i16",
+          "bbox": {
+            "x0": 87.97360229492188,
+            "y0": 594.0885009765625,
+            "x1": 271.9827575683594,
+            "y1": 602.2877197265625
+          },
+          "text": "We introduce LLaMA, a collection of founda-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i17",
+          "bbox": {
+            "x0": 88.13301086425781,
+            "y0": 580.5993041992188,
+            "x1": 270.7374267578125,
+            "y1": 589.5656127929688
+          },
+          "text": "tion language models ranging from 7B to 65B",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i18",
+          "bbox": {
+            "x0": 87.97360229492188,
+            "y0": 568.6641845703125,
+            "x1": 263.7735900878906,
+            "y1": 577.6205444335938
+          },
+          "text": "parameters. We train our models on trillions",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i19",
+          "bbox": {
+            "x0": 88.45181274414062,
+            "y0": 556.7091674804688,
+            "x1": 268.44610595703125,
+            "y1": 565.66552734375
+          },
+          "text": "of tokens, and show that it is possible to train",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i20",
+          "bbox": {
+            "x0": 88.89016723632812,
+            "y0": 544.7342529296875,
+            "x1": 262.77740478515625,
+            "y1": 553.7005615234375
+          },
+          "text": "state-of-the-art models using publicly avail-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i21",
+          "bbox": {
+            "x0": 88.6112060546875,
+            "y0": 532.7792358398438,
+            "x1": 259.77862548828125,
+            "y1": 541.7455444335938
+          },
+          "text": "able datasets exclusively, without resorting",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i22",
+          "bbox": {
+            "x0": 88.13301086425781,
+            "y0": 520.8232421875,
+            "x1": 257.17840576171875,
+            "y1": 529.78955078125
+          },
+          "text": "to proprietary and inaccessible datasets. In",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i23",
+          "bbox": {
+            "x0": 87.97360229492188,
+            "y0": 508.88812255859375,
+            "x1": 263.763671875,
+            "y1": 517.844482421875
+          },
+          "text": "particular, LLaMA-13B outperforms GPT-3",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i24",
+          "bbox": {
+            "x0": 88.50138092041016,
+            "y0": 497.7301330566406,
+            "x1": 258.5429992675781,
+            "y1": 506.2879943847656
+          },
+          "text": "(175B) on most benchmarks, and LLaMA-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i25",
+          "bbox": {
+            "x0": 88.65106201171875,
+            "y0": 484.9781494140625,
+            "x1": 250.11489868164062,
+            "y1": 493.93450927734375
+          },
+          "text": "65B is competitive with the best models,",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i26",
+          "bbox": {
+            "x0": 88.431884765625,
+            "y0": 477.0679626464844,
+            "x1": 267.5295715332031,
+            "y1": 484.0019226074219
+          },
+          "text": "Chinchilla-70B and PaLM-540B. We release",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i27",
+          "bbox": {
+            "x0": 88.6112060546875,
+            "y0": 461.0482177734375,
+            "x1": 253.46231079101562,
+            "y1": 470.0145568847656
+          },
+          "text": "all our models to the research community",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i28",
+          "bbox": {
+            "x0": 254.89016723632812,
+            "y0": 468.98699951171875,
+            "x1": 256.8637390136719,
+            "y1": 473.7012939453125
+          },
+          "text": "1",
+          "font": {
+            "name": "Times-Roman",
+            "size": 6.973800182342529,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i29",
+          "bbox": {
+            "x0": 258.72174072265625,
+            "y0": 465.1727294921875,
+            "x1": 259.82757568359375,
+            "y1": 466.26861572265625
+          },
+          "text": ".",
+          "font": {
+            "name": "Times-Roman",
+            "size": 9.962599754333496,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i30",
+          "bbox": {
+            "x0": 72.42013549804688,
+            "y0": 441.6141662597656,
+            "x1": 145.50228881835938,
+            "y1": 450.0306396484375
+          },
+          "text": "1 Introduction",
+          "font": {
+            "name": "Times-Bold",
+            "size": 11.9552001953125,
+            "is_bold": true,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i31",
+          "bbox": {
+            "x0": 71.12886810302734,
+            "y0": 416.3604431152344,
+            "x1": 289.21270751953125,
+            "y1": 426.17864990234375
+          },
+          "text": "Large Languages Models (LLMs) trained on mas-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i32",
+          "bbox": {
+            "x0": 71.96759796142578,
+            "y0": 402.8114318847656,
+            "x1": 299.02960205078125,
+            "y1": 412.629638671875
+          },
+          "text": "sive corpora of texts have shown their ability to per-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i33",
+          "bbox": {
+            "x0": 71.30105590820312,
+            "y0": 393.71337890625,
+            "x1": 291.0321350097656,
+            "y1": 401.3061218261719
+          },
+          "text": "form new tasks from textual instructions or from a",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i34",
+          "bbox": {
+            "x0": 71.29800415039062,
+            "y0": 375.73529052734375,
+            "x1": 137.43988037109375,
+            "y1": 385.5425720214844
+          },
+          "text": "few examples (B",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i35",
+          "bbox": {
+            "x0": 135.9346466064453,
+            "y0": 380.16436767578125,
+            "x1": 188.62559509277344,
+            "y1": 387.7571105957031
+          },
+          "text": "(Brown et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i36",
+          "bbox": {
+            "x0": 188.8845672607422,
+            "y0": 377.3934326171875,
+            "x1": 190.4009246826172,
+            "y1": 380.033447265625
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i37",
+          "bbox": {
+            "x0": 193.5828857421875,
+            "y0": 380.16436767578125,
+            "x1": 214.81199645996094,
+            "y1": 387.68072509765625
+          },
+          "text": "2020",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i38",
+          "bbox": {
+            "x0": 214.94313049316406,
+            "y0": 376.60797119140625,
+            "x1": 290.6741027832031,
+            "y1": 385.9789123535156
+          },
+          "text": "). These few-shot",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i39",
+          "bbox": {
+            "x0": 70.97502899169922,
+            "y0": 362.1644287109375,
+            "x1": 289.9425048828125,
+            "y1": 371.9826354980469
+          },
+          "text": "properties first appeared when scaling models to a",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i40",
+          "bbox": {
+            "x0": 71.98763275146484,
+            "y0": 349.50897216796875,
+            "x1": 138.4022216796875,
+            "y1": 358.8799133300781
+          },
+          "text": "sufficient size (",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i41",
+          "bbox": {
+            "x0": 138.9801483154297,
+            "y0": 348.63629150390625,
+            "x1": 193.2965545654297,
+            "y1": 358.4435729980469
+          },
+          "text": "Kaplan et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i42",
+          "bbox": {
+            "x0": 195.70240783691406,
+            "y0": 350.29443359375,
+            "x1": 197.21876525878906,
+            "y1": 352.9344482421875
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i43",
+          "bbox": {
+            "x0": 200.63916015625,
+            "y0": 353.06536865234375,
+            "x1": 221.86827087402344,
+            "y1": 360.58172607421875
+          },
+          "text": "2020",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i44",
+          "bbox": {
+            "x0": 222.7844696044922,
+            "y0": 348.61444091796875,
+            "x1": 288.5008850097656,
+            "y1": 358.4326477050781
+          },
+          "text": "), resulting in a",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i45",
+          "bbox": {
+            "x0": 71.2846908569336,
+            "y0": 335.0654296875,
+            "x1": 283.54302978515625,
+            "y1": 344.8836364746094
+          },
+          "text": "line of work that focuses on further scaling these",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i46",
+          "bbox": {
+            "x0": 71.21526336669922,
+            "y0": 322.4109802246094,
+            "x1": 108.63346862792969,
+            "y1": 331.78192138671875
+          },
+          "text": "models (",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i47",
+          "bbox": {
+            "x0": 109.38056945800781,
+            "y0": 321.5164489746094,
+            "x1": 183.1588134765625,
+            "y1": 331.33465576171875
+          },
+          "text": "Chowdhery et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i48",
+          "bbox": {
+            "x0": 184.61912536621094,
+            "y0": 323.1964416503906,
+            "x1": 186.13548278808594,
+            "y1": 325.8364562988281
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i49",
+          "bbox": {
+            "x0": 189.51156616210938,
+            "y0": 325.9673767089844,
+            "x1": 210.72976684570312,
+            "y1": 333.4837341308594
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i50",
+          "bbox": {
+            "x0": 212.44302368164062,
+            "y0": 323.1964416503906,
+            "x1": 213.9593963623047,
+            "y1": 329.7309875488281
+          },
+          "text": ";",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i51",
+          "bbox": {
+            "x0": 216.82264709472656,
+            "y0": 326.0328063964844,
+            "x1": 256.7826843261719,
+            "y1": 333.59283447265625
+          },
+          "text": "Rae et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i52",
+          "bbox": {
+            "x0": 258.6021728515625,
+            "y0": 323.1964416503906,
+            "x1": 260.1185607910156,
+            "y1": 325.8364562988281
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i53",
+          "bbox": {
+            "x0": 263.4946594238281,
+            "y0": 325.9673767089844,
+            "x1": 283.8292236328125,
+            "y1": 333.4837341308594
+          },
+          "text": "2021",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i54",
+          "bbox": {
+            "x0": 285.3128662109375,
+            "y0": 322.4109802246094,
+            "x1": 290.603759765625,
+            "y1": 331.7055358886719
+          },
+          "text": ").",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i55",
+          "bbox": {
+            "x0": 70.90261840820312,
+            "y0": 307.9892883300781,
+            "x1": 272.8082275390625,
+            "y1": 317.79656982421875
+          },
+          "text": "These efforts are based on the assumption that",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i56",
+          "bbox": {
+            "x0": 71.21858215332031,
+            "y0": 294.4403076171875,
+            "x1": 283.2587890625,
+            "y1": 304.2475891113281
+          },
+          "text": "more parameters will lead to better performance.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i57",
+          "bbox": {
+            "x0": 71.27660369873047,
+            "y0": 282.5484313964844,
+            "x1": 192.20396423339844,
+            "y1": 291.5266418457031
+          },
+          "text": "However, recent work fromH",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i58",
+          "bbox": {
+            "x0": 191.73638916015625,
+            "y0": 285.3847961425781,
+            "x1": 259.54736328125,
+            "y1": 292.94482421875
+          },
+          "text": "mHoffmann et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i59",
+          "bbox": {
+            "x0": 262.37445068359375,
+            "y0": 281.7629699707031,
+            "x1": 265.19989013671875,
+            "y1": 291.0575256347656
+          },
+          "text": "(",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i60",
+          "bbox": {
+            "x0": 265.54913330078125,
+            "y0": 285.3193664550781,
+            "x1": 286.767333984375,
+            "y1": 292.8357238769531
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i61",
+          "bbox": {
+            "x0": 286.93121337890625,
+            "y0": 281.7629699707031,
+            "x1": 289.72393798828125,
+            "y1": 291.0575256347656
+          },
+          "text": ")",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i62",
+          "bbox": {
+            "x0": 71.98985290527344,
+            "y0": 267.3194274902344,
+            "x1": 282.32818603515625,
+            "y1": 277.13763427734375
+          },
+          "text": "shows that, for a given compute budget, the best",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i63",
+          "bbox": {
+            "x0": 70.97502899169922,
+            "y0": 253.77044677734375,
+            "x1": 291.24066162109375,
+            "y1": 263.5886535644531
+          },
+          "text": "performances are not achieved by the largest mod-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i64",
+          "bbox": {
+            "x0": 71.41145324707031,
+            "y0": 240.221435546875,
+            "x1": 280.05889892578125,
+            "y1": 250.0396270751953
+          },
+          "text": "els, but by smaller models trained on more data.\r\n230213971v1 [csCL] 27",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i65",
+          "bbox": {
+            "x0": 82.14962005615234,
+            "y0": 226.6724395751953,
+            "x1": 249.77886962890625,
+            "y1": 236.49063110351562
+          },
+          "text": "The objective of the scaling laws from \r\n302.13971v1 [cs.CL]",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i66",
+          "bbox": {
+            "x0": 266.9288635253906,
+            "y0": 231.2106475830078,
+            "x1": 290.42706298828125,
+            "y1": 238.75973510742188
+          },
+          "text": "Hoff-\r\n7 F",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i67",
+          "bbox": {
+            "x0": 71.21858215332031,
+            "y0": 217.63882446289062,
+            "x1": 118.46589660644531,
+            "y1": 225.19882202148438
+          },
+          "text": "mann et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i68",
+          "bbox": {
+            "x0": 128.49484252929688,
+            "y0": 214.01699829101562,
+            "x1": 131.32029724121094,
+            "y1": 223.31155395507812
+          },
+          "text": "(",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i69",
+          "bbox": {
+            "x0": 131.80357360839844,
+            "y0": 217.5733642578125,
+            "x1": 153.0217742919922,
+            "y1": 225.08973693847656
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i70",
+          "bbox": {
+            "x0": 154.0360870361328,
+            "y0": 214.01699829101562,
+            "x1": 277.9634704589844,
+            "y1": 223.38790893554688
+          },
+          "text": ") is to determine how to best",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i71",
+          "bbox": {
+            "x0": 71.98985290527344,
+            "y0": 199.5952606201172,
+            "x1": 282.306396484375,
+            "y1": 209.4025421142578
+          },
+          "text": "scale the dataset and model sizes for a particular",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i72",
+          "bbox": {
+            "x0": 71.41629028320312,
+            "y0": 186.15536499023438,
+            "x1": 104.88540649414062,
+            "y1": 195.9735565185547
+          },
+          "text": "training",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i73",
+          "bbox": {
+            "x0": 109.53073120117188,
+            "y0": 186.02444458007812,
+            "x1": 288.4072265625,
+            "y1": 195.84263610839844
+          },
+          "text": "compute budget. However, this objective",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i74",
+          "bbox": {
+            "x0": 71.46098327636719,
+            "y0": 172.47544860839844,
+            "x1": 131.8428497314453,
+            "y1": 182.29364013671875
+          },
+          "text": "disregards the",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i75",
+          "bbox": {
+            "x0": 138.2617950439453,
+            "y0": 174.86456298828125,
+            "x1": 178.450927734375,
+            "y1": 182.4136505126953
+          },
+          "text": "inference",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i76",
+          "bbox": {
+            "x0": 182.39111328125,
+            "y0": 172.47544860839844,
+            "x1": 284.62030029296875,
+            "y1": 182.29364013671875
+          },
+          "text": "budget, which becomes",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i77",
+          "bbox": {
+            "x0": 71.41690826416016,
+            "y0": 158.9264373779297,
+            "x1": 279.431640625,
+            "y1": 168.74462890625
+          },
+          "text": "critical when serving a language model at scale.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i78",
+          "bbox": {
+            "x0": 71.25597381591797,
+            "y0": 145.37643432617188,
+            "x1": 294.0416259765625,
+            "y1": 155.1946258544922
+          },
+          "text": "In this context, given a target level of performance,",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i79",
+          "bbox": {
+            "x0": 71.14679718017578,
+            "y0": 131.84925842285156,
+            "x1": 296.81243896484375,
+            "y1": 141.6565399169922
+          },
+          "text": "the preferred model is not the fastest to train but the",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i80",
+          "bbox": {
+            "x0": 71.29800415039062,
+            "y0": 118.27845764160156,
+            "x1": 294.9781799316406,
+            "y1": 128.09664916992188
+          },
+          "text": "fastest at inference, and although it may be cheaper",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i81",
+          "bbox": {
+            "x0": 71.1524658203125,
+            "y0": 104.72945404052734,
+            "x1": 278.16357421875,
+            "y1": 114.54763793945312
+          },
+          "text": "to train a large model to reach a certain level of",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i82",
+          "bbox": {
+            "x0": 87.69939422607422,
+            "y0": 94.41800689697266,
+            "x1": 90.55669403076172,
+            "y1": 99.91142272949219
+          },
+          "text": "",
+          "font": {
+            "name": "Helvetica",
+            "size": 5.97760009765625,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i83",
+          "bbox": {
+            "x0": 95.98734283447266,
+            "y0": 87.80551147460938,
+            "x1": 227.3450927734375,
+            "y1": 95.8663101196289
+          },
+          "text": "Equal contribution. Correspondence:",
+          "font": {
+            "name": "Times-Roman",
+            "size": 8.966400146484375,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i84",
+          "bbox": {
+            "x0": 248.56044006347656,
+            "y0": 88.146240234375,
+            "x1": 298.85296630859375,
+            "y1": 96.83467864990234
+          },
+          "text": "{htouvron,",
+          "font": {
+            "name": "Courier",
+            "size": 8.966400146484375,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i85",
+          "bbox": {
+            "x0": 72.19302368164062,
+            "y0": 78.14837646484375,
+            "x1": 308.2065124511719,
+            "y1": 86.8368148803711
+          },
+          "text": "thibautlav,gizacard,egrave,glample}@meta.com\r\n1\r\nu",
+          "font": {
+            "name": "Courier",
+            "size": 8.966400146484375,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i86",
+          "bbox": {
+            "x0": 84.84602355957031,
+            "y0": 74.67500305175781,
+            "x1": 86.53768157958984,
+            "y1": 78.71585845947266
+          },
+          "text": "1",
+          "font": {
+            "name": "Times-Roman",
+            "size": 5.97760009765625,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i87",
+          "bbox": {
+            "x0": 87.73490905761719,
+            "y0": 68.15742492675781,
+            "x1": 290.96087646484375,
+            "y1": 74.8915786743164
+          },
+          "text": "https://github.com/facebookresearch/llama",
+          "font": {
+            "name": "Courier",
+            "size": 8.283100128173828,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i88",
+          "bbox": {
+            "x0": 306.2521667480469,
+            "y0": 613.5974731445312,
+            "x1": 508.03778076171875,
+            "y1": 623.4156494140625
+          },
+          "text": "performance, a smaller one trained longer will",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i89",
+          "bbox": {
+            "x0": 306.34033203125,
+            "y0": 600.0485229492188,
+            "x1": 515.2823486328125,
+            "y1": 609.86669921875
+          },
+          "text": "ultimately be cheaper at inference. For instance,",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i90",
+          "bbox": {
+            "x0": 306.95733642578125,
+            "y0": 586.49951171875,
+            "x1": 344.59375,
+            "y1": 596.3176879882812
+          },
+          "text": "although",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i91",
+          "bbox": {
+            "x0": 351.2033386230469,
+            "y0": 591.015869140625,
+            "x1": 419.0143127441406,
+            "y1": 598.5758666992188
+          },
+          "text": "Hoffmann et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i92",
+          "bbox": {
+            "x0": 433.2384948730469,
+            "y0": 587.39404296875,
+            "x1": 436.0639343261719,
+            "y1": 596.6885986328125
+          },
+          "text": "(",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i93",
+          "bbox": {
+            "x0": 436.5472106933594,
+            "y0": 590.9503173828125,
+            "x1": 457.7654113769531,
+            "y1": 598.4667358398438
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i94",
+          "bbox": {
+            "x0": 458.77972412109375,
+            "y0": 587.39404296875,
+            "x1": 520.12158203125,
+            "y1": 596.7649536132812
+          },
+          "text": ") recommends",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i95",
+          "bbox": {
+            "x0": 306.428466796875,
+            "y0": 572.9505004882812,
+            "x1": 508.3013916015625,
+            "y1": 582.7686767578125
+          },
+          "text": "training a 10B model on 200B tokens, we find",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i96",
+          "bbox": {
+            "x0": 306.428466796875,
+            "y0": 559.4232177734375,
+            "x1": 516.832275390625,
+            "y1": 569.2305297851562
+          },
+          "text": "that the performance of a 7B model continues to",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i97",
+          "bbox": {
+            "x0": 306.4911193847656,
+            "y0": 545.8732299804688,
+            "x1": 436.7457580566406,
+            "y1": 555.6805419921875
+          },
+          "text": "improve even after 1T tokens.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i98",
+          "bbox": {
+            "x0": 317.4256286621094,
+            "y0": 525.8883056640625,
+            "x1": 507.45123291015625,
+            "y1": 533.4810791015625
+          },
+          "text": "The focus of this work is to train a series of",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i99",
+          "bbox": {
+            "x0": 306.55322265625,
+            "y0": 507.887451171875,
+            "x1": 529.720703125,
+            "y1": 517.7056274414062
+          },
+          "text": "language models that achieve the best possible per-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i100",
+          "bbox": {
+            "x0": 306.5774841308594,
+            "y0": 494.33843994140625,
+            "x1": 525.6758422851562,
+            "y1": 504.1566467285156
+          },
+          "text": "formance at various inference budgets, by training",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i101",
+          "bbox": {
+            "x0": 306.78106689453125,
+            "y0": 480.7894287109375,
+            "x1": 515.013916015625,
+            "y1": 490.6076354980469
+          },
+          "text": "on more tokens than what is typically used. The",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i102",
+          "bbox": {
+            "x0": 306.2521667480469,
+            "y0": 467.2404479980469,
+            "x1": 410.03045654296875,
+            "y1": 477.05865478515625
+          },
+          "text": "resulting models, called",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i103",
+          "bbox": {
+            "x0": 415.3490295410156,
+            "y0": 471.7677307128906,
+            "x1": 450.7926940917969,
+            "y1": 479.2186279296875
+          },
+          "text": "LLaMA",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i104",
+          "bbox": {
+            "x0": 450.5340270996094,
+            "y0": 467.2404479980469,
+            "x1": 522.4359130859375,
+            "y1": 477.05865478515625
+          },
+          "text": "A, ranges from 7B",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i105",
+          "bbox": {
+            "x0": 306.428466796875,
+            "y0": 453.7132873535156,
+            "x1": 520.2686767578125,
+            "y1": 463.52056884765625
+          },
+          "text": "to 65B parameters with competitive performance",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i106",
+          "bbox": {
+            "x0": 306.6869201660156,
+            "y0": 440.1414489746094,
+            "x1": 525.49072265625,
+            "y1": 449.95965576171875
+          },
+          "text": "compared to the best existing LLMs. For instance,",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i107",
+          "bbox": {
+            "x0": 306.40643310546875,
+            "y0": 426.6142883300781,
+            "x1": 521.7847900390625,
+            "y1": 436.42156982421875
+          },
+          "text": "LLaMA-13B outperforms GPT-3 on most bench-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i108",
+          "bbox": {
+            "x0": 306.4898681640625,
+            "y0": 413.04345703125,
+            "x1": 409.6790466308594,
+            "y1": 422.8616638183594
+          },
+          "text": "marks, despite being 10",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i109",
+          "bbox": {
+            "x0": 411.1280822753906,
+            "y0": 417.8761901855469,
+            "x1": 416.6481018066406,
+            "y1": 423.39617919921875
+          },
+          "text": "×",
+          "font": {
+            "name": "Helvetica",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i110",
+          "bbox": {
+            "x0": 421.42083740234375,
+            "y0": 417.494384765625,
+            "x1": 526.911865234375,
+            "y1": 425.0871276855469
+          },
+          "text": "smaller. We believe that",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i111",
+          "bbox": {
+            "x0": 306.428466796875,
+            "y0": 399.51629638671875,
+            "x1": 514.3341064453125,
+            "y1": 409.3235778808594
+          },
+          "text": "this model will help democratize the access and",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i112",
+          "bbox": {
+            "x0": 307.24359130859375,
+            "y0": 385.9454345703125,
+            "x1": 533.4874267578125,
+            "y1": 395.7636413574219
+          },
+          "text": "study of LLMs, since it can be run on a single GPU.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i113",
+          "bbox": {
+            "x0": 306.07757568359375,
+            "y0": 372.39544677734375,
+            "x1": 523.4522705078125,
+            "y1": 382.2136535644531
+          },
+          "text": "At the higher-end of the scale, our 65B-parameter",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i114",
+          "bbox": {
+            "x0": 306.4945983886719,
+            "y0": 358.846435546875,
+            "x1": 520.3238525390625,
+            "y1": 368.6646423339844
+          },
+          "text": "model is also competitive with the best large lan-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i115",
+          "bbox": {
+            "x0": 306.7528991699219,
+            "y0": 345.2974548339844,
+            "x1": 520.5276489257812,
+            "y1": 355.11566162109375
+          },
+          "text": "guage models such as Chinchilla or PaLM-540B.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i116",
+          "bbox": {
+            "x0": 317.3595275878906,
+            "y0": 320.8824462890625,
+            "x1": 514.8033447265625,
+            "y1": 330.7006530761719
+          },
+          "text": "Unlike Chinchilla, PaLM, or GPT-3, we only",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i117",
+          "bbox": {
+            "x0": 306.3378601074219,
+            "y0": 307.33343505859375,
+            "x1": 527.498046875,
+            "y1": 317.1516418457031
+          },
+          "text": "use publicly available data, making our work com-",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i118",
+          "bbox": {
+            "x0": 306.2521667480469,
+            "y0": 293.7844543457031,
+            "x1": 513.7432250976562,
+            "y1": 303.6026611328125
+          },
+          "text": "patible with open-sourcing, while most existing",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i119",
+          "bbox": {
+            "x0": 306.4945983886719,
+            "y0": 280.2354431152344,
+            "x1": 513.9093017578125,
+            "y1": 290.05364990234375
+          },
+          "text": "models rely on data which is either not publicly",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i120",
+          "bbox": {
+            "x0": 306.9411926269531,
+            "y0": 266.6854553222656,
+            "x1": 529.246826171875,
+            "y1": 276.503662109375
+          },
+          "text": "available or undocumented (e.g. “Books – 2TB” or",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i121",
+          "bbox": {
+            "x0": 305.6385803222656,
+            "y0": 254.031005859375,
+            "x1": 517.6351318359375,
+            "y1": 263.40191650390625
+          },
+          "text": "“Social media conversations”). There exist some",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i122",
+          "bbox": {
+            "x0": 306.6929016113281,
+            "y0": 239.5874481201172,
+            "x1": 420.6711730957031,
+            "y1": 249.4056396484375
+          },
+          "text": "exceptions, notably OPT ( \r\nb 2023",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i123",
+          "bbox": {
+            "x0": 431.23297119140625,
+            "y0": 239.5874481201172,
+            "x1": 482.18939208984375,
+            "y1": 249.4056396484375
+          },
+          "text": "Zhang et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i124",
+          "bbox": {
+            "x0": 490.1750183105469,
+            "y0": 241.26747131347656,
+            "x1": 491.69140625,
+            "y1": 243.907470703125
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i125",
+          "bbox": {
+            "x0": 497.6916198730469,
+            "y0": 244.0383758544922,
+            "x1": 518.9097900390625,
+            "y1": 251.55474853515625
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i126",
+          "bbox": {
+            "x0": 519.9241333007812,
+            "y0": 240.4820098876953,
+            "x1": 525.3677978515625,
+            "y1": 249.7765655517578
+          },
+          "text": "),",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i127",
+          "bbox": {
+            "x0": 306.84716796875,
+            "y0": 226.93299865722656,
+            "x1": 362.8653869628906,
+            "y1": 236.22755432128906
+          },
+          "text": "GPT-NeoX (\r\nb 2023",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i128",
+          "bbox": {
+            "x0": 364.2115783691406,
+            "y0": 230.55482482910156,
+            "x1": 412.65887451171875,
+            "y1": 238.1148223876953
+          },
+          "text": "Black et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i129",
+          "bbox": {
+            "x0": 417.2690734863281,
+            "y0": 227.7184600830078,
+            "x1": 418.78546142578125,
+            "y1": 230.35845947265625
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i130",
+          "bbox": {
+            "x0": 423.1722106933594,
+            "y0": 230.48936462402344,
+            "x1": 444.3904113769531,
+            "y1": 238.0057373046875
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i131",
+          "bbox": {
+            "x0": 445.40472412109375,
+            "y0": 226.93299865722656,
+            "x1": 499.6447448730469,
+            "y1": 236.22755432128906
+          },
+          "text": "), BLOOM (",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i132",
+          "bbox": {
+            "x0": 503.7088317871094,
+            "y0": 230.48936462402344,
+            "x1": 524.1306762695312,
+            "y1": 238.0057373046875
+          },
+          "text": "Scao",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i133",
+          "bbox": {
+            "x0": 306.6820068359375,
+            "y0": 217.00582885742188,
+            "x1": 326.86383056640625,
+            "y1": 224.56582641601562
+          },
+          "text": "et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i134",
+          "bbox": {
+            "x0": 327.974365234375,
+            "y0": 214.16946411132812,
+            "x1": 329.4907531738281,
+            "y1": 216.80946350097656
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i135",
+          "bbox": {
+            "x0": 332.60858154296875,
+            "y0": 216.94036865234375,
+            "x1": 353.8267822265625,
+            "y1": 224.4567413330078
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i136",
+          "bbox": {
+            "x0": 353.9580993652344,
+            "y0": 213.38400268554688,
+            "x1": 408.7981262207031,
+            "y1": 222.75491333007812
+          },
+          "text": ") and GLM (Z",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i137",
+          "bbox": {
+            "x0": 407.386962890625,
+            "y0": 212.48944091796875,
+            "x1": 452.8888244628906,
+            "y1": 222.30763244628906
+          },
+          "text": "(Zeng et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i138",
+          "bbox": {
+            "x0": 453.517822265625,
+            "y0": 214.16946411132812,
+            "x1": 455.0342102050781,
+            "y1": 216.80946350097656
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i139",
+          "bbox": {
+            "x0": 458.1413269042969,
+            "y0": 216.94036865234375,
+            "x1": 479.3595275878906,
+            "y1": 224.4567413330078
+          },
+          "text": "2022",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i140",
+          "bbox": {
+            "x0": 479.5015869140625,
+            "y0": 213.38400268554688,
+            "x1": 525.9307250976562,
+            "y1": 222.75491333007812
+          },
+          "text": "), but none",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i141",
+          "bbox": {
+            "x0": 306.4239196777344,
+            "y0": 198.96226501464844,
+            "x1": 528.8495483398438,
+            "y1": 208.76954650878906
+          },
+          "text": "that are competitive with PaLM-62B or Chinchilla.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i142",
+          "bbox": {
+            "x0": 317.4427185058594,
+            "y0": 174.54725646972656,
+            "x1": 526.5810546875,
+            "y1": 184.3545379638672
+          },
+          "text": "In the rest of this paper, we present an overview",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i143",
+          "bbox": {
+            "x0": 306.78106689453125,
+            "y0": 165.4273681640625,
+            "x1": 517.053955078125,
+            "y1": 173.0200958251953
+          },
+          "text": "of the modifications we made to the transformer",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i144",
+          "bbox": {
+            "x0": 306.95733642578125,
+            "y0": 148.3209991455078,
+            "x1": 364.12103271484375,
+            "y1": 157.69190979003906
+          },
+          "text": "architecture (",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i145",
+          "bbox": {
+            "x0": 365.435791015625,
+            "y0": 151.8773651123047,
+            "x1": 426.614013671875,
+            "y1": 159.4700927734375
+          },
+          "text": "Vaswani et al.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i146",
+          "bbox": {
+            "x0": 428.2071838378906,
+            "y0": 149.10646057128906,
+            "x1": 429.72357177734375,
+            "y1": 151.7464599609375
+          },
+          "text": ",",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i147",
+          "bbox": {
+            "x0": 433.1311340332031,
+            "y0": 151.8773651123047,
+            "x1": 454.0657043457031,
+            "y1": 159.39373779296875
+          },
+          "text": "2017",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 128
+          }
+        },
+        {
+          "id": "text_p0_i148",
+          "bbox": {
+            "x0": 455.3636169433594,
+            "y0": 148.3209991455078,
+            "x1": 523.8400268554688,
+            "y1": 157.69190979003906
+          },
+          "text": "), as well as our",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i149",
+          "bbox": {
+            "x0": 306.42279052734375,
+            "y0": 133.87744140625,
+            "x1": 532.8302612304688,
+            "y1": 143.6956329345703
+          },
+          "text": "training method. We then report the performance of",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i150",
+          "bbox": {
+            "x0": 306.7684020996094,
+            "y0": 120.35026550292969,
+            "x1": 531.5831298828125,
+            "y1": 130.1575469970703
+          },
+          "text": "our models and compare with others LLMs on a set",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i151",
+          "bbox": {
+            "x0": 306.77630615234375,
+            "y0": 106.77945709228516,
+            "x1": 523.7800903320312,
+            "y1": 116.59764099121094
+          },
+          "text": "of standard benchmarks. Finally, we expose some",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i152",
+          "bbox": {
+            "x0": 306.78106689453125,
+            "y0": 93.23045349121094,
+            "x1": 519.4757690429688,
+            "y1": 103.04863739013672
+          },
+          "text": "of the biases and toxicity encoded in our models,",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i153",
+          "bbox": {
+            "x0": 306.34033203125,
+            "y0": 79.68045806884766,
+            "x1": 516.1768798828125,
+            "y1": 89.49864196777344
+          },
+          "text": "m\r\nusing some of the most recent benchmarks from",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i154",
+          "bbox": {
+            "x0": 306.4256286621094,
+            "y0": 66.13145446777344,
+            "x1": 440.67303466796875,
+            "y1": 75.94963836669922
+          },
+          "text": "the responsible AI community.",
+          "font": {
+            "name": "Times-Roman",
+            "size": 10.909099578857422,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0
+          }
+        },
+        {
+          "id": "text_p0_i155",
+          "bbox": {
+            "x0": 19.079999923706055,
+            "y0": 229.63999938964844,
+            "x1": 353.6000061035156,
+            "y1": 246.40000915527344
+          },
+          "text": "els, but by smaller models trained on more data.\r\nThe objective of the scaling laws from Hoff-\r\nexceptions\r\nGPT-NeoX \r\narXiv:2302.13971v1 [cs.CL] 27 Feb 2023",
+          "font": {
+            "name": "Times-Roman",
+            "size": 20.0,
+            "is_bold": false,
+            "is_italic": false
+          },
+          "color": {
+            "r": 128,
+            "g": 128,
+            "b": 128
+          }
+        }
+      ]
+    }
+  ]
+}
