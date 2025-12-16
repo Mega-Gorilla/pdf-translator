@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
-import pypdfium2 as pdfium  # type: ignore[import-untyped]
+import pypdfium2 as pdfium
 
 from .helpers import to_byte_array, to_widestring
 from .models import (
@@ -28,6 +28,65 @@ from .models import (
 
 # PDFium object type constant for text
 FPDF_PAGEOBJ_TEXT = 1
+
+# Control characters to normalize (common in PDF hyphenation)
+# \x02 (STX) is used by some PDFs for soft hyphens
+CONTROL_CHAR_MAP: dict[int, str] = {
+    0x02: "-",  # STX -> hyphen (soft hyphen in many PDFs)
+    0x00: "",  # NUL -> remove
+    0x01: "",  # SOH -> remove
+    0x03: "",  # ETX -> remove
+    0x04: "",  # EOT -> remove
+    0x05: "",  # ENQ -> remove
+    0x06: "",  # ACK -> remove
+    0x07: "",  # BEL -> remove
+    0x08: "",  # BS -> remove
+    0x0B: "",  # VT -> remove
+    0x0C: "",  # FF -> remove
+    0x0E: "",  # SO -> remove
+    0x0F: "",  # SI -> remove
+    0x10: "",  # DLE -> remove
+    0x11: "",  # DC1 -> remove
+    0x12: "",  # DC2 -> remove
+    0x13: "",  # DC3 -> remove
+    0x14: "",  # DC4 -> remove
+    0x15: "",  # NAK -> remove
+    0x16: "",  # SYN -> remove
+    0x17: "",  # ETB -> remove
+    0x18: "",  # CAN -> remove
+    0x19: "",  # EM -> remove
+    0x1A: "",  # SUB -> remove
+    0x1B: "",  # ESC -> remove
+    0x1C: "",  # FS -> remove
+    0x1D: "",  # GS -> remove
+    0x1E: "",  # RS -> remove
+    0x1F: "",  # US -> remove
+    0x7F: "",  # DEL -> remove
+    0xAD: "-",  # Soft hyphen -> hyphen
+    0xFF: "",  # ÿ (often encoding error) -> remove
+}
+
+
+def normalize_text(text: str) -> str:
+    """Normalize text by replacing control characters.
+
+    This handles PDF-specific issues like soft hyphens represented
+    as control characters (common in hyphenated text).
+
+    Args:
+        text: Raw text from PDF extraction
+
+    Returns:
+        Normalized text with control characters replaced
+    """
+    result = []
+    for char in text:
+        code = ord(char)
+        if code in CONTROL_CHAR_MAP:
+            result.append(CONTROL_CHAR_MAP[code])
+        else:
+            result.append(char)
+    return "".join(result)
 
 
 class PDFProcessor:
@@ -338,6 +397,9 @@ class PDFProcessor:
                     text = text.strip() if text else ""
                     if not text:
                         continue
+
+                    # Normalize control characters (e.g., soft hyphens)
+                    text = normalize_text(text)
 
                     # Generate stable ID based on page and object index
                     obj_id = self._generate_stable_id(page_num, obj_index)
@@ -656,6 +718,85 @@ class PDFProcessor:
                 return True
         return False
 
+    def _get_fallback_font(self, original_font: Font) -> Font:
+        """Get appropriate fallback font for non-standard fonts.
+
+        This tries to match the font family (serif/sans-serif/monospace)
+        and style (bold/italic) of the original font.
+
+        Args:
+            original_font: Original font information
+
+        Returns:
+            Font with standard PDF font name
+        """
+        name_lower = original_font.name.lower()
+
+        # Detect font family from name patterns
+        is_serif = any(
+            pattern in name_lower
+            for pattern in [
+                "times",
+                "roman",
+                "serif",
+                "nimbus",  # NimbusRomNo9L is Times-like
+                "palatino",
+                "georgia",
+                "garamond",
+                "cambria",
+                "book",
+            ]
+        )
+        is_mono = any(
+            pattern in name_lower
+            for pattern in [
+                "courier",
+                "mono",
+                "consola",
+                "inconsolata",
+                "menlo",
+                "source code",
+                "fira code",
+            ]
+        )
+
+        # Determine fallback based on family and style
+        if is_mono:
+            if original_font.is_bold and original_font.is_italic:
+                fallback_name = "Courier-BoldOblique"
+            elif original_font.is_bold:
+                fallback_name = "Courier-Bold"
+            elif original_font.is_italic:
+                fallback_name = "Courier-Oblique"
+            else:
+                fallback_name = "Courier"
+        elif is_serif:
+            if original_font.is_bold and original_font.is_italic:
+                fallback_name = "Times-BoldItalic"
+            elif original_font.is_bold:
+                fallback_name = "Times-Bold"
+            elif original_font.is_italic:
+                fallback_name = "Times-Italic"
+            else:
+                fallback_name = "Times-Roman"
+        else:
+            # Default to sans-serif (Helvetica)
+            if original_font.is_bold and original_font.is_italic:
+                fallback_name = "Helvetica-BoldOblique"
+            elif original_font.is_bold:
+                fallback_name = "Helvetica-Bold"
+            elif original_font.is_italic:
+                fallback_name = "Helvetica-Oblique"
+            else:
+                fallback_name = "Helvetica"
+
+        return Font(
+            name=fallback_name,
+            size=original_font.size,
+            is_bold=original_font.is_bold,
+            is_italic=original_font.is_italic,
+        )
+
     def apply(self, doc: PDFDocument) -> None:
         """Apply intermediate data to the PDF (template PDF approach).
 
@@ -666,7 +807,7 @@ class PDFProcessor:
         Args:
             doc: PDFDocument containing text objects to apply
         """
-        # Standard fonts that can be used as fallback
+        # Standard fonts that can be used directly
         STANDARD_FONTS = {
             "Helvetica",
             "Helvetica-Bold",
@@ -693,28 +834,14 @@ class PDFProcessor:
 
             # Insert text objects from the document
             for text_obj in page_data.text_objects:
-                original_font = text_obj.font or Font(name="Helvetica", size=12.0)
+                original_font = text_obj.font or Font(name="Times-Roman", size=12.0)
 
                 # Determine which font to use
                 if original_font.name in STANDARD_FONTS:
                     font = original_font
                 else:
-                    # Use fallback standard font based on style
-                    if original_font.is_bold and original_font.is_italic:
-                        fallback_name = "Helvetica-BoldOblique"
-                    elif original_font.is_bold:
-                        fallback_name = "Helvetica-Bold"
-                    elif original_font.is_italic:
-                        fallback_name = "Helvetica-Oblique"
-                    else:
-                        fallback_name = "Helvetica"
-
-                    font = Font(
-                        name=fallback_name,
-                        size=original_font.size,
-                        is_bold=original_font.is_bold,
-                        is_italic=original_font.is_italic,
-                    )
+                    # Use intelligent fallback based on font family
+                    font = self._get_fallback_font(original_font)
 
                 self.insert_text_object(
                     page_num=page_num,

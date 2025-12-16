@@ -1,0 +1,23 @@
+{
+  "original_text": "Simple ASCII text 123",
+  "extracted_text": "Simple ASCII text 123",
+  "text_match": true,
+  "original_font": "Helvetica",
+  "extracted_font": "Helvetica",
+  "original_bbox": {
+    "x0": 72.0,
+    "y0": 750.0,
+    "x1": 300.0,
+    "y1": 770.0
+  },
+  "extracted_bbox": {
+    "x0": 72.58799743652344,
+    "y0": 747.5280151367188,
+    "x1": 188.97598266601562,
+    "y1": 758.843994140625
+  },
+  "position_error": {
+    "x0": 0.5879974365234375,
+    "y0": 2.47198486328125
+  }
+}

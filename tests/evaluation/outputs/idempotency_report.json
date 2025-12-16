@@ -1,0 +1,103 @@
+{
+  "test": "idempotency",
+  "total_objects": 156,
+  "matched_objects": 6,
+  "match_rate": 3.8461538461538463,
+  "missing_objects": [],
+  "extra_objects": [],
+  "text_mismatches": [
+    {
+      "id": "text_p0_i122",
+      "expected": "exceptions, notably OPT (Z\r\nb 2023",
+      "actual": "ÿÿ230213971v1 [csCL] 27 Feb\r\nexceptions, notably OPT (Zÿÿb 2023 (Zhang et a\r\n(Blk t l\r\n2022)\r\nn more dataÿÿThe obj"
+    },
+    {
+      "id": "text_p0_i11",
+      "expected": "eÿ\r\nÿ",
+      "actual": "eÿÿÿ\r\neÿÿÿÿ eÿÿÿ"
+    },
+    {
+      "id": "text_p0_i60",
+      "expected": "2022)",
+      "actual": "al.( \r\n(2022)2"
+    },
+    {
+      "id": "text_p0_i112",
+      "expected": "a\r\nstudy of LLMs, since it can be run on a single GPU.",
+      "actual": "aÿÿs\r\naÿÿstudy of LLMs, since it can be run on a single GPU."
+    },
+    {
+      "id": "text_p0_i144",
+      "expected": "e,\r\narchitecture (V",
+      "actual": "e,ÿÿar\r\ne,ÿÿarchitecture (V (Vaswa"
+    },
+    {
+      "id": "text_p0_i107",
+      "expected": "LLaMA-13B outperforms GPT-3 on most benchÿ",
+      "actual": "LLaMA-13B outperforms GPT-3 on most benchÿ\r\n10\r\n0ÿÿllWblith"
+    },
+    {
+      "id": "text_p0_i32",
+      "expected": "sive corpora of texts have shown their ability to perÿ\r\nthis",
+      "actual": "sive corpora of texts have shown their ability to perÿÿÿthis\r\nftkfttl ittifÿÿ\r\nÿÿÿ\r\nerÿÿÿaÿÿt"
+    },
+    {
+      "id": "text_p0_i44",
+      "expected": "0), resulting in a",
+      "actual": "0)0), resulting in a"
+    },
+    {
+      "id": "text_p0_i132",
+      "expected": "Scao",
+      "actual": ")\r\n(Scao\r\ntive"
+    },
+    {
+      "id": "text_p0_i141",
+      "expected": "r\r\nthat are competitive with PaLM-62B or Chinchilla.",
+      "actual": "rÿÿt\r\nrÿÿthat are competitive with PaLM-62B or Chinchilla."
+    }
+  ],
+  "position_errors": [
+    {
+      "id": "text_p0_i122",
+      "error": 51.370941162109375
+    },
+    {
+      "id": "text_p0_i11",
+      "error": 16.474212646484375
+    },
+    {
+      "id": "text_p0_i60",
+      "error": 3.709075927734375
+    },
+    {
+      "id": "text_p0_i112",
+      "error": 17.32366943359375
+    },
+    {
+      "id": "text_p0_i88",
+      "error": 2.38909912109375
+    },
+    {
+      "id": "text_p0_i134",
+      "error": 1.5927276611328125
+    },
+    {
+      "id": "text_p0_i144",
+      "error": 27.8291015625
+    },
+    {
+      "id": "text_p0_i97",
+      "error": 2.24725341796875
+    },
+    {
+      "id": "text_p0_i82",
+      "error": 1.2732315063476562
+    },
+    {
+      "id": "text_p0_i22",
+      "error": 2.12200927734375
+    }
+  ],
+  "is_idempotent": false
+}

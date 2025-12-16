@@ -1,0 +1,32 @@
+{
+  "test": "content_preservation",
+  "original_text_count": 131,
+  "output_text_count": 141,
+  "missing_count": 72,
+  "extra_count": 82,
+  "preservation_rate": 45.038167938931295,
+  "missing_samples": [
+    "Large Languages Models (LLMs) trained on mas\u0002",
+    "inference",
+    ") and GLM (",
+    "Hoff\u0002",
+    "∗",
+    "However, recent work from",
+    "), as well as our",
+    "Zeng et al.",
+    "Hugo Touvron",
+    "models ("
+  ],
+  "extra_samples": [
+    "GPT-NeoX (B\r\nb 2023",
+    "2),",
+    "10×",
+    "dLLaMA",
+    "7), as well as our",
+    "Hoffÿ\r\n7 Fe",
+    "eÿ\r\nÿ",
+    "Hugo Touvronÿ\r\nÿ",
+    "few examples (Br",
+    "avril ÿÿÿÿ, Gautier Izacard ÿÿÿÿ,"
+  ]
+}

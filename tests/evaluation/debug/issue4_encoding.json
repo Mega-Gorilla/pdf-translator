@@ -1,0 +1,71 @@
+{
+  "problematic_char_count": 11,
+  "samples": [
+    {
+      "id": "text_p0_i16",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": " of founda\u0002"
+    },
+    {
+      "id": "text_p0_i20",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "icly avail\u0002"
+    },
+    {
+      "id": "text_p0_i24",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": " and LLaMA\u0002"
+    },
+    {
+      "id": "text_p0_i31",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "ned on mas\u0002"
+    },
+    {
+      "id": "text_p0_i32",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "ity to per\u0002"
+    },
+    {
+      "id": "text_p0_i63",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "argest mod\u0002"
+    },
+    {
+      "id": "text_p0_i66",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "Hoff\u0002"
+    },
+    {
+      "id": "text_p0_i99",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "ssible per\u0002"
+    },
+    {
+      "id": "text_p0_i107",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "most bench\u0002"
+    },
+    {
+      "id": "text_p0_i114",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": " large lan\u0002"
+    },
+    {
+      "id": "text_p0_i117",
+      "char": "'\\x02'",
+      "code": 2,
+      "context": "r work com\u0002"
+    }
+  ]
+}
