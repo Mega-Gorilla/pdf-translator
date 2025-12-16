@@ -41,8 +41,11 @@ CONTROL_CHAR_MAP: dict[int, str] = {
     0x06: "",  # ACK -> remove
     0x07: "",  # BEL -> remove
     0x08: "",  # BS -> remove
+    0x09: " ",  # TAB -> space
+    0x0A: " ",  # LF (newline) -> space
     0x0B: "",  # VT -> remove
     0x0C: "",  # FF -> remove
+    0x0D: "",  # CR (carriage return) -> remove
     0x0E: "",  # SO -> remove
     0x0F: "",  # SI -> remove
     0x10: "",  # DLE -> remove
