@@ -1,7 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Debug tests to identify root causes of PDF processing issues."""
+"""Debug tests to identify root causes of PDF processing issues.
+
+Usage:
+    # Run debug tests (skipped by default):
+    RUN_EVAL=1 uv run pytest tests/test_debug_issues.py -v
+
+    # Normal test run (debug tests skipped):
+    uv run pytest -q
+"""
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -14,6 +23,10 @@ SAMPLE_PDF = FIXTURES_DIR / "sample_llama.pdf"
 DEBUG_OUTPUT_DIR = Path(__file__).parent / "evaluation" / "debug"
 
 
+@pytest.mark.skipif(
+    not os.environ.get("RUN_EVAL"),
+    reason="Debug tests skipped by default. Set RUN_EVAL=1 to run.",
+)
 @pytest.mark.skipif(not SAMPLE_PDF.exists(), reason="Test fixture not available")
 class TestDebugIssues:
     """Debug tests to identify specific issues."""

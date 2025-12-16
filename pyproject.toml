@@ -62,3 +62,7 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    # Suppress pypdfium2 finalizer warnings (known library behavior, not affecting functionality)
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]

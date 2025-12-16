@@ -14,9 +14,17 @@ Tolerances (adjusted for font fallback reality):
 Note: Position tolerance is larger than design doc due to font fallback
 causing different character widths. This is expected behavior until
 custom font embedding is implemented.
+
+Usage:
+    # Run evaluation tests (skipped by default):
+    RUN_EVAL=1 uv run pytest tests/test_pdf_evaluation.py -v
+
+    # Normal test run (evaluation tests skipped):
+    uv run pytest -q
 """
 
 import json
+import os
 import re
 import tempfile
 from dataclasses import dataclass, field
@@ -195,6 +203,10 @@ def process_pdf_roundtrip(input_path: Path, output_path: Path) -> PDFDocument:
     return doc
 
 
+@pytest.mark.skipif(
+    not os.environ.get("RUN_EVAL"),
+    reason="Evaluation tests skipped by default. Set RUN_EVAL=1 to run.",
+)
 @pytest.mark.skipif(not SAMPLE_PDF.exists(), reason="Test fixture not available")
 class TestPDFEvaluation:
     """Automated PDF evaluation tests."""
