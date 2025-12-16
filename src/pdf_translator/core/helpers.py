@@ -5,10 +5,13 @@ This module provides ctypes conversion utilities required for
 pypdfium2's low-level PDFium API.
 """
 
+from __future__ import annotations
+
 import ctypes
+from typing import Any
 
 
-def to_widestring(text: str) -> ctypes.Array:
+def to_widestring(text: str) -> ctypes.Array[Any]:
     """Convert Python string to FPDF_WIDESTRING (UTF-16LE + null terminator).
 
     PDFium expects wide strings in UTF-16LE encoding with a null terminator.
@@ -32,7 +35,7 @@ def to_widestring(text: str) -> ctypes.Array:
     return arr
 
 
-def to_byte_array(data: bytes) -> ctypes.Array:
+def to_byte_array(data: bytes) -> ctypes.Array[Any]:
     """Convert bytes to ctypes array of unsigned bytes.
 
     Used for passing binary data (e.g., font files) to PDFium.

@@ -8,12 +8,11 @@ capabilities using the pypdfium2 library.
 from __future__ import annotations
 
 import ctypes
-import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
-import pypdfium2 as pdfium
+import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
 from .helpers import to_byte_array, to_widestring
 from .models import (
@@ -63,8 +62,9 @@ class PDFProcessor:
             ValueError: If the PDF cannot be loaded
         """
         self._source_name: str
-        self._pdf: pdfium.PdfDocument
-        self._loaded_fonts: dict[str, int] = {}  # font_path -> font_handle
+        self._pdf: Optional[pdfium.PdfDocument] = None
+        self._loaded_fonts: dict[str, Any] = {}  # font_path -> font_handle
+        self._loaded_font_buffers: dict[str, ctypes.Array[Any]] = {}  # keep buffers alive
 
         if isinstance(pdf_source, bytes):
             self._pdf = pdfium.PdfDocument(pdf_source)
@@ -80,12 +80,20 @@ class PDFProcessor:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Any,
+    ) -> None:
         """Context manager exit."""
         self.close()
 
     def close(self) -> None:
         """Close the PDF document and release resources."""
+        # Clear font buffers first
+        self._loaded_font_buffers.clear()
+        self._loaded_fonts.clear()
         if hasattr(self, "_pdf") and self._pdf is not None:
             self._pdf.close()
             self._pdf = None
@@ -93,18 +101,33 @@ class PDFProcessor:
     @property
     def page_count(self) -> int:
         """Get the number of pages in the document."""
+        if self._pdf is None:
+            raise RuntimeError("PDF document is not open")
         return len(self._pdf)
 
-    def _generate_id(self, prefix: str = "text") -> str:
-        """Generate a unique ID for objects.
+    def _ensure_open(self) -> pdfium.PdfDocument:
+        """Ensure PDF document is open and return it."""
+        if self._pdf is None:
+            raise RuntimeError("PDF document is not open")
+        return self._pdf
+
+    def _generate_stable_id(
+        self, page_num: int, obj_index: int, prefix: str = "text"
+    ) -> str:
+        """Generate a stable ID for objects based on page and index.
+
+        This ensures that repeated extractions produce the same IDs,
+        enabling the remove_text_objects(object_ids) workflow.
 
         Args:
+            page_num: Page number
+            obj_index: Object index within the page
             prefix: Prefix for the ID
 
         Returns:
-            Unique identifier string
+            Stable identifier string
         """
-        return f"{prefix}_{uuid.uuid4().hex[:8]}"
+        return f"{prefix}_p{page_num}_i{obj_index}"
 
     def _get_text_from_page(self, page: pdfium.PdfPage) -> str:
         """Extract all text from a page using textpage.
@@ -117,7 +140,8 @@ class PDFProcessor:
         """
         textpage = page.get_textpage()
         try:
-            return textpage.get_text_bounded()
+            result: str = textpage.get_text_bounded()
+            return result
         finally:
             textpage.close()
 
@@ -278,48 +302,63 @@ class PDFProcessor:
 
         Returns:
             PDFDocument containing all extracted text objects
+
+        Note:
+            Object IDs are stable across repeated calls (based on page/index),
+            enabling the remove_text_objects(object_ids) workflow.
         """
         pages = []
+        pdf = self._ensure_open()
 
-        for page_num in range(len(self._pdf)):
-            page = self._pdf[page_num]
+        for page_num in range(len(pdf)):
+            page = pdf[page_num]
             width = page.get_width()
             height = page.get_height()
             rotation = page.get_rotation()
 
             text_objects = []
 
-            # Get all text objects from the page
-            for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
-                bounds = obj.get_bounds()
-                if bounds is None:
-                    continue
+            # Create textpage once for the entire page (performance optimization)
+            textpage = page.get_textpage()
+            try:
+                obj_index = 0
+                # Get all text objects from the page
+                for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
+                    bounds = obj.get_bounds()
+                    if bounds is None:
+                        continue
 
-                left, bottom, right, top = bounds
-                bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
+                    left, bottom, right, top = bounds
+                    bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
 
-                # Get text content
-                text = self._get_text_object_content(page, obj)
-                if not text:
-                    continue
+                    # Get text content using shared textpage
+                    text = textpage.get_text_bounded(
+                        left=left, bottom=bottom, right=right, top=top
+                    )
+                    text = text.strip() if text else ""
+                    if not text:
+                        continue
 
-                # Generate unique ID
-                obj_id = self._generate_id("text")
+                    # Generate stable ID based on page and object index
+                    obj_id = self._generate_stable_id(page_num, obj_index)
+                    obj_index += 1
 
-                # Extract metadata
-                font = self._extract_font_info(obj)
-                color = self._extract_color(obj)
-                transform = self._extract_transform(obj)
+                    # Extract metadata
+                    font = self._extract_font_info(obj)
+                    color = self._extract_color(obj)
+                    transform = self._extract_transform(obj)
 
-                text_obj = TextObject(
-                    id=obj_id,
-                    bbox=bbox,
-                    text=text,
-                    font=font,
-                    color=color,
-                    transform=transform,
-                )
-                text_objects.append(text_obj)
+                    text_obj = TextObject(
+                        id=obj_id,
+                        bbox=bbox,
+                        text=text,
+                        font=font,
+                        color=color,
+                        transform=transform,
+                    )
+                    text_objects.append(text_obj)
+            finally:
+                textpage.close()
 
             page_data = Page(
                 page_number=page_num,
@@ -346,17 +385,23 @@ class PDFProcessor:
         Args:
             page_num: Page number (0-indexed)
             object_ids: List of object IDs to remove. If None, removes all text objects.
+                       IDs should be from extract_text_objects() output (stable IDs).
 
         Returns:
             Number of objects removed
 
         Raises:
             IndexError: If page_num is out of range
+
+        Note:
+            IDs are stable across extract_text_objects() calls, based on
+            page number and object index (e.g., "text_p0_i5").
         """
-        if page_num < 0 or page_num >= len(self._pdf):
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
             raise IndexError(f"Page number {page_num} out of range")
 
-        page = self._pdf[page_num]
+        page = pdf[page_num]
 
         # If object_ids is None, remove all text objects
         if object_ids is None:
@@ -366,35 +411,47 @@ class PDFProcessor:
             page.gen_content()
             return len(objects_to_remove)
 
-        # For specific IDs, we need to match by position since pypdfium2
-        # doesn't track our custom IDs
-        # First, extract current objects with their bounds
-        doc = self.extract_text_objects()
-        id_to_bbox = {}
-        for text_obj in doc.pages[page_num].text_objects:
-            if text_obj.id in object_ids:
-                id_to_bbox[text_obj.id] = text_obj.bbox
+        # Parse object IDs to extract indices
+        # IDs are in format "text_p{page}_i{index}"
+        target_indices: set[int] = set()
+        for obj_id in object_ids:
+            if obj_id.startswith(f"text_p{page_num}_i"):
+                try:
+                    idx = int(obj_id.split("_i")[1])
+                    target_indices.add(idx)
+                except (ValueError, IndexError):
+                    pass
 
-        # Now remove objects that match the bboxes
+        if not target_indices:
+            return 0
+
+        # Build list of objects to remove by index
         removed = 0
         objects_to_remove = []
+        obj_index = 0
 
-        for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
-            bounds = obj.get_bounds()
-            if bounds is None:
-                continue
+        textpage = page.get_textpage()
+        try:
+            for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
+                bounds = obj.get_bounds()
+                if bounds is None:
+                    continue
 
-            left, bottom, right, top = bounds
-            for obj_id, bbox in id_to_bbox.items():
-                # Match by approximate bbox
-                if (
-                    abs(bbox.x0 - left) < 1.0
-                    and abs(bbox.y0 - bottom) < 1.0
-                    and abs(bbox.x1 - right) < 1.0
-                    and abs(bbox.y1 - top) < 1.0
-                ):
+                # Check if this object has text (matching extract logic)
+                left, bottom, right, top = bounds
+                text = textpage.get_text_bounded(
+                    left=left, bottom=bottom, right=right, top=top
+                )
+                text = text.strip() if text else ""
+                if not text:
+                    continue
+
+                if obj_index in target_indices:
                     objects_to_remove.append(obj)
-                    break
+
+                obj_index += 1
+        finally:
+            textpage.close()
 
         for obj in objects_to_remove:
             page.remove_obj(obj)
@@ -418,7 +475,7 @@ class PDFProcessor:
 
     def load_font(
         self, font_path: Union[Path, str], is_cid: bool = False
-    ) -> Optional[int]:
+    ) -> Optional[Any]:
         """Load a TrueType font for text insertion.
 
         Args:
@@ -442,8 +499,12 @@ class PDFProcessor:
             font_data = f.read()
 
         font_arr = to_byte_array(font_data)
+        # Keep the buffer alive for the lifetime of this processor
+        self._loaded_font_buffers[path_str] = font_arr
+
+        pdf = self._ensure_open()
         font_handle = pdfium.raw.FPDFText_LoadFont(
-            self._pdf.raw,
+            pdf.raw,
             font_arr,
             ctypes.c_uint(len(font_data)),
             ctypes.c_int(pdfium.raw.FPDF_FONT_TRUETYPE),
@@ -455,7 +516,7 @@ class PDFProcessor:
             return font_handle
         return None
 
-    def load_standard_font(self, font_name: str) -> Optional[int]:
+    def load_standard_font(self, font_name: str) -> Optional[Any]:
         """Load a standard PDF font.
 
         Args:
@@ -467,8 +528,9 @@ class PDFProcessor:
         if font_name in self._loaded_fonts:
             return self._loaded_fonts[font_name]
 
+        pdf = self._ensure_open()
         font_handle = pdfium.raw.FPDFText_LoadStandardFont(
-            self._pdf.raw, font_name.encode("utf-8")
+            pdf.raw, font_name.encode("utf-8")
         )
 
         if font_handle:
@@ -503,11 +565,12 @@ class PDFProcessor:
         Raises:
             IndexError: If page_num is out of range
         """
-        if page_num < 0 or page_num >= len(self._pdf):
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
             raise IndexError(f"Page number {page_num} out of range")
 
-        page = self._pdf[page_num]
-        doc_handle = self._pdf.raw
+        page = pdf[page_num]
+        doc_handle = pdf.raw
         page_handle = page.raw
 
         # Load font
@@ -569,7 +632,8 @@ class PDFProcessor:
         pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
         page.gen_content()
 
-        return self._generate_id("text")
+        # Return a simple ID (not stable, as inserted objects have no index)
+        return "inserted"
 
     def _needs_cid_font(self, text: str) -> bool:
         """Check if text contains CJK characters requiring CID font.
@@ -618,9 +682,10 @@ class PDFProcessor:
             "Courier-BoldOblique",
         }
 
+        pdf = self._ensure_open()
         for page_data in doc.pages:
             page_num = page_data.page_number
-            if page_num >= len(self._pdf):
+            if page_num >= len(pdf):
                 continue
 
             # Remove all existing text
@@ -680,5 +745,6 @@ class PDFProcessor:
         """
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        pdf = self._ensure_open()
         with open(path, "wb") as f:
-            self._pdf.save(f)
+            pdf.save(f)

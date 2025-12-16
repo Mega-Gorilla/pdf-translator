@@ -8,9 +8,9 @@ enabling extraction, manipulation, and reinsertion of text objects.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 SCHEMA_VERSION = "1.0.0"
 
@@ -43,12 +43,12 @@ class BBox:
         """Height of the bounding box."""
         return self.y1 - self.y0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {"x0": self.x0, "y0": self.y0, "x1": self.x1, "y1": self.y1}
 
     @classmethod
-    def from_dict(cls, data: dict) -> BBox:
+    def from_dict(cls, data: dict[str, Any]) -> BBox:
         """Create from dictionary."""
         return cls(
             x0=float(data["x0"]),
@@ -74,7 +74,7 @@ class Font:
     is_bold: bool = False
     is_italic: bool = False
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "name": self.name,
@@ -84,7 +84,7 @@ class Font:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Font:
+    def from_dict(cls, data: dict[str, Any]) -> Font:
         """Create from dictionary."""
         return cls(
             name=data["name"],
@@ -108,12 +108,12 @@ class Color:
     g: int = 0
     b: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {"r": self.r, "g": self.g, "b": self.b}
 
     @classmethod
-    def from_dict(cls, data: dict) -> Color:
+    def from_dict(cls, data: dict[str, Any]) -> Color:
         """Create from dictionary."""
         return cls(
             r=int(data.get("r", 0)),
@@ -161,7 +161,7 @@ class Transform:
             and abs(self.f) < 1e-6
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "a": self.a,
@@ -173,7 +173,7 @@ class Transform:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Transform:
+    def from_dict(cls, data: dict[str, Any]) -> Transform:
         """Create from dictionary."""
         return cls(
             a=float(data.get("a", 1.0)),
@@ -197,12 +197,12 @@ class CharPosition:
     char: str
     bbox: BBox
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {"char": self.char, "bbox": self.bbox.to_dict()}
 
     @classmethod
-    def from_dict(cls, data: dict) -> CharPosition:
+    def from_dict(cls, data: dict[str, Any]) -> CharPosition:
         """Create from dictionary."""
         return cls(char=data["char"], bbox=BBox.from_dict(data["bbox"]))
 
@@ -229,9 +229,9 @@ class TextObject:
     transform: Optional[Transform] = None
     char_positions: Optional[list[CharPosition]] = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        result: dict = {
+        result: dict[str, Any] = {
             "id": self.id,
             "bbox": self.bbox.to_dict(),
             "text": self.text,
@@ -247,7 +247,7 @@ class TextObject:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict) -> TextObject:
+    def from_dict(cls, data: dict[str, Any]) -> TextObject:
         """Create from dictionary."""
         font = Font.from_dict(data["font"]) if "font" in data else None
         color = Color.from_dict(data["color"]) if "color" in data else None
@@ -288,7 +288,7 @@ class LayoutBlock:
     confidence: float = 0.0
     text_object_ids: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -299,7 +299,7 @@ class LayoutBlock:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> LayoutBlock:
+    def from_dict(cls, data: dict[str, Any]) -> LayoutBlock:
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -330,9 +330,9 @@ class Page:
     rotation: int = 0
     layout_blocks: Optional[list[LayoutBlock]] = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        result: dict = {
+        result: dict[str, Any] = {
             "page_number": self.page_number,
             "width": self.width,
             "height": self.height,
@@ -344,7 +344,7 @@ class Page:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict) -> Page:
+    def from_dict(cls, data: dict[str, Any]) -> Page:
         """Create from dictionary."""
         layout_blocks = (
             [LayoutBlock.from_dict(lb) for lb in data["layout_blocks"]]
@@ -377,9 +377,9 @@ class Metadata:
     page_count: int = 0
     pdf_version: Optional[str] = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        result: dict = {
+        result: dict[str, Any] = {
             "source_file": self.source_file,
             "created_at": self.created_at,
             "page_count": self.page_count,
@@ -389,7 +389,7 @@ class Metadata:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict) -> Metadata:
+    def from_dict(cls, data: dict[str, Any]) -> Metadata:
         """Create from dictionary."""
         return cls(
             source_file=data["source_file"],

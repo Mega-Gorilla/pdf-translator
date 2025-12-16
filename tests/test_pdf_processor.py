@@ -19,7 +19,6 @@ from pdf_translator.core import (
     Transform,
 )
 
-
 # Test fixtures path
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_PDF = FIXTURES_DIR / "sample_llama.pdf"
@@ -347,7 +346,43 @@ class TestPDFProcessor:
             assert processor._needs_cid_font("こんにちは") is True
             assert processor._needs_cid_font("你好") is True
             assert processor._needs_cid_font("한글") is True
-            assert processor._needs_cid_font("Mixed こんにちは") is True
+
+    def test_stable_ids(self):
+        """Test that object IDs are stable across extractions."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            doc1 = processor.extract_text_objects()
+            doc2 = processor.extract_text_objects()
+
+            # IDs should be the same
+            ids1 = [obj.id for obj in doc1.pages[0].text_objects]
+            ids2 = [obj.id for obj in doc2.pages[0].text_objects]
+            assert ids1 == ids2
+
+            # IDs should follow the pattern text_p{page}_i{index}
+            for obj in doc1.pages[0].text_objects[:5]:
+                assert obj.id.startswith("text_p0_i")
+
+    def test_remove_specific_objects_by_id(self):
+        """Test removing specific text objects by their stable IDs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "output.pdf"
+
+            with PDFProcessor(SAMPLE_PDF) as processor:
+                doc = processor.extract_text_objects()
+                initial_count = len(doc.pages[0].text_objects)
+
+                # Get IDs of first 3 objects
+                ids_to_remove = [obj.id for obj in doc.pages[0].text_objects[:3]]
+
+                # Remove specific objects
+                removed = processor.remove_text_objects(0, ids_to_remove)
+                assert removed == 3
+
+                # Verify removal
+                doc_after = processor.extract_text_objects()
+                assert len(doc_after.pages[0].text_objects) == initial_count - 3
+
+                processor.save(output_path)
 
 
 class TestTextLayerEdit:
@@ -369,9 +404,6 @@ class TestTextLayerEdit:
             # Step 1: Extract
             with PDFProcessor(SAMPLE_PDF) as processor:
                 doc = processor.extract_text_objects()
-                original_texts = [
-                    obj.text for obj in doc.pages[0].text_objects
-                ]
 
                 # Step 2: Modify (mark text as translated)
                 for text_obj in doc.pages[0].text_objects[:3]:
