@@ -17,8 +17,28 @@
 | IN | テキストオブジェクトの抽出・削除・挿入 |
 | IN | バウンディングボックス、フォント情報の取得 |
 | IN | 中間データ形式（JSON）の入出力 |
-| OUT | 画像・図形オブジェクトの操作 |
+| IN | 元PDFをテンプレートとしたテキスト層の編集 |
+| OUT | 画像・図形オブジェクトの操作（元PDFから継承） |
 | OUT | OCR機能 |
+
+### 1.3 設計方針：テンプレートPDF方式
+
+本モジュールは**元PDFをテンプレートとして保持し、テキスト層のみを編集する**方式を採用する。
+
+```
+[元PDF] ─── extract() ───→ [中間データJSON]
+   │                              │
+   │ (テンプレートとして保持)        │ (テキスト情報のみ)
+   ↓                              ↓
+[編集後PDF] ←── apply() ─────────┘
+   │
+   └─ 画像・図形・レイアウトは元PDFから継承
+```
+
+**理由**:
+- 画像・図形・複雑なレイアウトの完全再現は困難かつスコープ外
+- 翻訳ユースケースでは元PDFの非テキスト要素を保持することが望ましい
+- 実装の複雑さを抑えつつ、実用的な機能を提供
 
 ---
 
@@ -26,9 +46,11 @@
 
 ### 2.1 設計原則
 
-1. **自己完結性**: 中間データだけでPDFを再構築できる
+1. **テキスト情報の完全性**: テキスト層の編集に必要な全情報を保持
 2. **拡張性**: PP-DocLayoutの分類情報を追加可能
 3. **可読性**: 人間が読めるJSON形式
+
+> **注**: 中間データはテキスト情報のみを保持し、画像・図形は元PDFから継承される（1.3節参照）
 
 ### 2.2 JSON Schema
 
@@ -91,11 +113,24 @@
         "text": { "type": "string" },
         "font": { "$ref": "#/definitions/Font" },
         "color": { "$ref": "#/definitions/Color" },
+        "transform": { "$ref": "#/definitions/Transform" },
         "char_positions": {
           "type": "array",
           "items": { "$ref": "#/definitions/CharPosition" },
           "description": "文字単位の位置情報（オプション）"
         }
+      }
+    },
+    "Transform": {
+      "type": "object",
+      "description": "アフィン変換行列 [a, b, c, d, e, f] - 回転・スケール・傾斜を表現",
+      "properties": {
+        "a": { "type": "number", "default": 1.0, "description": "水平スケール" },
+        "b": { "type": "number", "default": 0.0, "description": "垂直傾斜" },
+        "c": { "type": "number", "default": 0.0, "description": "水平傾斜" },
+        "d": { "type": "number", "default": 1.0, "description": "垂直スケール" },
+        "e": { "type": "number", "default": 0.0, "description": "水平移動" },
+        "f": { "type": "number", "default": 0.0, "description": "垂直移動" }
       }
     },
     "BBox": {
@@ -213,26 +248,36 @@
 
 ## 3. 成功基準（Success Criteria）
 
-### 3.1 ラウンドトリップテスト
+### 3.1 テキスト層編集テスト
 
-**定義**: 元PDFから中間データを抽出し、中間データからPDFを再生成したとき、元PDFと同等のデザイン・フォーマットが再現されること。
+**定義**: 元PDFをテンプレートとして、テキスト層の削除・再挿入が正しく行われること。
 
 ```
 [元PDF] ─── extract() ───→ [中間データJSON]
-                                  │
-                                  ↓
-[再生成PDF] ←── generate() ───────┘
+   │                              │
+   │ (テンプレート)                 │ (編集)
+   ↓                              ↓
+[編集後PDF] ←── apply() ─────────┘
 ```
+
+**検証ポイント**:
+- 非テキスト要素（画像・図形）は元PDFから継承されている
+- テキストの削除・再挿入が正しく行われている
+- フォント・位置・変換行列が保持されている
 
 ### 3.2 検証項目
 
-| 項目 | 検証方法 | 許容誤差 |
-|------|----------|----------|
-| テキスト内容 | 文字列完全一致 | 0% |
-| テキスト位置 | bbox座標比較 | ±1.0pt |
-| フォント名 | 文字列一致 | - |
-| フォントサイズ | 数値比較 | ±0.5pt |
-| ページサイズ | 数値比較 | ±0.1pt |
+| 項目 | 検証方法 | 許容誤差 | 備考 |
+|------|----------|----------|------|
+| テキスト内容 | 文字列完全一致 | 0% | 必須 |
+| テキスト位置 | bbox座標比較 | ±1.0pt | 必須 |
+| フォント名 | 文字列一致 | - | 必須 |
+| フォントサイズ | 数値比較 | ±0.5pt | 必須 |
+| 変換行列 | 行列要素比較 | ±0.01 | 回転・傾斜がある場合 |
+| ページサイズ | 数値比較 | ±0.1pt | 元PDFから継承 |
+| 非テキスト要素 | 視覚的確認 | - | 元PDFから継承されること |
+
+> **注**: 回転・傾斜テキストの完全再現が困難な場合、翻訳ユースケースでは「近似的な位置・サイズでの再挿入」を許容する。この場合、成功基準は「翻訳後テキストが読みやすい位置に配置されること」とする。
 
 ### 3.3 テストケース
 
@@ -282,11 +327,21 @@ class Font:
     is_italic: bool = False
 
 @dataclass
+class Transform:
+    a: float = 1.0  # 水平スケール
+    b: float = 0.0  # 垂直傾斜
+    c: float = 0.0  # 水平傾斜
+    d: float = 1.0  # 垂直スケール
+    e: float = 0.0  # 水平移動
+    f: float = 0.0  # 垂直移動
+
+@dataclass
 class TextObject:
     id: str
     bbox: BBox
     text: str
     font: Optional[Font] = None
+    transform: Optional[Transform] = None
 
 @dataclass
 class Page:
@@ -342,9 +397,12 @@ class PDFProcessor:
         """中間データをJSON文字列として出力"""
         ...
 
-    @classmethod
-    def from_json(cls, json_str: str) -> "PDFProcessor":
-        """JSONから新規PDFを生成"""
+    def apply(self, doc: PDFDocument) -> None:
+        """中間データを元にテキスト層を編集（テンプレートPDF方式）
+
+        元PDFをテンプレートとして保持し、指定されたテキストオブジェクトで
+        テキスト層を置換する。画像・図形は元PDFから継承される。
+        """
         ...
 ```
 
@@ -374,11 +432,13 @@ processor.insert_text_object(
 # 保存
 processor.save("output.pdf")
 
-# JSONからPDF生成（ラウンドトリップ）
+# テンプレートPDF方式での編集
 with open("intermediate.json") as f:
     json_data = f.read()
-new_processor = PDFProcessor.from_json(json_data)
-new_processor.save("regenerated.pdf")
+doc = PDFDocument.from_json(json_data)  # 中間データを読み込み
+doc.pages[0].text_objects[0].text = "翻訳されたタイトル"  # テキストを編集
+processor.apply(doc)  # 元PDFをテンプレートとして編集を適用
+processor.save("edited.pdf")
 ```
 
 ---
@@ -411,7 +471,7 @@ new_processor.save("regenerated.pdf")
 | 2 | テキスト抽出 | `extract_text_objects()` |
 | 3 | テキスト削除 | `remove_text_objects()` |
 | 4 | テキスト挿入 | `insert_text_object()` |
-| 5 | JSON入出力 | `to_json()`, `from_json()` |
+| 5 | JSON入出力・適用 | `to_json()`, `apply()` |
 | 6 | ラウンドトリップテスト | `tests/test_pdf_processor.py` |
 
 ### 6.2 ファイル構成
@@ -432,3 +492,26 @@ src/pdf_translator/core/
 - PyMuPDF代替調査: `_archive/Index_PDF_Translation/docs/research/pymupdf-alternative-investigation.md`
 - Issue #1: https://github.com/Mega-Gorilla/pdf-translator/issues/1
 - Issue #2: https://github.com/Mega-Gorilla/pdf-translator/issues/2
+
+---
+
+## 8. ライセンスに関する注意事項
+
+### 8.1 アーカイブコードの参照について
+
+`_archive/Index_PDF_Translation/` に格納されているコードは **AGPL-3.0-only** でライセンスされています。
+
+**実装時の注意**:
+- アーカイブコードを**そのままコピーしない**こと
+- API呼び出しの「挙動確認」として参照することは許容される
+- 新規実装は Apache-2.0 ライセンスで作成すること
+
+**許容される参照方法**:
+- pypdfium2のAPI呼び出し方法の確認
+- データ構造の設計参考（ただし独自に再設計）
+- テストケースの参考
+
+**禁止される行為**:
+- 関数・クラスのコピー＆ペースト
+- ロジックの直接移植
+- コメントを含むコードのコピー
