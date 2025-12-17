@@ -64,5 +64,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = [
     # Suppress pypdfium2 finalizer warnings (known library behavior, not affecting functionality)
-    "ignore::pytest.PytestUnraisableExceptionWarning",
+    # (?s) flag makes . match newlines, allowing pattern to match multi-line warning messages
+    "ignore:(?s).*pypdfium2.*:pytest.PytestUnraisableExceptionWarning",
 ]
