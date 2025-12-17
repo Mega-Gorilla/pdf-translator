@@ -62,3 +62,9 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    # Suppress pypdfium2 finalizer warnings (known library behavior, not affecting functionality)
+    # (?s) flag makes . match newlines, allowing pattern to match multi-line warning messages
+    # Root cause fix tracked in: https://github.com/Mega-Gorilla/pdf-translator/issues/10
+    "ignore:(?s).*pypdfium2.*:pytest.PytestUnraisableExceptionWarning",
+]
