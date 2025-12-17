@@ -242,6 +242,14 @@ class TestPDFProcessor:
         with pytest.raises(FileNotFoundError):
             PDFProcessor("nonexistent.pdf")
 
+    def test_invalid_source_type(self):
+        """Test error on invalid pdf_source type."""
+        with pytest.raises(TypeError, match="pdf_source must be Path, str, or bytes"):
+            PDFProcessor(123)  # type: ignore[arg-type]
+
+        with pytest.raises(TypeError, match="pdf_source must be Path, str, or bytes"):
+            PDFProcessor(["test.pdf"])  # type: ignore[arg-type]
+
     def test_extract_text_objects(self):
         """Test extracting text objects from PDF."""
         with PDFProcessor(SAMPLE_PDF) as processor:

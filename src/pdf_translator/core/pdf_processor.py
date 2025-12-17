@@ -160,6 +160,7 @@ class PDFProcessor:
             pdf_source: Path to PDF file or PDF bytes
 
         Raises:
+            TypeError: If pdf_source is not Path, str, or bytes
             FileNotFoundError: If the file path doesn't exist
             ValueError: If the PDF cannot be loaded
         """
@@ -171,12 +172,16 @@ class PDFProcessor:
         if isinstance(pdf_source, bytes):
             self._pdf = pdfium.PdfDocument(pdf_source)
             self._source_name = "bytes"
-        else:
+        elif isinstance(pdf_source, (str, Path)):
             path = Path(pdf_source)
             if not path.exists():
                 raise FileNotFoundError(f"PDF file not found: {path}")
             self._pdf = pdfium.PdfDocument(str(path))
             self._source_name = path.name
+        else:
+            raise TypeError(
+                f"pdf_source must be Path, str, or bytes, got {type(pdf_source).__name__}"
+            )
 
     def __enter__(self) -> PDFProcessor:
         """Context manager entry."""
