@@ -504,27 +504,140 @@ def _convert_image_to_pdf_coords(
 
 ### 5.4 マッチング関数
 
-TextObject と LayoutBlock を IoU (Intersection over Union) でマッチング：
+#### 5.4.1 ネストしたブロックの課題
+
+PP-DocLayout は text ブロック内に inline_formula を検出することがある：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ text ブロック                                           │
+│                                                         │
+│   "The equation ┌──────────────┐ shows that..."        │
+│                 │inline_formula│                        │
+│                 │  ∑_i x_i     │                        │
+│                 └──────────────┘                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+この場合、数式部分の TextObject は text と inline_formula 両方と重複する。
+**単純な IoU では text ブロック（大）が勝ってしまい、数式が翻訳されてしまう。**
+
+#### 5.4.2 カテゴリ優先度
+
+翻訳除外すべきカテゴリを優先して「安全側に倒す」設計：
+
+```python
+# カテゴリ優先度 (数値が小さいほど優先)
+CATEGORY_PRIORITY: dict[RawLayoutCategory, int] = {
+    # 最優先: 絶対に翻訳してはいけないもの
+    RawLayoutCategory.INLINE_FORMULA: 1,
+    RawLayoutCategory.DISPLAY_FORMULA: 1,
+    RawLayoutCategory.FORMULA_NUMBER: 1,
+    RawLayoutCategory.ALGORITHM: 2,
+    RawLayoutCategory.CODE_BLOCK: 2,
+
+    # 次点: 通常は翻訳しないもの
+    RawLayoutCategory.TABLE: 3,
+    RawLayoutCategory.IMAGE: 4,
+    RawLayoutCategory.CHART: 4,
+
+    # キャプション系
+    RawLayoutCategory.FIGURE_TITLE: 5,
+
+    # テキスト系
+    RawLayoutCategory.TEXT: 6,
+    RawLayoutCategory.PARAGRAPH_TITLE: 6,
+    RawLayoutCategory.DOC_TITLE: 6,
+    RawLayoutCategory.ABSTRACT: 6,
+    RawLayoutCategory.ASIDE_TEXT: 6,
+
+    # その他
+    RawLayoutCategory.FOOTNOTE: 7,
+    RawLayoutCategory.HEADER: 8,
+    RawLayoutCategory.FOOTER: 8,
+    RawLayoutCategory.NUMBER: 8,
+    RawLayoutCategory.REFERENCE: 9,
+    RawLayoutCategory.REFERENCE_CONTENT: 9,
+}
+```
+
+#### 5.4.3 マッチングアルゴリズム
 
 ```python
 def match_text_with_layout(
     text_objects: list[TextObject],
     layout_blocks: list[LayoutBlock],
-    iou_threshold: float = 0.3,
+    containment_threshold: float = 0.5,
 ) -> dict[str, ProjectCategory]:
     """
     TextObject と LayoutBlock をマッチング
 
+    アルゴリズム:
+    1. TextObject と各 LayoutBlock の包含率を計算
+    2. 包含率が閾値以上のブロックを候補とする
+    3. 候補の中からカテゴリ優先度が最高のものを選択
+    4. 同一優先度なら面積が最小のものを選択
+
     Args:
         text_objects: PDFProcessor から抽出した TextObject リスト
         layout_blocks: LayoutAnalyzer から取得した LayoutBlock リスト
-        iou_threshold: マッチング閾値 (default: 0.3)
+        containment_threshold: 包含率閾値 (default: 0.5)
 
     Returns:
         TextObject.id → ProjectCategory のマッピング
     """
-    ...
+    result = {}
+
+    for text_obj in text_objects:
+        # Step 1: 候補ブロックを抽出
+        candidates = []
+        for block in layout_blocks:
+            containment = _calc_containment(text_obj.bbox, block.bbox)
+            if containment >= containment_threshold:
+                candidates.append({
+                    "block": block,
+                    "containment": containment,
+                    "area": block.bbox.area,
+                    "priority": CATEGORY_PRIORITY.get(
+                        block.raw_category, 99
+                    ),
+                })
+
+        if not candidates:
+            # 未マッチ時のデフォルト動作（安全側）
+            result[text_obj.id] = ProjectCategory.OTHER
+            continue
+
+        # Step 2: 優先度でソート (優先度昇順 → 面積昇順)
+        candidates.sort(key=lambda x: (x["priority"], x["area"]))
+
+        # 最優先の候補を採用
+        best = candidates[0]["block"]
+        result[text_obj.id] = best.project_category
+
+    return result
+
+
+def _calc_containment(text_bbox: BBox, block_bbox: BBox) -> float:
+    """
+    TextObject がブロック内にどれだけ含まれているか (0.0 - 1.0)
+
+    containment = intersection_area / text_area
+    """
+    intersection = text_bbox.intersection(block_bbox)
+    if intersection is None:
+        return 0.0
+    return intersection.area / text_bbox.area
 ```
+
+#### 5.4.4 マッチング例
+
+| ケース | TextObject | 候補ブロック | 結果 |
+|--------|-----------|-------------|------|
+| 数式テキスト | `∑_i x_i` | text(優先度6), inline_formula(優先度1) | **inline_formula** ✅ |
+| 通常テキスト | `Hello` | text(優先度6) のみ | **text** ✅ |
+| 表のセル | `123` | text(優先度6), table(優先度3) | **table** ✅ |
+| 未マッチ | (孤立) | なし | **OTHER** (安全側) |
 
 ### 5.5 フィルタリング関数 (Project Layer ベース)
 
