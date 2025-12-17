@@ -523,31 +523,26 @@ if TYPE_CHECKING:
 
 ### 9.2 統合テスト（実API）
 
-**CI方針:** 統合テストはCIでスキップ、ローカルでopt-in実行。
+**方針:** APIコストを考慮し、自動テストは **Googleのみ** に限定。
+DeepL/OpenAI は手動検証スクリプト（`scripts/evaluation/`）で確認。
 
 ```python
-@pytest.mark.integration
-@pytest.mark.skipif(
-    os.environ.get("RUN_INTEGRATION") != "1",
-    reason="Integration tests disabled (set RUN_INTEGRATION=1)"
-)
+# Google: 通常のpytestで実行（APIキー不要、コスト無し）
 class TestGoogleTranslatorIntegration:
-    ...
+    @pytest.mark.asyncio
+    async def test_real_translation(self):
+        translator = GoogleTranslator()
+        result = await translator.translate("Hello", "auto", "ja")
+        assert result != "Hello"
 
-@pytest.mark.integration
-@pytest.mark.skipif(
-    "DEEPL_API_KEY" not in os.environ,
-    reason="DEEPL_API_KEY not set"
-)
-class TestDeepLTranslatorIntegration:
-    ...
+# DeepL/OpenAI: 手動実行のみ（scripts/evaluation/ で検証）
 ```
 
-| テスト | 条件 |
-|--------|------|
-| Google | `RUN_INTEGRATION=1` |
-| DeepL | `DEEPL_API_KEY` 環境変数 |
-| OpenAI | `OPENAI_API_KEY` 環境変数 |
+| テスト | 自動実行 | 条件 |
+|--------|---------|------|
+| Google | ✅ 常時 | APIキー不要 |
+| DeepL | ❌ 手動 | `scripts/evaluation/separator_behavior.py` |
+| OpenAI | ❌ 手動 | `scripts/evaluation/separator_behavior.py` |
 
 ---
 

@@ -6,7 +6,7 @@ This script tests how each translation backend handles the separator token [[[BR
 Results will inform the design decision for batch translation.
 
 Usage:
-    uv run python tests/evaluation/test_separator_behavior.py
+    uv run python scripts/evaluation/separator_behavior.py
 """
 
 import asyncio
@@ -34,12 +34,20 @@ TEST_CASES = [
     },
     {
         "name": "With punctuation",
-        "input": f"This is a sentence.{SEPARATOR}Another sentence here.{SEPARATOR}Final one.",
+        "input": (
+            f"This is a sentence.{SEPARATOR}"
+            f"Another sentence here.{SEPARATOR}"
+            "Final one."
+        ),
         "expected_blocks": 3,
     },
     {
         "name": "Mixed content",
-        "input": f"Machine learning is powerful.{SEPARATOR}Deep learning uses neural networks.{SEPARATOR}AI is transforming industries.",
+        "input": (
+            f"Machine learning is powerful.{SEPARATOR}"
+            f"Deep learning uses neural networks.{SEPARATOR}"
+            "AI is transforming industries."
+        ),
         "expected_blocks": 3,
     },
 ]
@@ -66,11 +74,12 @@ async def test_google_translate():
             # Check separator preservation
             parts = result.split(SEPARATOR)
             preserved = len(parts) == case["expected_blocks"]
-            print(f"Separator preserved: {preserved} (got {len(parts)} parts, expected {case['expected_blocks']})")
+            expected = case["expected_blocks"]
+            print(f"Separator preserved: {preserved} (got {len(parts)} parts, expected {expected})")
 
             if not preserved:
                 # Check for variations
-                variations = ["[[[BR]]]", "[[[ BR ]]]", "[BR]", "[ BR ]", "【BR】"]
+                variations = ["[[[BR]]]", "[[[ BR ]]]", "[BR]", "[ BR ]"]
                 for var in variations:
                     if var in result:
                         print(f"  -> Found variation: '{var}'")
@@ -93,7 +102,9 @@ async def test_deepl_translate():
     try:
         import aiohttp
 
-        api_url = os.environ.get("DEEPL_API_URL", "https://api-free.deepl.com/v2/translate")
+        api_url = os.environ.get(
+            "DEEPL_API_URL", "https://api-free.deepl.com/v2/translate"
+        )
 
         async with aiohttp.ClientSession() as session:
             for case in TEST_CASES:
@@ -140,12 +151,14 @@ async def test_deepl_batch():
     try:
         import aiohttp
 
-        api_url = os.environ.get("DEEPL_API_URL", "https://api-free.deepl.com/v2/translate")
+        api_url = os.environ.get(
+            "DEEPL_API_URL", "https://api-free.deepl.com/v2/translate"
+        )
 
         # Test with array of texts (no separator)
         texts = ["Hello", "World", "Good morning"]
 
-        print(f"\n### Batch test (3 texts)")
+        print("\n### Batch test (3 texts)")
         print(f"Input texts: {texts}")
 
         async with aiohttp.ClientSession() as session:
@@ -163,7 +176,7 @@ async def test_deepl_batch():
                     results = [t["text"] for t in data["translations"]]
                     print(f"Output texts: {results}")
                     print(f"Order preserved: {len(results) == len(texts)}")
-                    print(f"✅ Batch translation works correctly!")
+                    print("Batch translation works correctly!")
                 else:
                     error_text = await response.text()
                     print(f"API Error: {response.status} - {error_text}")
@@ -197,16 +210,18 @@ async def test_openai_translate():
         # Test with array (Structured Outputs)
         texts = ["Hello", "World", "Good morning"]
 
-        print(f"\n### Structured Outputs test (3 texts)")
+        print("\n### Structured Outputs test (3 texts)")
         print(f"Input texts: {texts}")
+
+        system_content = (
+            "Translate the following texts from English to Japanese. "
+            "Return a JSON object with a 'translations' array."
+        )
 
         response = await client.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=[
-                {
-                    "role": "system",
-                    "content": "Translate the following texts from English to Japanese. Return a JSON object with a 'translations' array.",
-                },
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": str(texts)},
             ],
             response_format=TranslationResult,
@@ -217,7 +232,7 @@ async def test_openai_translate():
         if result:
             print(f"Output texts: {result.translations}")
             print(f"Order preserved: {len(result.translations) == len(texts)}")
-            print(f"✅ Structured Outputs works correctly!")
+            print("Structured Outputs works correctly!")
 
     except ImportError:
         print("openai not installed, skipping OpenAI test")
