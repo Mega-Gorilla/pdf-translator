@@ -587,10 +587,8 @@ class PDFProcessor:
                     continue
 
                 # Check if this object has text (matching extract logic)
-                left, bottom, right, top = bounds
-                text = textpage.get_text_bounded(
-                    left=left, bottom=bottom, right=right, top=top
-                )
+                # Use _get_text_object_text_direct for consistency with extract
+                text = self._get_text_object_text_direct(obj, textpage)
                 text = text.strip() if text else ""
                 if not text:
                     continue
