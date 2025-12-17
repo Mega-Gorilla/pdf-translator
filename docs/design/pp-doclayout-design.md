@@ -128,7 +128,7 @@ tests/
      ▼
 ┌─────────────────────────────────────────────────────────┐
 │ match_text_with_layout()                                │
-│  - TextObject と LayoutBlock の bbox を IoU でマッチング │
+│  - TextObject と LayoutBlock を包含率+優先度でマッチング │
 │  - 各 TextObject にカテゴリを付与                       │
 └─────────────────────────────────────────────────────────┘
      │
@@ -561,7 +561,44 @@ CATEGORY_PRIORITY: dict[RawLayoutCategory, int] = {
 }
 ```
 
-#### 5.4.3 マッチングアルゴリズム
+#### 5.4.3 BBox ユーティリティ関数
+
+`layout_utils.py` に以下のユーティリティ関数を定義する（`BBox` クラスは変更しない）：
+
+```python
+def bbox_area(bbox: BBox) -> float:
+    """BBox の面積を計算"""
+    return bbox.width * bbox.height
+
+
+def bbox_intersection(bbox1: BBox, bbox2: BBox) -> BBox | None:
+    """2つの BBox の交差領域を返す（交差なしの場合 None）"""
+    x0 = max(bbox1.x0, bbox2.x0)
+    y0 = max(bbox1.y0, bbox2.y0)
+    x1 = min(bbox1.x1, bbox2.x1)
+    y1 = min(bbox1.y1, bbox2.y1)
+
+    if x0 >= x1 or y0 >= y1:
+        return None
+    return BBox(x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+def calc_containment(text_bbox: BBox, block_bbox: BBox) -> float:
+    """
+    TextObject がブロック内にどれだけ含まれているか (0.0 - 1.0)
+
+    containment = intersection_area / text_area
+    """
+    intersection = bbox_intersection(text_bbox, block_bbox)
+    if intersection is None:
+        return 0.0
+    text_area = bbox_area(text_bbox)
+    if text_area == 0:
+        return 0.0
+    return bbox_area(intersection) / text_area
+```
+
+#### 5.4.4 マッチングアルゴリズム
 
 ```python
 def match_text_with_layout(
@@ -576,7 +613,7 @@ def match_text_with_layout(
     1. TextObject と各 LayoutBlock の包含率を計算
     2. 包含率が閾値以上のブロックを候補とする
     3. 候補の中からカテゴリ優先度が最高のものを選択
-    4. 同一優先度なら面積が最小のものを選択
+    4. 同一優先度なら包含率が高い → 面積が小さいものを選択
 
     Args:
         text_objects: PDFProcessor から抽出した TextObject リスト
@@ -592,12 +629,12 @@ def match_text_with_layout(
         # Step 1: 候補ブロックを抽出
         candidates = []
         for block in layout_blocks:
-            containment = _calc_containment(text_obj.bbox, block.bbox)
+            containment = calc_containment(text_obj.bbox, block.bbox)
             if containment >= containment_threshold:
                 candidates.append({
                     "block": block,
                     "containment": containment,
-                    "area": block.bbox.area,
+                    "area": bbox_area(block.bbox),
                     "priority": CATEGORY_PRIORITY.get(
                         block.raw_category, 99
                     ),
@@ -608,29 +645,20 @@ def match_text_with_layout(
             result[text_obj.id] = ProjectCategory.OTHER
             continue
 
-        # Step 2: 優先度でソート (優先度昇順 → 面積昇順)
-        candidates.sort(key=lambda x: (x["priority"], x["area"]))
+        # Step 2: ソート
+        # 優先度昇順 → 包含率降順 → 面積昇順
+        candidates.sort(
+            key=lambda x: (x["priority"], -x["containment"], x["area"])
+        )
 
         # 最優先の候補を採用
         best = candidates[0]["block"]
         result[text_obj.id] = best.project_category
 
     return result
-
-
-def _calc_containment(text_bbox: BBox, block_bbox: BBox) -> float:
-    """
-    TextObject がブロック内にどれだけ含まれているか (0.0 - 1.0)
-
-    containment = intersection_area / text_area
-    """
-    intersection = text_bbox.intersection(block_bbox)
-    if intersection is None:
-        return 0.0
-    return intersection.area / text_bbox.area
 ```
 
-#### 5.4.4 マッチング例
+#### 5.4.5 マッチング例
 
 | ケース | TextObject | 候補ブロック | 結果 |
 |--------|-----------|-------------|------|
@@ -696,7 +724,8 @@ def filter_translatable(
 | `test_layout_category_enum` | カテゴリ Enum の網羅性 |
 | `test_layout_block_creation` | LayoutBlock データクラスの生成 |
 | `test_coordinate_conversion` | 画像→PDF 座標変換の正確性 |
-| `test_iou_calculation` | IoU 計算の正確性 |
+| `test_bbox_utils` | bbox_area, bbox_intersection, calc_containment |
+| `test_category_priority_matching` | 優先度ベースマッチングの正確性 |
 | `test_filter_translatable` | フィルタリングロジック |
 
 ### 6.2 統合テスト（オプション）
@@ -736,9 +765,12 @@ scripts/evaluation/
 
 **出力**: `src/pdf_translator/core/layout_utils.py`
 
-- [ ] `calculate_iou()` 関数
-- [ ] `_convert_image_to_pdf_coords()` 関数
-- [ ] `match_text_with_layout()` 関数
+- [ ] `bbox_area()` 関数
+- [ ] `bbox_intersection()` 関数
+- [ ] `calc_containment()` 関数
+- [ ] `convert_image_to_pdf_coords()` 関数（Y軸反転あり）
+- [ ] `CATEGORY_PRIORITY` 定義
+- [ ] `match_text_with_layout()` 関数（包含率+優先度ベース）
 - [ ] `filter_translatable()` 関数
 
 ### Phase 3: LayoutAnalyzer 実装
@@ -799,7 +831,7 @@ scripts/evaluation/
 | 項目 | 検証方法 | 許容基準 |
 |------|----------|----------|
 | 座標変換精度 | bbox 比較 | ±2.0pt |
-| マッチング精度 | IoU 計算 | > 0.3 で正しくマッチ |
+| マッチング精度 | 包含率計算 | containment ≥ 0.5 で正しくマッチ |
 | カテゴリ分類 | 手動確認 | 95%+ 正確 |
 | 処理速度 | 計測 | > 3 ページ/秒 (GPU) |
 
