@@ -264,11 +264,10 @@ class TestPDFEvaluation:
             print(f"Position errors: {len(result.position_errors)}")
 
             # For idempotency, we expect high match rate
-            # Note: Threshold is 80% due to get_text_bounded() overlap issue
-            # causing slight variations in extracted text. Once the overlap
-            # issue is resolved, this should be raised back to 90%.
-            assert result.match_rate >= 80.0, (
-                f"Match rate {result.match_rate:.2f}% is below 80% threshold"
+            # Using FPDFTextObj_GetText for precise text extraction eliminates
+            # bbox overlap issues, achieving 100% idempotency in tests.
+            assert result.match_rate >= 90.0, (
+                f"Match rate {result.match_rate:.2f}% is below 90% threshold"
             )
 
     def test_content_preservation(self) -> None:

@@ -252,6 +252,55 @@ class PDFProcessor:
         finally:
             textpage.close()
 
+    def _get_text_object_text_direct(
+        self, obj: pdfium.PdfObject, textpage: pdfium.PdfTextPage
+    ) -> str:
+        """Get text directly from a text object using FPDFTextObj_GetText.
+
+        This method extracts text that belongs specifically to this text object,
+        avoiding the bbox overlap issue present in get_text_bounded().
+
+        Args:
+            obj: Text page object
+            textpage: The textpage for the page containing the object
+
+        Returns:
+            Text content of the object (empty string if extraction fails)
+        """
+        try:
+            # First call: get required buffer size
+            length = pdfium.raw.FPDFTextObj_GetText(
+                obj.raw,
+                textpage.raw,
+                None,
+                0
+            )
+
+            if length == 0:
+                return ""
+
+            # Allocate buffer (UTF-16LE, each char is 2 bytes)
+            buffer = (ctypes.c_ushort * length)()
+
+            # Second call: get the text
+            pdfium.raw.FPDFTextObj_GetText(
+                obj.raw,
+                textpage.raw,
+                buffer,
+                length
+            )
+
+            # Convert UTF-16LE to Python string
+            chars = []
+            for i in range(length - 1):  # -1 to exclude null terminator
+                if buffer[i] == 0:
+                    break
+                chars.append(chr(buffer[i]))
+
+            return "".join(chars)
+        except Exception:
+            return ""
+
     def _get_text_object_content(
         self, page: pdfium.PdfPage, obj: pdfium.PdfObject
     ) -> str:
@@ -263,6 +312,11 @@ class PDFProcessor:
 
         Returns:
             Text content within the object's bounds
+
+        Note:
+            This method uses get_text_bounded() which may include text from
+            overlapping objects. For more precise extraction, use
+            _get_text_object_text_direct() instead.
         """
         bounds = obj.get_bounds()
         if bounds is None:
@@ -424,10 +478,9 @@ class PDFProcessor:
                     left, bottom, right, top = bounds
                     bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
 
-                    # Get text content using shared textpage
-                    text = textpage.get_text_bounded(
-                        left=left, bottom=bottom, right=right, top=top
-                    )
+                    # Get text content directly from the text object
+                    # This avoids bbox overlap issues present in get_text_bounded()
+                    text = self._get_text_object_text_direct(obj, textpage)
                     text = text.strip() if text else ""
                     if not text:
                         continue
