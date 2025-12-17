@@ -65,6 +65,22 @@ PP-DocLayoutV2 を使用した ML ベースのドキュメントレイアウト�
 
 **英語・中国語のみ** を公式サポート。日本語文書への適用は実機テストが必要。
 
+#### 読み順予測機能について
+
+V2 の「読み順予測」機能は PaddleOCR API からは**取得できない**ことが判明。
+
+```python
+# LayoutDetection.predict() の返り値
+['input_path', 'page_index', 'input_img', 'boxes']
+
+# boxes の各要素
+['cls_id', 'label', 'score', 'coordinate']
+
+# reading_order フィールドは存在しない
+```
+
+**結論**: 初期実装では「分類のみ」にスコープを限定。読み順は将来対応とする。
+
 ### 2.3 参照資料
 
 - `_archive/Index_PDF_Translation/docs/research/layout-analysis/document-layout-analysis-survey.md`
@@ -161,13 +177,43 @@ tests/
 
 ## 4. データモデル
 
-### 4.1 LayoutCategory Enum
+### 4.1 2層カテゴリ構造
 
-PP-DocLayoutV2 の 25 カテゴリを Enum として定義：
+モデル出力と翻訳ロジックを分離し、将来のモデル変更に強い設計とする。
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Raw Layer                            │
+│            (PP-DocLayoutV2 モデル出力)                   │
+├─────────────────────────────────────────────────────────┤
+│ text, paragraph_title, doc_title, abstract,             │
+│ inline_formula, display_formula, figure_title, ...      │
+└───────────────────────┬─────────────────────────────────┘
+                        │ マッピング
+                        ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Project Layer                         │
+│              (プロジェクト内部カテゴリ)                   │
+├─────────────────────────────────────────────────────────┤
+│ TEXT, TITLE, CAPTION, FORMULA, TABLE, IMAGE, HEADER, ...│
+└─────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+              翻訳ロジック（安定 API）
+```
+
+**利点:**
+- モデルバージョン変更時も翻訳ロジックは不変
+- 将来的に他モデル（DocLayout-YOLO 等）への切り替えも容易
+- テストが安定
+
+### 4.2 RawLayoutCategory Enum (Raw Layer)
+
+PP-DocLayoutV2 の生のラベルを Enum として定義：
 
 ```python
-class LayoutCategory(str, Enum):
-    """PP-DocLayoutV2 の検出カテゴリ"""
+class RawLayoutCategory(str, Enum):
+    """PP-DocLayoutV2 の生カテゴリ（モデル出力そのまま）"""
 
     # テキスト系
     TEXT = "text"
@@ -176,15 +222,16 @@ class LayoutCategory(str, Enum):
     ABSTRACT = "abstract"
     ASIDE_TEXT = "aside_text"
 
-    # 数式系 (V2: inline/display 区別)
+    # 数式系
     INLINE_FORMULA = "inline_formula"
     DISPLAY_FORMULA = "display_formula"
+    FORMULA_NUMBER = "formula_number"
     ALGORITHM = "algorithm"
 
     # 図表系
     TABLE = "table"
     IMAGE = "image"
-    FIGURE_TITLE = "figure_title"  # table/chart キャプション含む
+    FIGURE_TITLE = "figure_title"
     CHART = "chart"
 
     # コード
@@ -193,7 +240,7 @@ class LayoutCategory(str, Enum):
     # ナビゲーション系
     HEADER = "header"
     FOOTER = "footer"
-    NUMBER = "number"  # ページ番号等
+    NUMBER = "number"
 
     # 参照系
     REFERENCE = "reference"
@@ -205,11 +252,74 @@ class LayoutCategory(str, Enum):
     CONTENT = "content"
     TABLE_OF_CONTENTS = "table_of_contents"
 
-    # 未知のカテゴリ
+    # 未知
     UNKNOWN = "unknown"
 ```
 
-### 4.2 LayoutBlock データクラス
+### 4.3 ProjectCategory Enum (Project Layer)
+
+翻訳ロジックが依存する安定カテゴリ：
+
+```python
+class ProjectCategory(str, Enum):
+    """プロジェクト内部の安定カテゴリ"""
+
+    # 翻訳対象
+    TEXT = "text"           # 本文テキスト
+    TITLE = "title"         # 見出し・タイトル
+    CAPTION = "caption"     # キャプション（図表共通）
+
+    # 翻訳除外
+    FOOTNOTE = "footnote"   # 脚注
+    FORMULA = "formula"     # 数式（inline/display 統合）
+    CODE = "code"           # コード・アルゴリズム
+    TABLE = "table"         # 表
+    IMAGE = "image"         # 画像
+    CHART = "chart"         # チャート
+    HEADER = "header"       # ヘッダー・フッター
+    REFERENCE = "reference" # 参考文献
+
+    # その他
+    OTHER = "other"         # 上記以外
+```
+
+### 4.4 カテゴリマッピング
+
+```python
+RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
+    # 翻訳対象
+    RawLayoutCategory.TEXT: ProjectCategory.TEXT,
+    RawLayoutCategory.ABSTRACT: ProjectCategory.TEXT,
+    RawLayoutCategory.ASIDE_TEXT: ProjectCategory.TEXT,
+    RawLayoutCategory.PARAGRAPH_TITLE: ProjectCategory.TITLE,
+    RawLayoutCategory.DOC_TITLE: ProjectCategory.TITLE,
+    RawLayoutCategory.FIGURE_TITLE: ProjectCategory.CAPTION,
+    RawLayoutCategory.FOOTNOTE: ProjectCategory.FOOTNOTE,
+
+    # 翻訳除外
+    RawLayoutCategory.INLINE_FORMULA: ProjectCategory.FORMULA,
+    RawLayoutCategory.DISPLAY_FORMULA: ProjectCategory.FORMULA,
+    RawLayoutCategory.FORMULA_NUMBER: ProjectCategory.FORMULA,
+    RawLayoutCategory.ALGORITHM: ProjectCategory.CODE,
+    RawLayoutCategory.CODE_BLOCK: ProjectCategory.CODE,
+    RawLayoutCategory.TABLE: ProjectCategory.TABLE,
+    RawLayoutCategory.IMAGE: ProjectCategory.IMAGE,
+    RawLayoutCategory.CHART: ProjectCategory.CHART,
+    RawLayoutCategory.HEADER: ProjectCategory.HEADER,
+    RawLayoutCategory.FOOTER: ProjectCategory.HEADER,
+    RawLayoutCategory.NUMBER: ProjectCategory.HEADER,
+    RawLayoutCategory.REFERENCE: ProjectCategory.REFERENCE,
+    RawLayoutCategory.REFERENCE_CONTENT: ProjectCategory.REFERENCE,
+
+    # その他
+    RawLayoutCategory.SEAL: ProjectCategory.OTHER,
+    RawLayoutCategory.CONTENT: ProjectCategory.OTHER,
+    RawLayoutCategory.TABLE_OF_CONTENTS: ProjectCategory.OTHER,
+    RawLayoutCategory.UNKNOWN: ProjectCategory.OTHER,
+}
+```
+
+### 4.5 LayoutBlock データクラス
 
 ```python
 @dataclass
@@ -217,28 +327,28 @@ class LayoutBlock:
     """レイアウト検出結果"""
 
     bbox: BBox
-    category: LayoutCategory
+    raw_category: RawLayoutCategory   # モデル出力（Raw Layer）
+    project_category: ProjectCategory  # 正規化済み（Project Layer）
     confidence: float
     page_num: int
 ```
 
-### 4.3 翻訳対象分類
+### 4.6 翻訳対象分類 (Project Layer ベース)
 
-| 分類 | カテゴリ | 翻訳対象 | 備考 |
-|------|---------|:--------:|------|
-| 本文 | `TEXT`, `ABSTRACT` | ✅ ON | メインコンテンツ |
-| 見出し | `PARAGRAPH_TITLE`, `DOC_TITLE` | ✅ ON | タイトル・セクション |
-| キャプション | `FIGURE_TITLE` | ✅ ON | 図表・チャートキャプション統合 |
-| 脚注 | `FOOTNOTE` | ✅ ON | 注釈 |
-| 参照見出し | `REFERENCE` | ⚠️ 要検討 | "References" セクション見出し |
-| 補足 | `ASIDE_TEXT` | ⚠️ 要検討 | サイドテキスト |
-| 参照内容 | `REFERENCE_CONTENT` | ❌ OFF | 著者名・論文タイトル等 |
-| 数式 | `INLINE_FORMULA`, `DISPLAY_FORMULA` | ❌ OFF | 数式は翻訳しない |
-| アルゴリズム | `ALGORITHM` | ❌ OFF | 疑似コード等 |
-| コード | `CODE_BLOCK` | ❌ OFF | ソースコード |
-| 図表 | `TABLE`, `IMAGE`, `CHART` | ❌ OFF | 視覚要素 |
-| ナビゲーション | `HEADER`, `FOOTER`, `NUMBER` | ❌ OFF | ヘッダー・フッター・ページ番号 |
-| その他 | `SEAL`, `TABLE_OF_CONTENTS` | ❌ OFF | 印鑑・目次 |
+| ProjectCategory | 翻訳対象 | 対応する RawLayoutCategory |
+|-----------------|:--------:|----------------------------|
+| `TEXT` | ✅ ON | text, abstract, aside_text |
+| `TITLE` | ✅ ON | paragraph_title, doc_title |
+| `CAPTION` | ✅ ON | figure_title |
+| `FOOTNOTE` | ❌ OFF | footnote |
+| `FORMULA` | ❌ OFF | inline_formula, display_formula, formula_number |
+| `CODE` | ❌ OFF | algorithm, code_block |
+| `TABLE` | ❌ OFF | table |
+| `IMAGE` | ❌ OFF | image |
+| `CHART` | ❌ OFF | chart |
+| `HEADER` | ❌ OFF | header, footer, number |
+| `REFERENCE` | ❌ OFF | reference, reference_content |
+| `OTHER` | ❌ OFF | seal, content, table_of_contents, unknown |
 
 ---
 
@@ -390,60 +500,51 @@ def match_text_with_layout(
     ...
 ```
 
-### 5.5 フィルタリング関数
+### 5.5 フィルタリング関数 (Project Layer ベース)
 
 ```python
-# 翻訳対象カテゴリ (V2)
+# 翻訳対象カテゴリ (Project Layer)
 TRANSLATABLE_CATEGORIES = {
-    LayoutCategory.TEXT,
-    LayoutCategory.ABSTRACT,
-    LayoutCategory.PARAGRAPH_TITLE,
-    LayoutCategory.DOC_TITLE,
-    LayoutCategory.FIGURE_TITLE,  # table/chart キャプション含む
-    LayoutCategory.FOOTNOTE,
+    ProjectCategory.TEXT,
+    ProjectCategory.TITLE,
+    ProjectCategory.CAPTION,
 }
 
-# オプション（設定で切り替え）
-OPTIONAL_TRANSLATABLE = {
-    LayoutCategory.REFERENCE,
-    LayoutCategory.ASIDE_TEXT,
-}
-
-# 翻訳除外カテゴリ (V2)
+# 翻訳除外カテゴリ (Project Layer)
 NON_TRANSLATABLE_CATEGORIES = {
-    LayoutCategory.INLINE_FORMULA,
-    LayoutCategory.DISPLAY_FORMULA,
-    LayoutCategory.ALGORITHM,
-    LayoutCategory.CODE_BLOCK,
-    LayoutCategory.TABLE,
-    LayoutCategory.IMAGE,
-    LayoutCategory.CHART,
-    LayoutCategory.HEADER,
-    LayoutCategory.FOOTER,
-    LayoutCategory.NUMBER,
-    LayoutCategory.REFERENCE_CONTENT,
-    LayoutCategory.SEAL,
-    LayoutCategory.TABLE_OF_CONTENTS,
+    ProjectCategory.FOOTNOTE,
+    ProjectCategory.FORMULA,
+    ProjectCategory.CODE,
+    ProjectCategory.TABLE,
+    ProjectCategory.IMAGE,
+    ProjectCategory.CHART,
+    ProjectCategory.HEADER,
+    ProjectCategory.REFERENCE,
+    ProjectCategory.OTHER,
 }
 
 def filter_translatable(
     text_objects: list[TextObject],
-    categories: dict[str, LayoutCategory],
-    include_optional: bool = False,
+    categories: dict[str, ProjectCategory],
 ) -> list[TextObject]:
     """
     翻訳対象の TextObject をフィルタリング
 
     Args:
         text_objects: 全 TextObject リスト
-        categories: TextObject.id → LayoutCategory のマッピング
-        include_optional: REFERENCE, ASIDE_TEXT を含めるか
+        categories: TextObject.id → ProjectCategory のマッピング
 
     Returns:
         翻訳対象の TextObject リスト
     """
-    ...
+    return [
+        obj for obj in text_objects
+        if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
+    ]
 ```
+
+**ポイント**: フィルタリングは `ProjectCategory` (Project Layer) を使用。
+モデル出力の `RawLayoutCategory` は内部で `ProjectCategory` に変換される。
 
 ---
 
