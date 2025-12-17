@@ -7,6 +7,8 @@ text-layout matching functions for PP-DocLayout integration.
 
 from __future__ import annotations
 
+from typing import Any
+
 from .models import (
     TRANSLATABLE_CATEGORIES,
     BBox,
@@ -24,7 +26,6 @@ CATEGORY_PRIORITY: dict[RawLayoutCategory, int] = {
     RawLayoutCategory.DISPLAY_FORMULA: 1,
     RawLayoutCategory.FORMULA_NUMBER: 1,
     RawLayoutCategory.ALGORITHM: 2,
-    RawLayoutCategory.CODE_BLOCK: 2,
     # 次点: 通常は翻訳しないもの
     RawLayoutCategory.TABLE: 3,
     RawLayoutCategory.IMAGE: 4,
@@ -33,21 +34,24 @@ CATEGORY_PRIORITY: dict[RawLayoutCategory, int] = {
     RawLayoutCategory.FIGURE_TITLE: 5,
     # テキスト系
     RawLayoutCategory.TEXT: 6,
+    RawLayoutCategory.VERTICAL_TEXT: 6,
     RawLayoutCategory.PARAGRAPH_TITLE: 6,
     RawLayoutCategory.DOC_TITLE: 6,
     RawLayoutCategory.ABSTRACT: 6,
     RawLayoutCategory.ASIDE_TEXT: 6,
     # その他
     RawLayoutCategory.FOOTNOTE: 7,
+    RawLayoutCategory.VISION_FOOTNOTE: 7,
     RawLayoutCategory.HEADER: 8,
+    RawLayoutCategory.HEADER_IMAGE: 8,
     RawLayoutCategory.FOOTER: 8,
+    RawLayoutCategory.FOOTER_IMAGE: 8,
     RawLayoutCategory.NUMBER: 8,
     RawLayoutCategory.REFERENCE: 9,
     RawLayoutCategory.REFERENCE_CONTENT: 9,
     # 未定義カテゴリは最低優先度
     RawLayoutCategory.SEAL: 99,
     RawLayoutCategory.CONTENT: 99,
-    RawLayoutCategory.TABLE_OF_CONTENTS: 99,
     RawLayoutCategory.UNKNOWN: 99,
 }
 
@@ -181,7 +185,7 @@ def match_text_with_layout(
 
     for text_obj in text_objects:
         # Step 1: Extract candidate blocks
-        candidates: list[dict] = []
+        candidates: list[dict[str, Any]] = []
         for block in layout_blocks:
             containment = calc_containment(text_obj.bbox, block.bbox)
             if containment >= containment_threshold:

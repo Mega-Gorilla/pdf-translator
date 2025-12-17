@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import pypdfium2 as pdfium
+import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
 from .layout_utils import convert_image_to_pdf_coords
 from .models import (
@@ -24,7 +24,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from PIL import Image
+    from PIL import Image  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class LayoutAnalyzer:
             LayoutDetection model instance
         """
         if self._model is None:
-            from paddleocr import LayoutDetection
+            from paddleocr import LayoutDetection  # type: ignore[import-not-found]
 
             logger.info("Initializing %s model...", self._model_name)
             self._model = LayoutDetection(model_name=self._model_name)
@@ -80,20 +80,23 @@ class LayoutAnalyzer:
         self,
         pdf_path: str | Path,
         page_num: int,
+        pdf_doc: Any | None = None,
     ) -> tuple["Image.Image", float, float]:
         """Render a PDF page to an image.
 
         Args:
             pdf_path: Path to PDF file
             page_num: Page number (0-indexed)
+            pdf_doc: Optional pre-opened PdfDocument for efficiency
 
         Returns:
             Tuple of (PIL Image, page_width, page_height)
         """
         from PIL import Image as PILImage
 
-        pdf = pdfium.PdfDocument(str(pdf_path))
-        page = pdf[page_num]
+        if pdf_doc is None:
+            pdf_doc = pdfium.PdfDocument(str(pdf_path))
+        page = pdf_doc[page_num]
 
         # Get original page dimensions (in points)
         page_width = page.get_width()
@@ -107,7 +110,7 @@ class LayoutAnalyzer:
 
     def _parse_detections(
         self,
-        output: list[dict],
+        output: list[dict[str, Any]],
         page_width: float,
         page_height: float,
         image_width: int,
@@ -234,19 +237,58 @@ class LayoutAnalyzer:
     ) -> dict[int, list[LayoutBlock]]:
         """Analyze layout of all pages.
 
+        Opens PDF once and reuses for all pages (more efficient than
+        calling analyze() separately for each page).
+
         Args:
             pdf_path: Path to PDF file
 
         Returns:
             Dict mapping page number → list of LayoutBlocks
         """
-        pdf = pdfium.PdfDocument(str(pdf_path))
-        page_count = len(pdf)
+        model = self._ensure_model()
+        pdf_doc = pdfium.PdfDocument(str(pdf_path))
+        page_count = len(pdf_doc)
 
         logger.info("Analyzing %d pages...", page_count)
 
         results: dict[int, list[LayoutBlock]] = {}
         for page_num in range(page_count):
-            results[page_num] = self.analyze(pdf_path, page_num)
+            # Render page to image (reusing pdf_doc)
+            image, page_width, page_height = self._render_page_to_image(
+                pdf_path, page_num, pdf_doc=pdf_doc
+            )
+            image_width, image_height = image.size
+
+            # Save to temp file for model input
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                temp_path = f.name
+                image.save(temp_path)
+
+            try:
+                # Run detection
+                output = model.predict(temp_path, batch_size=1, layout_nms=True)
+
+                # Parse results
+                blocks = self._parse_detections(
+                    output,
+                    page_width,
+                    page_height,
+                    image_width,
+                    image_height,
+                    page_num,
+                )
+
+                logger.info(
+                    "Page %d: detected %d blocks",
+                    page_num,
+                    len(blocks),
+                )
+
+                results[page_num] = blocks
+
+            finally:
+                # Clean up temp file
+                Path(temp_path).unlink(missing_ok=True)
 
         return results

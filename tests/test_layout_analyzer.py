@@ -62,20 +62,21 @@ class TestRawLayoutCategory:
             "image",
             "figure_title",
             "chart",
-            # コード
-            "code_block",
             # ナビゲーション系
             "header",
+            "header_image",
             "footer",
+            "footer_image",
             "number",
             # 参照系
             "reference",
             "reference_content",
             "footnote",
+            "vision_footnote",
             # その他
             "seal",
             "content",
-            "table_of_contents",
+            "vertical_text",
             # 未知
             "unknown",
         }
@@ -94,6 +95,44 @@ class TestRawLayoutCategory:
         """Verify all raw categories map to project categories."""
         for raw_cat in RawLayoutCategory:
             assert raw_cat in RAW_TO_PROJECT_MAPPING
+
+    def test_matches_official_label_list(self) -> None:
+        """Verify RawLayoutCategory matches PP-DocLayoutV2 official label_list.
+
+        Source: https://huggingface.co/PaddlePaddle/PP-DocLayoutV2/raw/main/config.json
+        """
+        official_label_list = {
+            "abstract",
+            "algorithm",
+            "aside_text",
+            "chart",
+            "content",
+            "display_formula",
+            "doc_title",
+            "figure_title",
+            "footer",
+            "footer_image",
+            "footnote",
+            "formula_number",
+            "header",
+            "header_image",
+            "image",
+            "inline_formula",
+            "number",
+            "paragraph_title",
+            "reference",
+            "reference_content",
+            "seal",
+            "table",
+            "text",
+            "vertical_text",
+            "vision_footnote",
+        }
+        # UNKNOWN is our fallback, not in official list
+        our_categories = {
+            cat.value for cat in RawLayoutCategory if cat != RawLayoutCategory.UNKNOWN
+        }
+        assert our_categories == official_label_list
 
 
 class TestProjectCategory:
@@ -535,7 +574,7 @@ class TestCategoryPriority:
             RawLayoutCategory.DISPLAY_FORMULA,
             RawLayoutCategory.TABLE,
             RawLayoutCategory.IMAGE,
-            RawLayoutCategory.CODE_BLOCK,
+            RawLayoutCategory.ALGORITHM,
         ]
         for cat in important_categories:
             assert cat in CATEGORY_PRIORITY

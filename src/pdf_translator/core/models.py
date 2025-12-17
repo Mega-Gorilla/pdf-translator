@@ -20,11 +20,13 @@ class RawLayoutCategory(str, Enum):
     """PP-DocLayoutV2 の生カテゴリ（モデル出力そのまま）.
 
     PP-DocLayoutV2 が出力する 25 種類のカテゴリをそのまま定義。
+    公式 label_list: https://huggingface.co/PaddlePaddle/PP-DocLayoutV2/raw/main/config.json
     モデルバージョン変更時にはここを更新する。
     """
 
     # テキスト系
     TEXT = "text"
+    VERTICAL_TEXT = "vertical_text"  # 縦書きテキスト
     PARAGRAPH_TITLE = "paragraph_title"
     DOC_TITLE = "doc_title"
     ABSTRACT = "abstract"
@@ -42,25 +44,24 @@ class RawLayoutCategory(str, Enum):
     FIGURE_TITLE = "figure_title"
     CHART = "chart"
 
-    # コード
-    CODE_BLOCK = "code_block"
-
     # ナビゲーション系
     HEADER = "header"
+    HEADER_IMAGE = "header_image"  # ヘッダー内画像
     FOOTER = "footer"
+    FOOTER_IMAGE = "footer_image"  # フッター内画像
     NUMBER = "number"
 
     # 参照系
     REFERENCE = "reference"
     REFERENCE_CONTENT = "reference_content"
     FOOTNOTE = "footnote"
+    VISION_FOOTNOTE = "vision_footnote"  # 視覚的脚注
 
     # その他
     SEAL = "seal"
     CONTENT = "content"
-    TABLE_OF_CONTENTS = "table_of_contents"
 
-    # 未知
+    # 未知（フォールバック用、公式 label_list には含まれない）
     UNKNOWN = "unknown"
 
 
@@ -94,30 +95,32 @@ class ProjectCategory(str, Enum):
 RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
     # 翻訳対象
     RawLayoutCategory.TEXT: ProjectCategory.TEXT,
+    RawLayoutCategory.VERTICAL_TEXT: ProjectCategory.TEXT,  # 縦書きも翻訳対象
     RawLayoutCategory.ABSTRACT: ProjectCategory.TEXT,
     RawLayoutCategory.ASIDE_TEXT: ProjectCategory.TEXT,
     RawLayoutCategory.PARAGRAPH_TITLE: ProjectCategory.TITLE,
     RawLayoutCategory.DOC_TITLE: ProjectCategory.TITLE,
     RawLayoutCategory.FIGURE_TITLE: ProjectCategory.CAPTION,
     RawLayoutCategory.FOOTNOTE: ProjectCategory.FOOTNOTE,
+    RawLayoutCategory.VISION_FOOTNOTE: ProjectCategory.FOOTNOTE,  # 視覚的脚注
     # 翻訳除外
     RawLayoutCategory.INLINE_FORMULA: ProjectCategory.FORMULA,
     RawLayoutCategory.DISPLAY_FORMULA: ProjectCategory.FORMULA,
     RawLayoutCategory.FORMULA_NUMBER: ProjectCategory.FORMULA,
     RawLayoutCategory.ALGORITHM: ProjectCategory.CODE,
-    RawLayoutCategory.CODE_BLOCK: ProjectCategory.CODE,
     RawLayoutCategory.TABLE: ProjectCategory.TABLE,
     RawLayoutCategory.IMAGE: ProjectCategory.IMAGE,
     RawLayoutCategory.CHART: ProjectCategory.CHART,
     RawLayoutCategory.HEADER: ProjectCategory.HEADER,
+    RawLayoutCategory.HEADER_IMAGE: ProjectCategory.HEADER,  # ヘッダー画像
     RawLayoutCategory.FOOTER: ProjectCategory.HEADER,
+    RawLayoutCategory.FOOTER_IMAGE: ProjectCategory.HEADER,  # フッター画像
     RawLayoutCategory.NUMBER: ProjectCategory.HEADER,
     RawLayoutCategory.REFERENCE: ProjectCategory.REFERENCE,
     RawLayoutCategory.REFERENCE_CONTENT: ProjectCategory.REFERENCE,
     # その他
     RawLayoutCategory.SEAL: ProjectCategory.OTHER,
     RawLayoutCategory.CONTENT: ProjectCategory.OTHER,
-    RawLayoutCategory.TABLE_OF_CONTENTS: ProjectCategory.OTHER,
     RawLayoutCategory.UNKNOWN: ProjectCategory.OTHER,
 }
 

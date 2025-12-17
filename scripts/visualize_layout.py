@@ -33,9 +33,11 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 # カテゴリ別の色定義 (RGB)
+# PP-DocLayoutV2 公式 label_list に対応
 CATEGORY_COLORS: dict[str, tuple[int, int, int]] = {
     # 翻訳対象 (緑系)
     "text": (0, 200, 0),
+    "vertical_text": (0, 180, 0),
     "paragraph_title": (0, 150, 0),
     "doc_title": (0, 100, 0),
     "abstract": (50, 200, 50),
@@ -45,9 +47,8 @@ CATEGORY_COLORS: dict[str, tuple[int, int, int]] = {
     "inline_formula": (255, 0, 0),
     "display_formula": (200, 0, 0),
     "formula_number": (150, 0, 0),
-    # コード/アルゴリズム (紫系) - 翻訳除外
+    # アルゴリズム (紫系) - 翻訳除外
     "algorithm": (150, 0, 150),
-    "code_block": (200, 0, 200),
     # 表 (青系) - 翻訳除外
     "table": (0, 0, 255),
     # 画像/チャート (オレンジ系) - 翻訳除外
@@ -55,16 +56,18 @@ CATEGORY_COLORS: dict[str, tuple[int, int, int]] = {
     "chart": (255, 140, 0),
     # ナビゲーション (グレー系) - 翻訳除外
     "header": (128, 128, 128),
+    "header_image": (110, 110, 110),
     "footer": (100, 100, 100),
+    "footer_image": (90, 90, 90),
     "number": (150, 150, 150),
     # 参照 (茶系) - 翻訳除外
     "reference": (139, 69, 19),
     "reference_content": (160, 82, 45),
     "footnote": (205, 133, 63),
+    "vision_footnote": (180, 110, 50),
     # その他 (シアン系)
     "seal": (0, 200, 200),
     "content": (0, 150, 150),
-    "table_of_contents": (0, 180, 180),
     "unknown": (128, 128, 128),
 }
 
@@ -155,28 +158,30 @@ def get_project_category(raw_label: str) -> str:
     """RawLayoutCategory → ProjectCategory マッピング"""
     mapping = {
         "text": "text",
+        "vertical_text": "text",
         "abstract": "text",
         "aside_text": "text",
         "paragraph_title": "title",
         "doc_title": "title",
         "figure_title": "caption",
         "footnote": "footnote",
+        "vision_footnote": "footnote",
         "inline_formula": "formula",
         "display_formula": "formula",
         "formula_number": "formula",
         "algorithm": "code",
-        "code_block": "code",
         "table": "table",
         "image": "image",
         "chart": "chart",
         "header": "header",
+        "header_image": "header",
         "footer": "header",
+        "footer_image": "header",
         "number": "header",
         "reference": "reference",
         "reference_content": "reference",
         "seal": "other",
         "content": "other",
-        "table_of_contents": "other",
     }
     return mapping.get(raw_label, "other")
 
@@ -269,16 +274,18 @@ def create_legend_image(
     else:
         used_labels = set(CATEGORY_COLORS.keys())
 
-    # カテゴリをグループ化
+    # カテゴリをグループ化 (PP-DocLayoutV2 公式 label_list 対応)
     groups = {
-        "翻訳対象 (Translatable)": ["text", "paragraph_title", "doc_title",
-                                     "abstract", "aside_text", "figure_title"],
+        "翻訳対象 (Translatable)": ["text", "vertical_text", "paragraph_title",
+                                     "doc_title", "abstract", "aside_text",
+                                     "figure_title"],
         "数式 (Formula)": ["inline_formula", "display_formula", "formula_number"],
-        "コード (Code)": ["algorithm", "code_block"],
+        "コード (Code)": ["algorithm"],
         "表/図 (Table/Figure)": ["table", "image", "chart"],
-        "その他 (Other)": ["header", "footer", "number", "reference",
-                          "reference_content", "footnote", "seal",
-                          "content", "table_of_contents", "unknown"],
+        "その他 (Other)": ["header", "header_image", "footer", "footer_image",
+                          "number", "reference", "reference_content",
+                          "footnote", "vision_footnote", "seal", "content",
+                          "unknown"],
     }
 
     # 高さを計算
