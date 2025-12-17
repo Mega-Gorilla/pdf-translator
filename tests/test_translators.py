@@ -161,8 +161,32 @@ class TestGoogleTranslatorIntegration:
             assert translated != original
 
 
+def _has_aiohttp() -> bool:
+    """Check if aiohttp is available."""
+    try:
+        import aiohttp  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _has_openai() -> bool:
+    """Check if openai is available."""
+    try:
+        import openai  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _has_aiohttp(), reason="aiohttp not installed")
 class TestDeepLTranslatorUnit:
-    """Unit tests for DeepLTranslator (mocked)."""
+    """Unit tests for DeepLTranslator (mocked).
+
+    Requires: pip install pdf-translator[deepl]
+    """
 
     def test_requires_api_key(self) -> None:
         """DeepLTranslator should require API key."""
@@ -271,8 +295,12 @@ class TestDeepLTranslatorUnit:
         assert result[3] == "世界"
 
 
+@pytest.mark.skipif(not _has_openai(), reason="openai not installed")
 class TestOpenAITranslatorUnit:
-    """Unit tests for OpenAITranslator (mocked)."""
+    """Unit tests for OpenAITranslator (mocked).
+
+    Requires: pip install pdf-translator[openai]
+    """
 
     def test_requires_api_key(self) -> None:
         """OpenAITranslator should require API key."""
@@ -330,11 +358,13 @@ class TestOpenAITranslatorUnit:
 class TestLazyImports:
     """Test lazy import functions."""
 
+    @pytest.mark.skipif(not _has_aiohttp(), reason="aiohttp not installed")
     def test_get_deepl_translator_returns_class(self) -> None:
         """get_deepl_translator should return DeepLTranslator class."""
         DeepLTranslator = get_deepl_translator()
         assert DeepLTranslator.__name__ == "DeepLTranslator"
 
+    @pytest.mark.skipif(not _has_openai(), reason="openai not installed")
     def test_get_openai_translator_returns_class(self) -> None:
         """get_openai_translator should return OpenAITranslator class."""
         OpenAITranslator = get_openai_translator()
