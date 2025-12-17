@@ -256,13 +256,20 @@ class OpenAITranslator:
     def _get_openai_errors(self) -> tuple[type[Exception], ...]:
         """Get OpenAI exception types for error handling.
 
+        Catches OpenAIError (base class) to handle all API errors including:
+        - AuthenticationError
+        - RateLimitError
+        - BadRequestError
+        - APIConnectionError
+        - APITimeoutError
+
         Returns:
             Tuple of exception types to catch.
         """
         try:
-            from openai import APIError, AuthenticationError, RateLimitError
+            from openai import OpenAIError
 
-            return (APIError, AuthenticationError, RateLimitError)
+            return (OpenAIError,)
         except ImportError:
             return (Exception,)
 

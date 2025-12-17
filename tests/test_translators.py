@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for translation backends."""
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -118,8 +119,16 @@ class TestGoogleTranslator:
             assert "Google Translate failed" in str(exc_info.value)
 
 
+@pytest.mark.skipif(
+    os.environ.get("RUN_INTEGRATION") != "1",
+    reason="Integration tests disabled (set RUN_INTEGRATION=1 to run)",
+)
 class TestGoogleTranslatorIntegration:
-    """Integration tests for GoogleTranslator (real API)."""
+    """Integration tests for GoogleTranslator (real API).
+
+    These tests require network access and call the real Google Translate API.
+    Run with: RUN_INTEGRATION=1 pytest tests/test_translators.py
+    """
 
     @pytest.mark.asyncio
     async def test_real_translation_en_to_ja(self) -> None:

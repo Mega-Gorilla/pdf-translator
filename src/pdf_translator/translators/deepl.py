@@ -239,7 +239,14 @@ class DeepLTranslator:
             async with session.post(self._api_url, data=params) as response:
                 if response.status == 200:
                     data = await response.json()
-                    return [t["text"] for t in data["translations"]]
+                    translations = [t["text"] for t in data["translations"]]
+                    # Validate response length matches input
+                    if len(translations) != len(texts):
+                        raise TranslationError(
+                            f"DeepL returned {len(translations)} translations "
+                            f"for {len(texts)} texts"
+                        )
+                    return translations
                 elif response.status == 403:
                     raise ConfigurationError("Invalid DeepL API key")
                 elif response.status == 429:
