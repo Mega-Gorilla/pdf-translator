@@ -573,7 +573,7 @@ class TestGoogleTranslatorIntegration:
 
 ### Phase 6: テスト (`test_translators.py`)
 - [ ] ユニットテスト（モック）
-- [ ] 統合テスト（opt-in）
+- [ ] 統合テスト（Google自動、DeepL/OpenAI手動）
 
 ---
 
@@ -581,10 +581,10 @@ class TestGoogleTranslatorIntegration:
 
 | 項目 | 基準 |
 |------|------|
-| pytest | 全テスト通過 |
+| pytest | 全テスト通過（Google統合テスト含む） |
 | ruff | All checks passed |
 | mypy | Success: no issues found |
-| 統合テスト | ローカルで動作確認済み |
+| DeepL/OpenAI | 手動検証スクリプトで動作確認済み |
 
 ---
 
