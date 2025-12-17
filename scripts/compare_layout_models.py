@@ -85,15 +85,15 @@ def print_comparison(v1_results: dict, v2_results: dict) -> None:
     v1_cats = set(v1_results["categories"].keys())
     v2_cats = set(v2_results["categories"].keys())
 
-    print(f"\n[検出数]")
+    print("\n[検出数]")
     print(f"  V1 (PP-DocLayout-L): {len(v1_results['detections'])} 検出")
     print(f"  V2 (PP-DocLayoutV2): {len(v2_results['detections'])} 検出")
 
-    print(f"\n[カテゴリ数]")
+    print("\n[カテゴリ数]")
     print(f"  V1: {len(v1_cats)} カテゴリ")
     print(f"  V2: {len(v2_cats)} カテゴリ")
 
-    print(f"\n[V1 のみに存在するカテゴリ]")
+    print("\n[V1 のみに存在するカテゴリ]")
     v1_only = v1_cats - v2_cats
     if v1_only:
         for cat in sorted(v1_only):
@@ -101,7 +101,7 @@ def print_comparison(v1_results: dict, v2_results: dict) -> None:
     else:
         print("  (なし)")
 
-    print(f"\n[V2 のみに存在するカテゴリ]")
+    print("\n[V2 のみに存在するカテゴリ]")
     v2_only = v2_cats - v1_cats
     if v2_only:
         for cat in sorted(v2_only):
@@ -109,7 +109,7 @@ def print_comparison(v1_results: dict, v2_results: dict) -> None:
     else:
         print("  (なし)")
 
-    print(f"\n[共通カテゴリの検出数比較]")
+    print("\n[共通カテゴリの検出数比較]")
     common = v1_cats & v2_cats
     print(f"  {'カテゴリ':<25} {'V1':>6} {'V2':>6} {'差分':>8}")
     print(f"  {'-'*25} {'-'*6} {'-'*6} {'-'*8}")
@@ -121,47 +121,47 @@ def print_comparison(v1_results: dict, v2_results: dict) -> None:
         print(f"  {cat:<25} {v1_count:>6} {v2_count:>6} {diff_str:>8}")
 
     # 詳細なカテゴリ一覧
-    print(f"\n[V1 全カテゴリ詳細]")
+    print("\n[V1 全カテゴリ詳細]")
     for cat, count in sorted(v1_results["categories"].items()):
         print(f"  {cat}: {count}")
 
-    print(f"\n[V2 全カテゴリ詳細]")
+    print("\n[V2 全カテゴリ詳細]")
     for cat, count in sorted(v2_results["categories"].items()):
         print(f"  {cat}: {count}")
 
     # キャプション関連の検証
-    print(f"\n[キャプション検出検証]")
+    print("\n[キャプション検出検証]")
     caption_v1 = {k: v for k, v in v1_results["categories"].items()
                   if "title" in k.lower() or "caption" in k.lower()}
     caption_v2 = {k: v for k, v in v2_results["categories"].items()
                   if "title" in k.lower() or "caption" in k.lower()}
 
-    print(f"  V1 キャプション関連:")
+    print("  V1 キャプション関連:")
     for cat, count in sorted(caption_v1.items()):
         print(f"    - {cat}: {count}")
 
-    print(f"  V2 キャプション関連:")
+    print("  V2 キャプション関連:")
     for cat, count in sorted(caption_v2.items()):
         print(f"    - {cat}: {count}")
 
     # 数式関連の検証
-    print(f"\n[数式検出検証]")
+    print("\n[数式検出検証]")
     formula_v1 = {k: v for k, v in v1_results["categories"].items()
                   if "formula" in k.lower()}
     formula_v2 = {k: v for k, v in v2_results["categories"].items()
                   if "formula" in k.lower()}
 
-    print(f"  V1 数式関連:")
+    print("  V1 数式関連:")
     for cat, count in sorted(formula_v1.items()):
         print(f"    - {cat}: {count}")
     if not formula_v1:
-        print(f"    (なし)")
+        print("    (なし)")
 
-    print(f"  V2 数式関連:")
+    print("  V2 数式関連:")
     for cat, count in sorted(formula_v2.items()):
         print(f"    - {cat}: {count}")
     if not formula_v2:
-        print(f"    (なし)")
+        print("    (なし)")
 
 
 def save_results_json(v1_results: dict, v2_results: dict, output_path: str) -> None:

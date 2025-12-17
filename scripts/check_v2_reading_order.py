@@ -64,10 +64,15 @@ def check_reading_order():
                 if key == "boxes":
                     print(f"\n[boxes] ({len(value)} 件)")
                     if value:
-                        print(f"  First box keys: {list(value[0].keys()) if isinstance(value[0], dict) else 'N/A'}")
-                        print(f"  First box sample: {json.dumps(value[0], indent=4, default=str)[:500]}")
+                        first_keys = (
+                            list(value[0].keys()) if isinstance(value[0], dict)
+                            else "N/A"
+                        )
+                        print(f"  First box keys: {first_keys}")
+                        sample = json.dumps(value[0], indent=4, default=str)[:500]
+                        print(f"  First box sample: {sample}")
                 elif key == "reading_order":
-                    print(f"\n[reading_order] ✅ 存在!")
+                    print("\n[reading_order] ✅ 存在!")
                     print(f"  Type: {type(value)}")
                     print(f"  Value: {value}")
                 else:
@@ -106,7 +111,10 @@ def check_reading_order():
             boxes = res["boxes"]
             if boxes:
                 print(f"\n検出数: {len(boxes)}")
-                print(f"各 box のキー: {list(boxes[0].keys()) if isinstance(boxes[0], dict) else 'N/A'}")
+                box_keys = (
+                    list(boxes[0].keys()) if isinstance(boxes[0], dict) else "N/A"
+                )
+                print(f"各 box のキー: {box_keys}")
 
                 # 最初の3件を詳細表示
                 print("\n最初の3件:")

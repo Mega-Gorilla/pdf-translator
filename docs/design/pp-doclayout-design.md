@@ -159,17 +159,23 @@ tests/
 │                     LayoutBlock                          │
 ├──────────────────────────────────────────────────────────┤
 │ + bbox: BBox                                             │
-│ + category: LayoutCategory                               │
+│ + raw_category: RawLayoutCategory                        │
+│ + project_category: ProjectCategory                      │
 │ + confidence: float                                      │
 │ + page_num: int                                          │
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
-│               LayoutCategory (Enum)                      │
+│            RawLayoutCategory (Enum)                      │
 ├──────────────────────────────────────────────────────────┤
 │ TEXT, PARAGRAPH_TITLE, DOC_TITLE, ABSTRACT,              │
-│ INLINE_FORMULA, DISPLAY_FORMULA, ALGORITHM,              │
-│ TABLE, IMAGE, FIGURE_TITLE, CHART, ...                   │
+│ INLINE_FORMULA, DISPLAY_FORMULA, ALGORITHM, ...          │
+└──────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────┐
+│            ProjectCategory (Enum)                        │
+├──────────────────────────────────────────────────────────┤
+│ TEXT, TITLE, CAPTION, FORMULA, TABLE, IMAGE, ...         │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -442,7 +448,9 @@ class LayoutAnalyzer:
 
 ### 5.3 座標変換
 
-PP-DocLayoutV2 は画像座標（ピクセル）を返すため、PDF 座標に変換が必要：
+PP-DocLayoutV2 は画像座標（ピクセル）を返すため、PDF 座標に変換が必要。
+
+**重要**: 画像座標系は「原点が左上、Y軸は下向き」だが、PDF座標系は「原点が左下、Y軸は上向き」のため、**Y軸の反転**が必須。
 
 ```python
 def _convert_image_to_pdf_coords(
@@ -453,7 +461,11 @@ def _convert_image_to_pdf_coords(
     image_height: int,
 ) -> BBox:
     """
-    画像座標を PDF 座標に変換
+    画像座標を PDF 座標に変換（Y軸反転あり）
+
+    座標系の違い:
+    - 画像座標: 原点=左上, Y軸=下向き (y0 < y1 で上→下)
+    - PDF座標: 原点=左下, Y軸=上向き (y0 < y1 で下→上)
 
     Args:
         image_bbox: 画像座標 (x0, y0, x1, y1) in pixels
@@ -468,13 +480,27 @@ def _convert_image_to_pdf_coords(
     scale_x = page_width / image_width
     scale_y = page_height / image_height
 
+    # X座標: 単純スケーリング
+    x0_pdf = image_bbox[0] * scale_x
+    x1_pdf = image_bbox[2] * scale_x
+
+    # Y座標: 反転 + スケーリング
+    # 画像の y0 (上) → PDF の y1 (上)
+    # 画像の y1 (下) → PDF の y0 (下)
+    y0_pdf = page_height - (image_bbox[3] * scale_y)
+    y1_pdf = page_height - (image_bbox[1] * scale_y)
+
     return BBox(
-        x0=image_bbox[0] * scale_x,
-        y0=image_bbox[1] * scale_y,
-        x1=image_bbox[2] * scale_x,
-        y1=image_bbox[3] * scale_y,
+        x0=x0_pdf,
+        y0=y0_pdf,
+        x1=x1_pdf,
+        y1=y1_pdf,
     )
 ```
+
+**注意事項**:
+- ページ回転（`/Rotate`）がある場合は追加の変換が必要（初期実装では未対応）
+- CropBox/MediaBox が異なる場合も考慮が必要（初期実装では MediaBox 前提）
 
 ### 5.4 マッチング関数
 
@@ -485,7 +511,7 @@ def match_text_with_layout(
     text_objects: list[TextObject],
     layout_blocks: list[LayoutBlock],
     iou_threshold: float = 0.3,
-) -> dict[str, LayoutCategory]:
+) -> dict[str, ProjectCategory]:
     """
     TextObject と LayoutBlock をマッチング
 
@@ -495,7 +521,7 @@ def match_text_with_layout(
         iou_threshold: マッチング閾値 (default: 0.3)
 
     Returns:
-        TextObject.id → LayoutCategory のマッピング
+        TextObject.id → ProjectCategory のマッピング
     """
     ...
 ```
@@ -588,7 +614,9 @@ scripts/evaluation/
 
 **出力**: `src/pdf_translator/core/models.py` (追加)
 
-- [ ] `LayoutCategory` Enum の追加
+- [ ] `RawLayoutCategory` Enum の追加（モデル出力用）
+- [ ] `ProjectCategory` Enum の追加（翻訳ロジック用）
+- [ ] `RAW_TO_PROJECT_MAPPING` の定義
 - [ ] `LayoutBlock` データクラスの追加
 
 ### Phase 2: 座標変換・マッチング関数

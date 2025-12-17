@@ -173,7 +173,7 @@ def main():
     print("\n" + "="*60)
     print("比較結果サマリー")
     print("="*60)
-    print(f"\n総検出数:")
+    print("\n総検出数:")
     print(f"  V1: {v1_results['summary']['total_detections']}")
     print(f"  V2: {v2_results['summary']['total_detections']}")
     print(f"\nV1のみのカテゴリ: {sorted(v1_cats - v2_cats)}")
