@@ -32,6 +32,13 @@ dependencies = [
 [project.optional-dependencies]
 deepl = ["aiohttp>=3.9.0"]
 openai = ["openai>=1.0.0", "pydantic>=2.0.0"]
+layout = [
+    # PP-DocLayoutV2 requires PaddlePaddle 3.2.0+
+    # GPU: pip install paddlepaddle-gpu==3.2.0 -i https://mirror.baidu.com/pypi/simple
+    # CPU: pip install paddlepaddle==3.2.0
+    "paddleocr>=3.3.0",
+    "pillow>=10.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

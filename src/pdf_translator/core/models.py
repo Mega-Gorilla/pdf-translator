@@ -10,9 +10,124 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Any, Optional
 
 SCHEMA_VERSION = "1.0.0"
+
+
+class RawLayoutCategory(str, Enum):
+    """PP-DocLayoutV2 の生カテゴリ（モデル出力そのまま）.
+
+    PP-DocLayoutV2 が出力する 25 種類のカテゴリをそのまま定義。
+    公式 label_list: https://huggingface.co/PaddlePaddle/PP-DocLayoutV2/raw/main/config.json
+    モデルバージョン変更時にはここを更新する。
+    """
+
+    # テキスト系
+    TEXT = "text"
+    VERTICAL_TEXT = "vertical_text"  # 縦書きテキスト
+    PARAGRAPH_TITLE = "paragraph_title"
+    DOC_TITLE = "doc_title"
+    ABSTRACT = "abstract"
+    ASIDE_TEXT = "aside_text"
+
+    # 数式系
+    INLINE_FORMULA = "inline_formula"
+    DISPLAY_FORMULA = "display_formula"
+    FORMULA_NUMBER = "formula_number"
+    ALGORITHM = "algorithm"
+
+    # 図表系
+    TABLE = "table"
+    IMAGE = "image"
+    FIGURE_TITLE = "figure_title"
+    CHART = "chart"
+
+    # ナビゲーション系
+    HEADER = "header"
+    HEADER_IMAGE = "header_image"  # ヘッダー内画像
+    FOOTER = "footer"
+    FOOTER_IMAGE = "footer_image"  # フッター内画像
+    NUMBER = "number"
+
+    # 参照系
+    REFERENCE = "reference"
+    REFERENCE_CONTENT = "reference_content"
+    FOOTNOTE = "footnote"
+    VISION_FOOTNOTE = "vision_footnote"  # 視覚的脚注
+
+    # その他
+    SEAL = "seal"
+    CONTENT = "content"
+
+    # 未知（フォールバック用、公式 label_list には含まれない）
+    UNKNOWN = "unknown"
+
+
+class ProjectCategory(str, Enum):
+    """プロジェクト内部の安定カテゴリ.
+
+    翻訳ロジックが依存する安定したカテゴリ。
+    モデルバージョンが変わっても、このカテゴリ体系は維持される。
+    """
+
+    # 翻訳対象
+    TEXT = "text"  # 本文テキスト
+    TITLE = "title"  # 見出し・タイトル
+    CAPTION = "caption"  # キャプション（図表共通）
+
+    # 翻訳除外
+    FOOTNOTE = "footnote"  # 脚注
+    FORMULA = "formula"  # 数式（inline/display 統合）
+    CODE = "code"  # コード・アルゴリズム
+    TABLE = "table"  # 表
+    IMAGE = "image"  # 画像
+    CHART = "chart"  # チャート
+    HEADER = "header"  # ヘッダー・フッター
+    REFERENCE = "reference"  # 参考文献
+
+    # その他
+    OTHER = "other"  # 上記以外
+
+
+# Raw → Project カテゴリマッピング
+RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
+    # 翻訳対象
+    RawLayoutCategory.TEXT: ProjectCategory.TEXT,
+    RawLayoutCategory.VERTICAL_TEXT: ProjectCategory.TEXT,  # 縦書きも翻訳対象
+    RawLayoutCategory.ABSTRACT: ProjectCategory.TEXT,
+    RawLayoutCategory.ASIDE_TEXT: ProjectCategory.TEXT,
+    RawLayoutCategory.PARAGRAPH_TITLE: ProjectCategory.TITLE,
+    RawLayoutCategory.DOC_TITLE: ProjectCategory.TITLE,
+    RawLayoutCategory.FIGURE_TITLE: ProjectCategory.CAPTION,
+    RawLayoutCategory.FOOTNOTE: ProjectCategory.FOOTNOTE,
+    RawLayoutCategory.VISION_FOOTNOTE: ProjectCategory.FOOTNOTE,  # 視覚的脚注
+    # 翻訳除外
+    RawLayoutCategory.INLINE_FORMULA: ProjectCategory.FORMULA,
+    RawLayoutCategory.DISPLAY_FORMULA: ProjectCategory.FORMULA,
+    RawLayoutCategory.FORMULA_NUMBER: ProjectCategory.FORMULA,
+    RawLayoutCategory.ALGORITHM: ProjectCategory.CODE,
+    RawLayoutCategory.TABLE: ProjectCategory.TABLE,
+    RawLayoutCategory.IMAGE: ProjectCategory.IMAGE,
+    RawLayoutCategory.CHART: ProjectCategory.CHART,
+    RawLayoutCategory.HEADER: ProjectCategory.HEADER,
+    RawLayoutCategory.HEADER_IMAGE: ProjectCategory.HEADER,  # ヘッダー画像
+    RawLayoutCategory.FOOTER: ProjectCategory.HEADER,
+    RawLayoutCategory.FOOTER_IMAGE: ProjectCategory.HEADER,  # フッター画像
+    RawLayoutCategory.NUMBER: ProjectCategory.HEADER,
+    RawLayoutCategory.REFERENCE: ProjectCategory.REFERENCE,
+    RawLayoutCategory.REFERENCE_CONTENT: ProjectCategory.REFERENCE,
+    # その他
+    RawLayoutCategory.SEAL: ProjectCategory.OTHER,
+    RawLayoutCategory.CONTENT: ProjectCategory.OTHER,
+    RawLayoutCategory.UNKNOWN: ProjectCategory.OTHER,
+}
+
+# 翻訳対象カテゴリのセット
+TRANSLATABLE_CATEGORIES: frozenset[ProjectCategory] = frozenset(
+    {ProjectCategory.TEXT, ProjectCategory.TITLE, ProjectCategory.CAPTION}
+)
 
 
 @dataclass
@@ -276,36 +391,90 @@ class LayoutBlock:
 
     Attributes:
         id: Unique identifier
-        bbox: Bounding box
-        type: Block type (text, title, figure, table, etc.)
+        bbox: Bounding box in PDF coordinates
+        raw_category: PP-DocLayoutV2 の生カテゴリ（モデル出力そのまま）
+        project_category: プロジェクト内部の正規化カテゴリ
         confidence: Detection confidence (0-1)
+        page_num: Page number (0-indexed)
         text_object_ids: IDs of TextObjects contained in this block
     """
 
     id: str
     bbox: BBox
-    type: str
+    raw_category: RawLayoutCategory
+    project_category: ProjectCategory
     confidence: float = 0.0
+    page_num: int = 0
     text_object_ids: list[str] = field(default_factory=list)
+
+    @property
+    def type(self) -> str:
+        """Backward-compatible type property.
+
+        Returns the raw_category value as string.
+        """
+        return self.raw_category.value
+
+    @property
+    def is_translatable(self) -> bool:
+        """Check if this block should be translated."""
+        return self.project_category in TRANSLATABLE_CATEGORIES
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
             "bbox": self.bbox.to_dict(),
-            "type": self.type,
+            "raw_category": self.raw_category.value,
+            "project_category": self.project_category.value,
             "confidence": self.confidence,
+            "page_num": self.page_num,
             "text_object_ids": self.text_object_ids,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LayoutBlock:
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Supports both new format (raw_category/project_category) and
+        legacy format (type) for backward compatibility.
+        """
+        # Handle raw_category
+        if "raw_category" in data:
+            try:
+                raw_category = RawLayoutCategory(data["raw_category"])
+            except ValueError:
+                raw_category = RawLayoutCategory.UNKNOWN
+        elif "type" in data:
+            # Legacy format: convert type string to RawLayoutCategory
+            try:
+                raw_category = RawLayoutCategory(data["type"])
+            except ValueError:
+                raw_category = RawLayoutCategory.UNKNOWN
+        else:
+            raw_category = RawLayoutCategory.UNKNOWN
+
+        # Handle project_category
+        if "project_category" in data:
+            try:
+                project_category = ProjectCategory(data["project_category"])
+            except ValueError:
+                project_category = RAW_TO_PROJECT_MAPPING.get(
+                    raw_category, ProjectCategory.OTHER
+                )
+        else:
+            # Derive from raw_category
+            project_category = RAW_TO_PROJECT_MAPPING.get(
+                raw_category, ProjectCategory.OTHER
+            )
+
         return cls(
             id=data["id"],
             bbox=BBox.from_dict(data["bbox"]),
-            type=data["type"],
+            raw_category=raw_category,
+            project_category=project_category,
             confidence=float(data.get("confidence", 0.0)),
+            page_num=int(data.get("page_num", 0)),
             text_object_ids=data.get("text_object_ids", []),
         )
 
