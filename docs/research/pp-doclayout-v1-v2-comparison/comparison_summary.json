@@ -1,0 +1,53 @@
+{
+  "v1": {
+    "model": "PP-DocLayout-L",
+    "total_detections": 97,
+    "categories": {
+      "abstract": 1,
+      "figure_title": 5,
+      "doc_title": 1,
+      "image": 3,
+      "footnote": 7,
+      "aside_text": 1,
+      "text": 46,
+      "paragraph_title": 14,
+      "number": 9,
+      "chart_title": 5,
+      "chart": 5
+    }
+  },
+  "v2": {
+    "model": "PP-DocLayoutV2",
+    "total_detections": 96,
+    "categories": {
+      "aside_text": 1,
+      "doc_title": 1,
+      "text": 47,
+      "image": 3,
+      "figure_title": 8,
+      "paragraph_title": 15,
+      "abstract": 1,
+      "footnote": 7,
+      "number": 9,
+      "chart": 4
+    }
+  },
+  "comparison": {
+    "v1_only_categories": [
+      "chart_title"
+    ],
+    "v2_only_categories": [],
+    "common_categories": [
+      "text",
+      "aside_text",
+      "figure_title",
+      "paragraph_title",
+      "footnote",
+      "chart",
+      "image",
+      "doc_title",
+      "abstract",
+      "number"
+    ]
+  }
+}
