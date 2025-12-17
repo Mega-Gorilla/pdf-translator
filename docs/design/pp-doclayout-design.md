@@ -6,11 +6,11 @@
 
 ### 1.1 目的
 
-PP-DocLayout を使用した ML ベースのドキュメントレイアウト解析を実装し、PDF 翻訳パイプラインにおいて翻訳対象（本文・キャプション）と除外対象（数式・図・ヘッダー等）を高精度に分類する。
+PP-DocLayoutV2 を使用した ML ベースのドキュメントレイアウト解析を実装し、PDF 翻訳パイプラインにおいて翻訳対象（本文・キャプション）と除外対象（数式・図・ヘッダー等）を高精度に分類する。
 
 ### 1.2 スコープ
 
-- PP-DocLayout モデルのラッパー実装
+- PP-DocLayoutV2 モデルのラッパー実装
 - PDF → 画像変換（pypdfium2 使用）
 - レイアウト検出結果のデータモデル
 - 画像座標 → PDF 座標の変換
@@ -38,18 +38,32 @@ PP-DocLayout を使用した ML ベースのドキュメントレイアウト解
 | 数式の誤翻訳 | 数式テキストが本文として翻訳される |
 | 複雑なレイアウト | マルチカラム・図表混在ページで精度低下 |
 
-### 2.2 PP-DocLayout の選定理由
+### 2.2 PP-DocLayoutV2 の選定理由
 
-| 観点 | PP-DocLayout | DocLayout-YOLO |
-|------|-------------|----------------|
+| 観点 | PP-DocLayoutV2 | DocLayout-YOLO |
+|------|----------------|----------------|
 | ライセンス | **Apache-2.0** | AGPL-3.0 |
-| カテゴリ数 | **23** | 10 |
-| 精度 (mAP@0.5) | **90.4%** | 79.7% |
-| 数式検出 | **独立カテゴリ** | なし |
+| カテゴリ数 | **25** | 10 |
+| 数式検出 | **inline/display 区別** | なし |
+| 読み順予測 | **あり** | なし |
 | 最新リリース | 2025年3月 | 2024年10月 |
 
-PP-DocLayout は Apache-2.0 ライセンスであり、本プロジェクト（Apache-2.0）との互換性が高い。
-また、23 カテゴリの詳細分類により数式・アルゴリズム等を独立して検出可能。
+#### V1 vs V2 比較調査の結果
+
+実機テスト（AutoGen論文 43ページ）により、V2 の採用を決定した。
+
+| 観点 | V2 採用理由 |
+|------|------------|
+| テキスト vs 数式の誤検知 | V2 は誤検知が少ない（例: P21 `(-5,-1,-5)` を V2 は正しく text と判定） |
+| セマンティック分離 | V2 は "Abstract" を paragraph_title + abstract に正しく分離 |
+| 数式検出精度 | V2 は P36 の数式をより正確に検出 |
+| キャプション種別区別 | 統合されるが翻訳用途では区別不要のため問題なし |
+
+詳細: `docs/research/pp-doclayout-v1-v2-comparison/`
+
+#### 対応言語
+
+**英語・中国語のみ** を公式サポート。日本語文書への適用は実機テストが必要。
 
 ### 2.3 参照資料
 
@@ -68,7 +82,7 @@ src/pdf_translator/
 ├── core/
 │   ├── pdf_processor.py   # 既存: pypdfium2 PDF処理
 │   ├── models.py          # 既存: データモデル
-│   └── layout_analyzer.py # 新規: PP-DocLayout ラッパー
+│   └── layout_analyzer.py # 新規: PP-DocLayoutV2 ラッパー
 └── ...
 
 tests/
@@ -90,7 +104,7 @@ tests/
 ┌─────────────────────────────────────────────────────────┐
 │ LayoutAnalyzer.analyze()                                │
 │  1. pypdfium2 で PDF ページを画像にレンダリング         │
-│  2. PP-DocLayout でレイアウト検出                       │
+│  2. PP-DocLayoutV2 でレイアウト検出                     │
 │  3. 画像座標 → PDF座標に変換                           │
 │  4. 検出結果を LayoutBlock リストとして返却             │
 └─────────────────────────────────────────────────────────┘
@@ -137,9 +151,9 @@ tests/
 ┌──────────────────────────────────────────────────────────┐
 │               LayoutCategory (Enum)                      │
 ├──────────────────────────────────────────────────────────┤
-│ TEXT, PARAGRAPH_TITLE, SECTION_HEADER, DOC_TITLE,        │
-│ ABSTRACT, FORMULA, FORMULA_NUMBER, ALGORITHM,            │
-│ TABLE, TABLE_TITLE, IMAGE, FIGURE_TITLE, CHART, ...      │
+│ TEXT, PARAGRAPH_TITLE, DOC_TITLE, ABSTRACT,              │
+│ INLINE_FORMULA, DISPLAY_FORMULA, ALGORITHM,              │
+│ TABLE, IMAGE, FIGURE_TITLE, CHART, ...                   │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -149,32 +163,32 @@ tests/
 
 ### 4.1 LayoutCategory Enum
 
-PP-DocLayout の 23 カテゴリを Enum として定義：
+PP-DocLayoutV2 の 25 カテゴリを Enum として定義：
 
 ```python
 class LayoutCategory(str, Enum):
-    """PP-DocLayout の検出カテゴリ"""
+    """PP-DocLayoutV2 の検出カテゴリ"""
 
     # テキスト系
     TEXT = "text"
     PARAGRAPH_TITLE = "paragraph_title"
-    SECTION_HEADER = "section_header"
     DOC_TITLE = "doc_title"
     ABSTRACT = "abstract"
     ASIDE_TEXT = "aside_text"
 
-    # 数式系
-    FORMULA = "formula"
-    FORMULA_NUMBER = "formula_number"
+    # 数式系 (V2: inline/display 区別)
+    INLINE_FORMULA = "inline_formula"
+    DISPLAY_FORMULA = "display_formula"
     ALGORITHM = "algorithm"
 
     # 図表系
     TABLE = "table"
-    TABLE_TITLE = "table_title"
     IMAGE = "image"
-    FIGURE_TITLE = "figure_title"
+    FIGURE_TITLE = "figure_title"  # table/chart キャプション含む
     CHART = "chart"
-    CHART_TITLE = "chart_title"
+
+    # コード
+    CODE_BLOCK = "code_block"
 
     # ナビゲーション系
     HEADER = "header"
@@ -183,12 +197,13 @@ class LayoutCategory(str, Enum):
 
     # 参照系
     REFERENCE = "reference"
+    REFERENCE_CONTENT = "reference_content"
     FOOTNOTE = "footnote"
 
     # その他
     SEAL = "seal"
-    HEADER_IMAGE = "header_image"
-    FOOTER_IMAGE = "footer_image"
+    CONTENT = "content"
+    TABLE_OF_CONTENTS = "table_of_contents"
 
     # 未知のカテゴリ
     UNKNOWN = "unknown"
@@ -209,15 +224,21 @@ class LayoutBlock:
 
 ### 4.3 翻訳対象分類
 
-| 分類 | カテゴリ | 翻訳対象 |
-|------|---------|---------|
-| 本文 | `TEXT`, `ABSTRACT` | Yes |
-| 見出し | `PARAGRAPH_TITLE`, `SECTION_HEADER`, `DOC_TITLE` | Yes |
-| キャプション | `TABLE_TITLE`, `FIGURE_TITLE`, `CHART_TITLE` | Yes |
-| 参照 | `REFERENCE`, `FOOTNOTE` | Yes (オプション) |
-| 数式 | `FORMULA`, `FORMULA_NUMBER`, `ALGORITHM` | **No** |
-| 図表 | `TABLE`, `IMAGE`, `CHART` | **No** |
-| ナビゲーション | `HEADER`, `FOOTER`, `NUMBER` | **No** |
+| 分類 | カテゴリ | 翻訳対象 | 備考 |
+|------|---------|:--------:|------|
+| 本文 | `TEXT`, `ABSTRACT` | ✅ ON | メインコンテンツ |
+| 見出し | `PARAGRAPH_TITLE`, `DOC_TITLE` | ✅ ON | タイトル・セクション |
+| キャプション | `FIGURE_TITLE` | ✅ ON | 図表・チャートキャプション統合 |
+| 脚注 | `FOOTNOTE` | ✅ ON | 注釈 |
+| 参照見出し | `REFERENCE` | ⚠️ 要検討 | "References" セクション見出し |
+| 補足 | `ASIDE_TEXT` | ⚠️ 要検討 | サイドテキスト |
+| 参照内容 | `REFERENCE_CONTENT` | ❌ OFF | 著者名・論文タイトル等 |
+| 数式 | `INLINE_FORMULA`, `DISPLAY_FORMULA` | ❌ OFF | 数式は翻訳しない |
+| アルゴリズム | `ALGORITHM` | ❌ OFF | 疑似コード等 |
+| コード | `CODE_BLOCK` | ❌ OFF | ソースコード |
+| 図表 | `TABLE`, `IMAGE`, `CHART` | ❌ OFF | 視覚要素 |
+| ナビゲーション | `HEADER`, `FOOTER`, `NUMBER` | ❌ OFF | ヘッダー・フッター・ページ番号 |
+| その他 | `SEAL`, `TABLE_OF_CONTENTS` | ❌ OFF | 印鑑・目次 |
 
 ---
 
@@ -229,8 +250,8 @@ class LayoutBlock:
 # pyproject.toml
 [project.optional-dependencies]
 layout = [
-    "paddlepaddle>=3.0.0",
-    "paddleocr>=2.10.0",
+    "paddlepaddle>=3.2.0",  # V2 モデルには 3.2.0 以上が必要
+    "paddleocr>=3.3.0",
 ]
 ```
 
@@ -238,19 +259,21 @@ layout = [
 
 ```bash
 # GPU (CUDA 12.6)
-pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
 
 # CPU
-pip install paddlepaddle==3.0.0
+pip install paddlepaddle==3.2.0
 ```
+
+**重要**: PP-DocLayoutV2 は PaddlePaddle 3.2.0 以上が必須。3.0.0 では動作しない。
 
 ### 5.2 LayoutAnalyzer クラス
 
 ```python
 class LayoutAnalyzer:
-    """PP-DocLayout を使用したレイアウト解析"""
+    """PP-DocLayoutV2 を使用したレイアウト解析"""
 
-    DEFAULT_MODEL = "PP-DocLayout-L"
+    DEFAULT_MODEL = "PP-DocLayoutV2"
     DEFAULT_RENDER_SCALE = 2.0  # 2x zoom for better detection
 
     def __init__(
@@ -260,7 +283,7 @@ class LayoutAnalyzer:
     ) -> None:
         """
         Args:
-            model_name: PP-DocLayout モデル名 (S, M, L, plus-L)
+            model_name: PP-DocLayout モデル名 (PP-DocLayoutV2 等)
             render_scale: PDF レンダリングスケール (default: 2.0)
         """
         self._model_name = model_name or self.DEFAULT_MODEL
@@ -309,7 +332,7 @@ class LayoutAnalyzer:
 
 ### 5.3 座標変換
 
-PP-DocLayout は画像座標（ピクセル）を返すため、PDF 座標に変換が必要：
+PP-DocLayoutV2 は画像座標（ピクセル）を返すため、PDF 座標に変換が必要：
 
 ```python
 def _convert_image_to_pdf_coords(
@@ -370,29 +393,43 @@ def match_text_with_layout(
 ### 5.5 フィルタリング関数
 
 ```python
-# 翻訳対象カテゴリ
+# 翻訳対象カテゴリ (V2)
 TRANSLATABLE_CATEGORIES = {
     LayoutCategory.TEXT,
     LayoutCategory.ABSTRACT,
     LayoutCategory.PARAGRAPH_TITLE,
-    LayoutCategory.SECTION_HEADER,
     LayoutCategory.DOC_TITLE,
-    LayoutCategory.TABLE_TITLE,
-    LayoutCategory.FIGURE_TITLE,
-    LayoutCategory.CHART_TITLE,
+    LayoutCategory.FIGURE_TITLE,  # table/chart キャプション含む
+    LayoutCategory.FOOTNOTE,
 }
 
 # オプション（設定で切り替え）
 OPTIONAL_TRANSLATABLE = {
     LayoutCategory.REFERENCE,
-    LayoutCategory.FOOTNOTE,
     LayoutCategory.ASIDE_TEXT,
+}
+
+# 翻訳除外カテゴリ (V2)
+NON_TRANSLATABLE_CATEGORIES = {
+    LayoutCategory.INLINE_FORMULA,
+    LayoutCategory.DISPLAY_FORMULA,
+    LayoutCategory.ALGORITHM,
+    LayoutCategory.CODE_BLOCK,
+    LayoutCategory.TABLE,
+    LayoutCategory.IMAGE,
+    LayoutCategory.CHART,
+    LayoutCategory.HEADER,
+    LayoutCategory.FOOTER,
+    LayoutCategory.NUMBER,
+    LayoutCategory.REFERENCE_CONTENT,
+    LayoutCategory.SEAL,
+    LayoutCategory.TABLE_OF_CONTENTS,
 }
 
 def filter_translatable(
     text_objects: list[TextObject],
     categories: dict[str, LayoutCategory],
-    include_references: bool = False,
+    include_optional: bool = False,
 ) -> list[TextObject]:
     """
     翻訳対象の TextObject をフィルタリング
@@ -400,7 +437,7 @@ def filter_translatable(
     Args:
         text_objects: 全 TextObject リスト
         categories: TextObject.id → LayoutCategory のマッピング
-        include_references: 参考文献・脚注を含めるか
+        include_optional: REFERENCE, ASIDE_TEXT を含めるか
 
     Returns:
         翻訳対象の TextObject リスト
@@ -425,7 +462,7 @@ def filter_translatable(
 ### 6.2 統合テスト（オプション）
 
 ```bash
-# PP-DocLayout が利用可能な環境でのみ実行
+# PP-DocLayoutV2 が利用可能な環境でのみ実行
 RUN_LAYOUT_TESTS=1 pytest tests/test_layout_analyzer.py
 ```
 
@@ -491,7 +528,7 @@ scripts/evaluation/
 
 | コンポーネント | ライセンス | 互換性 |
 |---------------|-----------|--------|
-| PP-DocLayout モデル | Apache-2.0 | ✅ |
+| PP-DocLayoutV2 モデル | Apache-2.0 | ✅ |
 | PaddlePaddle | Apache-2.0 | ✅ |
 | PaddleOCR | Apache-2.0 | ✅ |
 
@@ -499,8 +536,10 @@ scripts/evaluation/
 
 | 環境 | モデル | 推奨設定 |
 |------|--------|---------|
-| GPU (CUDA) | PP-DocLayout-L | `render_scale=2.0` |
-| CPU | PP-DocLayout-S | `render_scale=1.5` |
+| GPU (CUDA) | PP-DocLayoutV2 | `render_scale=2.0` |
+| CPU | PP-DocLayoutV2 | `render_scale=1.5` |
+
+**注意**: PP-DocLayoutV2 は単一モデルのみ提供。
 
 ### 8.3 _archive からのコード参照
 
@@ -528,11 +567,15 @@ scripts/evaluation/
 
 ### 10.1 外部ドキュメント
 
-- [PP-DocLayout (Hugging Face)](https://huggingface.co/PaddlePaddle/PP-DocLayout-L)
+- [PP-DocLayoutV2 (Hugging Face)](https://huggingface.co/PaddlePaddle/PP-DocLayoutV2)
 - [PaddleOCR Documentation](https://github.com/PaddlePaddle/PaddleOCR)
 - [PP-DocLayout Paper (arXiv)](https://arxiv.org/abs/2503.17213)
 
-### 10.2 プロジェクト内ドキュメント
+### 10.2 V1/V2 比較調査
+
+- `docs/research/pp-doclayout-v1-v2-comparison/` - 比較調査結果
+
+### 10.3 プロジェクト内ドキュメント
 
 - `docs/archive/design/pdf-processor-design.md` - PDF 処理モジュール設計
 - `docs/archive/design/translators-design.md` - 翻訳バックエンド設計
