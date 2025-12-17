@@ -1,0 +1,76 @@
+{
+  "v1": {
+    "model": "PP-DocLayout-L",
+    "total_detections": 401,
+    "categories": {
+      "abstract": 1,
+      "figure_title": 20,
+      "doc_title": 1,
+      "image": 16,
+      "footnote": 8,
+      "aside_text": 1,
+      "text": 165,
+      "paragraph_title": 32,
+      "number": 40,
+      "chart_title": 6,
+      "chart": 6,
+      "reference": 3,
+      "table": 20,
+      "table_title": 21,
+      "formula": 55,
+      "formula_number": 1,
+      "header": 5
+    }
+  },
+  "v2": {
+    "model": "PP-DocLayoutV2",
+    "total_detections": 448,
+    "categories": {
+      "aside_text": 1,
+      "doc_title": 1,
+      "text": 142,
+      "image": 19,
+      "figure_title": 47,
+      "paragraph_title": 28,
+      "abstract": 1,
+      "footnote": 8,
+      "number": 40,
+      "chart": 5,
+      "reference_content": 47,
+      "reference": 3,
+      "table": 20,
+      "inline_formula": 80,
+      "display_formula": 1,
+      "formula_number": 1,
+      "header": 4
+    }
+  },
+  "comparison": {
+    "v1_only_categories": [
+      "chart_title",
+      "formula",
+      "table_title"
+    ],
+    "v2_only_categories": [
+      "display_formula",
+      "inline_formula",
+      "reference_content"
+    ],
+    "common_categories": [
+      "abstract",
+      "aside_text",
+      "chart",
+      "doc_title",
+      "figure_title",
+      "footnote",
+      "formula_number",
+      "header",
+      "image",
+      "number",
+      "paragraph_title",
+      "reference",
+      "table",
+      "text"
+    ]
+  }
+}
