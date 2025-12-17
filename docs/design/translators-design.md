@@ -277,7 +277,57 @@ class OpenAITranslator:
 - Google/DeepL でセパレータが変形・欠落する可能性
 - エスケープ処理が複雑化
 
-**新方式: 配列ベースのバッチ翻訳**
+### 5.2 動作検証結果
+
+実際に各バックエンドでセパレータトークンの動作を検証した。
+（検証スクリプト: `tests/evaluation/test_separator_behavior.py`）
+
+#### Google Translate
+
+```
+Input:  Hello[[[BR]]]World[[[BR]]]Good morning
+Output: こんにちは[[[BR]]]世界[[[BR]]]おはようございます
+Result: ✅ セパレータ保持（3/3テスト成功）
+```
+
+#### DeepL ⚠️ 問題発見
+
+```
+Input:  This is a sentence.[[[BR]]]Another sentence here.[[[BR]]]Final one.
+Output: これは一文です。[[[BR]]ここでもう一文。[[[BR]]最後の一文。
+                       ↑ 閉じ括弧が1つ欠落
+Result: ❌ セパレータ変形（1/3テストのみ成功）
+```
+
+**DeepLではセパレータトークンが `[[[BR]]]` → `[[[BR]]` に変形することを確認。**
+
+#### DeepL Batch（複数textパラメータ）
+
+```
+Input:  ['Hello', 'World', 'Good morning']
+Output: ['こんにちは', '世界', 'おはよう']
+Result: ✅ 順序保持、完全に動作
+```
+
+#### OpenAI（Structured Outputs）
+
+```
+Input:  ['Hello', 'World', 'Good morning']
+Output: ['こんにちは', '世界', 'おはようございます']
+Result: ✅ 配列構造保証
+```
+
+### 5.3 検証結論
+
+| バックエンド | セパレータ方式 | 配列方式 | 採用 |
+|-------------|---------------|---------|------|
+| Google | ✅ 動作 | ✅ 動作 | 配列（安全性重視） |
+| DeepL | ❌ **変形する** | ✅ 動作 | 配列（必須） |
+| OpenAI | - | ✅ 動作 | 配列（必須） |
+
+**結論: 配列ベースのバッチ翻訳方式を採用する。**
+
+### 5.4 新方式: 配列ベースのバッチ翻訳
 
 ```
 # 旧方式（廃止）
@@ -287,7 +337,7 @@ class OpenAITranslator:
 ["Block1", "Block2", "Block3"] → translate_batch() → ["翻訳1", "翻訳2", "翻訳3"]
 ```
 
-### 5.2 各バックエンドの実装
+### 5.5 各バックエンドの実装
 
 | バックエンド | バッチ翻訳方式 |
 |-------------|---------------|
@@ -295,7 +345,7 @@ class OpenAITranslator:
 | DeepL | 複数 `text` パラメータで1リクエスト（最大50件） |
 | OpenAI | Structured Outputs で配列送受信 |
 
-### 5.3 互換性
+### 5.6 互換性
 
 パイプライン（#4）からは `translate_batch()` を呼び出すため、
 セパレータトークンの知識は不要。
