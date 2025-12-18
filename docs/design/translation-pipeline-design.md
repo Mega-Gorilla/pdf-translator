@@ -911,7 +911,7 @@ PP-DocLayout で検出した LayoutBlock と pdftext の Paragraph を照合し�
 ```
 pdftext Paragraphs + PP-DocLayout LayoutBlocks
                     ↓
-    bbox 重複判定（IoU または containment）
+    bbox 重複判定（containment ratio）
                     ↓
     重複する LayoutBlock のカテゴリを Paragraph に付与
                     ↓
