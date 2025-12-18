@@ -410,8 +410,8 @@ class Paragraph:
     line_count: int
     original_font_size: float = 12.0  # デフォルト値
 
-    # PP-DocLayout によるカテゴリ分類
-    category: Optional[str] = None  # None = 未分類, "text", "title", "formula", "table", "figure" 等
+    # PP-DocLayout によるカテゴリ分類（ProjectCategory を使用）
+    category: Optional[ProjectCategory] = None  # None = 未分類
 
     # 翻訳後に設定されるフィールド
     translated_text: Optional[str] = None
@@ -420,10 +420,15 @@ class Paragraph:
     @property
     def is_translatable(self) -> bool:
         """翻訳対象かどうかを判定."""
-        # category が None（レイアウト解析無効）または TEXT 系カテゴリの場合は翻訳対象
+        # category が None（レイアウト解析無効）の場合は翻訳対象
         if self.category is None:
             return True
-        return self.category.lower() in ("text", "title", "plain text", "abandon")
+        # TRANSLATABLE_CATEGORIES と同じロジック（models.py 参照）
+        return self.category in (
+            ProjectCategory.TEXT,
+            ProjectCategory.TITLE,
+            ProjectCategory.CAPTION,
+        )
 ```
 
 **変更点（従来設計との比較）**:
@@ -433,7 +438,7 @@ class Paragraph:
 | `text_object_ids: list[str]` | 削除（pdftext はブロック単位で管理） |
 | `anchor_bbox` (最初の行) | `block_bbox` (ブロック全体) |
 | `anchor_font`, `anchor_transform` | 削除（シンプル化） |
-| なし | `category` 追加（PP-DocLayout 連携） |
+| なし | `category: ProjectCategory` 追加（PP-DocLayout 連携） |
 
 #### 4.1.2 Paragraph 生成フロー
 
@@ -855,12 +860,13 @@ def assign_categories(
     Note:
         - 複数の LayoutBlock と重複する場合は、最も重複率が高いものを採用
         - どの LayoutBlock とも重複しない場合は category = None のまま
+        - LayoutBlock.project_category を Paragraph.category に設定
     """
     for para in paragraphs:
         page_blocks = layout_blocks.get(para.page_number, [])
         best_match = _find_best_matching_block(para.block_bbox, page_blocks, threshold)
         if best_match:
-            para.category = best_match.category
+            para.category = best_match.project_category  # ProjectCategory を使用
     return paragraphs
 
 
@@ -903,23 +909,33 @@ def _calculate_overlap_ratio(bbox1: BBox, bbox2: BBox) -> float:
 
 #### 5.2.3 PP-DocLayout カテゴリ一覧
 
-PP-DocLayoutV2 が検出するカテゴリと翻訳対象の判定:
+PP-DocLayoutV2 が検出するカテゴリは `RawLayoutCategory` として定義され、
+`ProjectCategory` にマッピングされる（`models.py` 参照）。
 
-| カテゴリ | 説明 | 翻訳対象 |
-|---------|------|---------|
-| `text` | 本文テキスト | ✅ Yes |
-| `title` | タイトル・見出し | ✅ Yes |
-| `plain text` | プレーンテキスト | ✅ Yes |
-| `abandon` | 破棄テキスト（ヘッダ・フッタ等） | ✅ Yes |
-| `figure` | 図 | ❌ No |
-| `figure_caption` | 図のキャプション | ✅ Yes |
-| `table` | 表 | ❌ No |
-| `table_caption` | 表のキャプション | ✅ Yes |
-| `table_footnote` | 表の脚注 | ✅ Yes |
-| `isolate_formula` | 独立数式 | ❌ No |
-| `formula_caption` | 数式のキャプション | ✅ Yes |
+**RawLayoutCategory → ProjectCategory マッピング**:
 
-> **NOTE**: `Paragraph.is_translatable` プロパティでこの判定を行う。
+| RawLayoutCategory | ProjectCategory | 翻訳対象 |
+|-------------------|-----------------|---------|
+| `text`, `vertical_text`, `abstract`, `aside_text` | TEXT | ✅ Yes |
+| `paragraph_title`, `doc_title` | TITLE | ✅ Yes |
+| `figure_title` | CAPTION | ✅ Yes |
+| `footnote`, `vision_footnote` | FOOTNOTE | ❌ No |
+| `inline_formula`, `display_formula`, `formula_number` | FORMULA | ❌ No |
+| `algorithm` | CODE | ❌ No |
+| `table` | TABLE | ❌ No |
+| `image` | IMAGE | ❌ No |
+| `chart` | CHART | ❌ No |
+| `header`, `header_image`, `footer`, `footer_image`, `number` | HEADER | ❌ No |
+| `reference`, `reference_content` | REFERENCE | ❌ No |
+| `seal`, `content`, `unknown` | OTHER | ❌ No |
+
+**翻訳対象カテゴリ** (`TRANSLATABLE_CATEGORIES`):
+- `ProjectCategory.TEXT`
+- `ProjectCategory.TITLE`
+- `ProjectCategory.CAPTION`
+
+> **NOTE**: `Paragraph.is_translatable` は `ProjectCategory` を使用する。
+> 既存の `LayoutBlock.is_translatable` と同じロジック。
 
 #### 5.2.4 座標系の注意点
 
@@ -1709,9 +1725,10 @@ extractor = ParagraphExtractor()
 3. **PP-DocLayout カテゴリ付与** (§5.2): 中間データに category 情報を保持
 
 **PP-DocLayout 連携**:
-- `Paragraph.category`: PP-DocLayout カテゴリ（text, formula, table, figure 等）
-- `Paragraph.is_translatable`: カテゴリに基づく翻訳対象判定
+- `Paragraph.category`: `ProjectCategory`（TEXT, TITLE, CAPTION, FORMULA, TABLE 等）
+- `Paragraph.is_translatable`: `TRANSLATABLE_CATEGORIES` と同じロジック
 - `assign_categories()`: pdftext bbox と LayoutBlock bbox の重複判定
+- 既存の `LayoutBlock.project_category` / `LayoutBlock.is_translatable` と一貫性あり
 
 **検証結果サマリー（翻訳サービス）**:
 - Google Translate: ハイフネーション自動処理 ✅
