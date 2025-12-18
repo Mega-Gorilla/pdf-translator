@@ -137,9 +137,13 @@ src/pdf_translator/
 class TextGroup:
     """文の連続性を保った TextObject のグループ.
 
+    TextGroup は「翻訳入力の単位」として使用する。
+    翻訳結果は text_object_ids と 1:1 対応で各 TextObject.text に書き戻す。
+
     Attributes:
         id: グループ一意識別子
         text_object_ids: 構成する TextObject の ID リスト（読み順）
+        original_texts: 各 TextObject の元テキスト（分割時に使用）
         merged_text: 結合されたテキスト
         bboxes: 各 TextObject の BBox リスト
         fonts: 各 TextObject の Font リスト
@@ -147,9 +151,11 @@ class TextGroup:
         page_num: ページ番号
         category: ProjectCategory
         translated_text: 翻訳後テキスト（翻訳前は None）
+        distributed_texts: 分割後の各 TextObject 用テキスト（分割後に設定）
     """
     id: str
     text_object_ids: list[str]
+    original_texts: list[str]  # 元テキストを保持（分割規則に使用）
     merged_text: str
     bboxes: list[BBox]
     fonts: list[Optional[Font]]
@@ -157,7 +163,52 @@ class TextGroup:
     page_num: int
     category: ProjectCategory
     translated_text: Optional[str] = None
+    distributed_texts: Optional[list[str]] = None  # 分割後テキスト
 ```
+
+#### 4.1.1 再挿入単位の整合性
+
+`PDFProcessor.apply()` は `TextObject` 単位で再挿入を行うため、パイプラインの最終成果は TextObject 単位に書き戻せる形である必要がある。
+
+**設計方針**:
+- TextGroup は「翻訳入力の単位」に限定
+- 翻訳結果は `text_object_ids` と 1:1 対応で `TextObject.text` に戻す
+- 分割規則: 元テキストの文字数比率に基づいて翻訳テキストを分配
+
+**分割アルゴリズム**:
+```python
+def distribute_translation(group: TextGroup) -> list[str]:
+    """翻訳テキストを元の TextObject 比率で分配."""
+    if group.translated_text is None:
+        return group.original_texts
+
+    # 元テキストの文字数比率を計算
+    total_chars = sum(len(t) for t in group.original_texts)
+    if total_chars == 0:
+        return [""] * len(group.original_texts)
+
+    ratios = [len(t) / total_chars for t in group.original_texts]
+
+    # 翻訳テキストを比率で分割
+    translated = group.translated_text
+    result = []
+    pos = 0
+    for i, ratio in enumerate(ratios):
+        if i == len(ratios) - 1:
+            # 最後は残り全部
+            result.append(translated[pos:])
+        else:
+            length = int(len(translated) * ratio)
+            result.append(translated[pos:pos + length])
+            pos += length
+
+    return result
+```
+
+**フェイルセーフ**:
+- 分割数が一致しない場合: TextObject 単位へフォールバック再翻訳
+- 当該グループだけ結合無効化して個別翻訳
+- エラーログ出力で追跡可能に
 
 ### 4.2 TranslationResult（新規）
 
@@ -209,20 +260,63 @@ TextObject を読み順でソートし、文の連続性を保ってグループ
 出力: list[TextGroup]
 
 1. 翻訳対象カテゴリ（TEXT, TITLE, CAPTION）のみフィルタ
-2. 読み順でソート:
-   - PDF座標系（左下原点）のため y1 降順、x0 昇順
-   - key=lambda obj: (-obj.bbox.y1, obj.bbox.x0)
-3. 結合ループ:
+2. 行クラスタリング:
+   - y 座標を line_y_tolerance で丸めて行グループを形成
+   - 同一行内は x0 昇順でソート
+3. 行間ソート:
+   - 行グループを y1 降順でソート（上から下へ）
+4. 結合ループ:
    a. current_group = 空
    b. For each text_object:
       - current_group が空 → 新グループ開始
       - should_merge(last, current) → グループに追加
       - else → グループ確定、新グループ開始
    c. 最後のグループ確定
-4. TextGroup リスト返却
+5. TextGroup リスト返却
 ```
 
-#### 5.1.3 文末判定
+#### 5.1.3 行クラスタリング（y 座標の微小ブレ対策）
+
+PDF 抽出では同一行が複数 TextObject に分かれ、y 座標が微小にブレることが一般的。
+これに対応するため、`line_y_tolerance` を導入して行クラスタを形成する。
+
+```python
+DEFAULT_LINE_Y_TOLERANCE = 3.0  # pt
+
+def _cluster_by_line(
+    self,
+    text_objects: list[TextObject],
+) -> list[list[TextObject]]:
+    """y 座標でクラスタリングして行グループを形成."""
+    if not text_objects:
+        return []
+
+    # y1（上端）でソート
+    sorted_objs = sorted(text_objects, key=lambda o: -o.bbox.y1)
+
+    lines: list[list[TextObject]] = []
+    current_line: list[TextObject] = [sorted_objs[0]]
+    current_y = sorted_objs[0].bbox.y1
+
+    for obj in sorted_objs[1:]:
+        if abs(obj.bbox.y1 - current_y) <= self._line_y_tolerance:
+            # 同一行
+            current_line.append(obj)
+        else:
+            # 新しい行
+            current_line.sort(key=lambda o: o.bbox.x0)  # x0 昇順
+            lines.append(current_line)
+            current_line = [obj]
+            current_y = obj.bbox.y1
+
+    if current_line:
+        current_line.sort(key=lambda o: o.bbox.x0)
+        lines.append(current_line)
+
+    return lines
+```
+
+#### 5.1.4 文末判定
 
 ```python
 SENTENCE_TERMINALS = frozenset({'.', '!', '?', ':', ';'})
@@ -235,24 +329,60 @@ def _is_sentence_end(self, text: str) -> bool:
     return text[-1] in self.SENTENCE_TERMINALS | self.CJK_TERMINALS
 ```
 
-#### 5.1.4 結合判定
+#### 5.1.5 結合判定（2系統）
+
+PDF 抽出の現実に合わせ、結合判定を 2 系統に分ける:
+- **(a) 同一行内**: x gap で結合判定
+- **(b) 次行への結合**: y gap + 列の x-overlap を要求
 
 ```python
-def _should_merge_with_next(
+def _should_merge_same_line(
     self,
     current: TextObject,
     next_obj: TextObject,
 ) -> bool:
+    """同一行内の結合判定（x gap ベース）."""
     # 文末句読点があれば結合しない
     if self._is_sentence_end(current.text):
         return False
 
-    # Y方向の距離が閾値以内
-    y_gap = abs(current.bbox.y0 - next_obj.bbox.y1)
-    if y_gap > self._merge_threshold_y + current.bbox.height:
+    # x 方向の距離が閾値以内
+    x_gap = next_obj.bbox.x0 - current.bbox.x1
+    return x_gap <= self._merge_threshold_x
+
+def _should_merge_next_line(
+    self,
+    current: TextObject,
+    next_obj: TextObject,
+) -> bool:
+    """次行への結合判定（y gap + x overlap ベース）."""
+    # 文末句読点があれば結合しない
+    if self._is_sentence_end(current.text):
         return False
 
-    return True
+    # y 方向の距離が閾値以内
+    y_gap = current.bbox.y0 - next_obj.bbox.y1
+    if y_gap > self._merge_threshold_y:
+        return False
+
+    # x 方向のオーバーラップを要求（多段組の誤結合防止）
+    x_overlap = min(current.bbox.x1, next_obj.bbox.x1) - max(current.bbox.x0, next_obj.bbox.x0)
+    min_width = min(current.bbox.width, next_obj.bbox.width)
+
+    # 少なくとも 50% のオーバーラップを要求
+    return x_overlap >= min_width * 0.5
+```
+
+#### 5.1.6 設定パラメータ
+
+```python
+@dataclass
+class TextMergerConfig:
+    """TextMerger 設定."""
+    line_y_tolerance: float = 3.0   # 同一行判定の y 許容差（pt）
+    merge_threshold_x: float = 20.0  # 同一行内の x gap 閾値（pt）
+    merge_threshold_y: float = 5.0   # 次行への y gap 閾値（pt）
+    x_overlap_ratio: float = 0.5     # 次行結合に必要な x overlap 比率
 ```
 
 ### 5.2 FontSizeAdjuster
@@ -263,20 +393,39 @@ def _should_merge_with_next(
 
 翻訳後テキストが元の BBox に収まるようフォントサイズを調整する。
 
-#### 5.2.2 定数
+#### 5.2.2 前提条件
+
+**重要**: 現在の `PDFProcessor.insert_text_object()` は**自動改行しない**。
+したがって、初期実装では「bbox 幅に収まるまで縮小」を中心に設計する。
+
+- 高さ/行数計算は、実際の改行処理が入ってから対応
+- 現段階では単一行として扱い、幅に収まるかを判定
+
+#### 5.2.3 定数
 
 ```python
-LINE_HEIGHT_FACTOR = 1.5    # 行高さ係数
 FONT_SIZE_DECREMENT = 0.1   # 縮小ステップ（pt）
 MIN_FONT_SIZE = 6.0         # 最小フォントサイズ（pt）
 ```
 
-#### 5.2.3 アルゴリズム
+#### 5.2.4 アルゴリズム（幅ベース・初期実装）
 
 ```
 入力: text, bbox, original_font_size, target_lang
 出力: adjusted_font_size
 
+1. font_size = original_font_size
+2. While font_size >= MIN_FONT_SIZE:
+   a. char_width = estimate_char_width(font_size, target_lang)
+   b. text_width = len(text) * char_width
+   c. If text_width <= bbox.width:
+      return font_size
+   f. font_size -= FONT_SIZE_DECREMENT
+3. return MIN_FONT_SIZE  # 収まらない場合は最小サイズ
+```
+
+**将来拡張**: 改行対応が入った場合は以下のアルゴリズムに切り替え:
+```
 1. font_size = original_font_size
 2. While font_size >= MIN_FONT_SIZE:
    a. char_width = estimate_char_width(font_size, target_lang)
@@ -286,10 +435,10 @@ MIN_FONT_SIZE = 6.0         # 最小フォントサイズ（pt）
    e. If len(text) <= capacity:
       return font_size
    f. font_size -= FONT_SIZE_DECREMENT
-3. return MIN_FONT_SIZE  # 収まらない場合は最小サイズ
+3. return MIN_FONT_SIZE
 ```
 
-#### 5.2.4 文字幅推定
+#### 5.2.5 文字幅推定
 
 ```python
 def _estimate_char_width(self, font_size: float, target_lang: str) -> float:
@@ -338,7 +487,32 @@ class TranslationPipeline:
     ) -> TranslationResult: ...
 ```
 
-#### 5.3.2 ステージ構成
+#### 5.3.2 bytes 入力時の注意
+
+**重要**: `LayoutAnalyzer` は `Path` を前提としている（内部で pypdfium2 に渡す）。
+`bytes` 入力の場合は一時ファイル経由が必要。
+
+```python
+async def translate(
+    self,
+    pdf_source: Union[Path, str, bytes],
+    output_path: Optional[Path] = None,
+) -> TranslationResult:
+    # bytes 入力の場合は一時ファイルに書き出し
+    if isinstance(pdf_source, bytes):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(pdf_source)
+            temp_path = Path(f.name)
+        try:
+            return await self._translate_impl(temp_path, output_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    else:
+        path = Path(pdf_source)
+        return await self._translate_impl(path, output_path)
+```
+
+#### 5.3.3 ステージ構成
 
 | ステージ | メソッド | 処理内容 |
 |---------|---------|---------|
@@ -348,9 +522,15 @@ class TranslationPipeline:
 | Translate | `_stage_translate` | バッチ翻訳（リトライあり） |
 | Apply | `_stage_apply` | PDFに適用 |
 
-#### 5.3.3 リトライロジック
+#### 5.3.4 リトライロジック
+
+**リトライ対象の例外**:
+- `TranslationError`: リトライ対象（API 障害、レート制限など一時的エラー）
+- `ConfigurationError`: **リトライ対象外**（API キー不正、設定エラーなど即 fail）
 
 ```python
+from pdf_translator.translators.base import ConfigurationError, TranslationError
+
 async def _translate_with_retry(
     self,
     texts: list[str],
@@ -362,6 +542,9 @@ async def _translate_with_retry(
             return await self._translator.translate_batch(
                 texts, self._source_lang, self._target_lang
             )
+        except ConfigurationError:
+            # 設定エラーはリトライせず即 fail
+            raise
         except TranslationError as e:
             if attempt < max_retries:
                 delay = retry_delay * (2 ** attempt)  # 指数バックオフ
