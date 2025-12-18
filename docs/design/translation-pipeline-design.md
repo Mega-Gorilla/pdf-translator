@@ -22,6 +22,51 @@ PDF翻訳の全体フローを統合するパイプラインを実装する。�
 - 見開きPDF出力（Issue #6）
 - CLIインターフェース（Issue #7）
 
+### 1.4 v1 制約事項
+
+v1 では以下の制約を設け、実装範囲を限定する。これらは v1.1 以降で段階的に対応予定。
+
+#### 1.4.1 CJK フォント未対応
+
+**制約**: 翻訳先言語が CJK（日本語・中国語・韓国語）の場合、正しく表示されない。
+
+**理由**:
+- `PDFProcessor.insert_text_object()` は標準フォント（Helvetica, Times-Roman 等）を使用
+- CJK 文字は標準フォントに含まれないため、フォントファイル（TTF）の指定が必要
+- CJK フォントの同梱はライセンス確認・サイズ（数十MB）の検討が必要
+
+**v1 の動作**:
+- 翻訳先が CJK 言語の場合、警告ログを出力
+- 翻訳処理は実行するが、PDF 出力時に文字化けする可能性あり
+
+**v1.1 以降の対応予定**:
+- `PipelineConfig.cjk_font_path: Optional[Path]` を追加
+- システムフォント検索、または Noto Sans CJK 同梱を検討
+
+#### 1.4.2 クロスブロック翻訳未対応
+
+**制約**: 翻訳は TextObject 単位で 1:1 に行う。複数 TextObject を結合した翻訳は行わない。
+
+**理由**:
+- 文字数比率による分配は翻訳の伸縮・語順変化で破綻しやすい
+- 安全側の設計として v1 では単純な 1:1 翻訳を採用
+
+**v2 以降の対応予定**:
+- LLM バックエンドでの structured output を活用したクロスブロック翻訳
+- `merge_enabled` 設定の本格活用
+
+#### 1.4.3 merge_enabled 設定は v1 では無効
+
+**制約**: `PipelineConfig.merge_enabled` は v1 では常に `True` 固定として扱う。
+
+**理由**:
+- v1 では 1:1 翻訳のため、`merge_enabled=True/False` で結果が変わらない
+- この設定は v2 のクロスブロック翻訳で意味を持つ
+
+**設計上の位置づけ**:
+- 設定項目としては定義しておく（API 互換性のため）
+- v1 では値を無視し、常に読み順ソート + 個別翻訳を実行
+
 ---
 
 ## 2. 現状分析
@@ -177,9 +222,17 @@ for obj, translated in zip(translatable_objects, translated_texts):
 ```
 
 **TextGroup の役割（v1）**:
-- 読み順のソート
-- 翻訳対象カテゴリのフィルタリング
-- 将来のクロスブロック翻訳のための構造維持
+- 読み順のソート結果を保持する器
+- ページ単位での TextObject 管理を明確化
+- 将来のクロスブロック翻訳のための構造維持（v2 移行時のリファクタリングを最小化）
+
+**なぜ v1 でも TextGroup を実装するか**:
+
+v1 では翻訳が 1:1 なので、単純な `list[TextObject]` でも動作上は問題ない。しかし以下の理由で TextGroup を実装する:
+
+1. **ソート済みの保証**: `list[TextObject]` だけでは「読み順でソート済み」という情報が失われる
+2. **ページ境界の明確化**: TextGroup.page_num でページ単位の処理が明確になる
+3. **v2 移行コストの削減**: クロスブロック翻訳追加時、TextGroup の構造が土台となる
 
 **将来拡張（v2 以降）**:
 
@@ -693,10 +746,11 @@ class TestTranslationPipeline:
 
 | リスク | 影響度 | 対策 |
 |--------|-------|------|
-| 複雑なレイアウトでの読み順誤り | 中 | `merge_enabled=False` で無効化可能 |
+| 複雑なレイアウトでの読み順誤り | 中 | v2 で `merge_enabled=False` による無効化を実装予定 |
 | フォント幅推定の不正確さ | 中 | 保守的な推定値を使用 |
 | 翻訳APIのレート制限 | 低 | 指数バックオフ、バッチサイズ調整 |
 | 大規模PDFでのメモリ使用 | 低 | ページ単位処理 |
+| CJK 言語への翻訳時の文字化け | 中 | v1.1 で CJK フォント対応予定（§1.4.1 参照） |
 
 ---
 
@@ -723,7 +777,9 @@ class PipelineConfig:
     layout_containment_threshold: float = 0.5
 
     # テキスト結合（TextMerger 用）
-    merge_enabled: bool = True       # False で読み順ソート・グループ化を無効化
+    # NOTE: v1 では merge_enabled は無視される（常に True 扱い）
+    # v2 のクロスブロック翻訳で本格活用予定（§1.4.3 参照）
+    merge_enabled: bool = True       # [v2] False で読み順ソート・グループ化を無効化
     line_y_tolerance: float = 3.0    # 同一行判定の y 許容差（pt）
     merge_threshold_x: float = 20.0  # 同一行内の x gap 閾値（pt）
     merge_threshold_y: float = 5.0   # 次行への y gap 閾値（pt）
