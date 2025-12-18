@@ -380,33 +380,17 @@ class TestTranslationPipelineProgress:
 class TestTranslationPipelineCJKWarning:
     """Tests for CJK language warning."""
 
-    async def test_cjk_warning_for_japanese(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Test that warning is logged when target language is Japanese."""
-        import logging
-
-        translator = MagicMock()
-        translator.name = "mock"
+    async def test_cjk_warning_for_japanese(self) -> None:
+        """Test that Japanese is detected as CJK language."""
+        from pdf_translator.core.font_adjuster import CJK_LANGUAGES
 
         config = PipelineConfig(target_lang="ja", use_layout_analysis=False)
-        pipeline = TranslationPipeline(translator, config=config)
 
-        # Access the internal method to trigger warning
-        with caplog.at_level(logging.WARNING):
-            # Create minimal PDF doc
-            page = Page(page_number=0, width=612, height=792, text_objects=[])
-            metadata = Metadata(
-                source_file="test.pdf", created_at="2025-01-01T00:00:00", page_count=1
-            )
-            pdf_doc = PDFDocument(pages=[page], metadata=metadata)
+        # Check the config detection logic (same as in _translate_impl)
+        target_lang_lower = config.target_lang.lower()
+        target_lang_base = target_lang_lower.split("-")[0]
 
-            # The warning is in _translate_impl, which we can't easily call
-            # So we check the config detection logic directly
-            target_lang_lower = config.target_lang.lower()
-            target_lang_base = target_lang_lower.split("-")[0]
-
-            from pdf_translator.core.font_adjuster import CJK_LANGUAGES
-
-            assert target_lang_base in CJK_LANGUAGES or target_lang_lower in CJK_LANGUAGES
+        assert target_lang_base in CJK_LANGUAGES or target_lang_lower in CJK_LANGUAGES
 
     async def test_no_cjk_warning_for_english(self) -> None:
         """Test that no warning is needed for English target."""
