@@ -22,7 +22,13 @@ from ..core.models import PDFDocument, ProjectCategory, TextObject
 from ..core.pdf_processor import PDFProcessor
 from ..core.text_merger import TextMerger
 from ..translators.base import ConfigurationError, TranslationError, TranslatorBackend
-from .errors import ExtractionError, LayoutAnalysisError, PipelineError
+from .errors import (
+    ExtractionError,
+    FontAdjustmentError,
+    LayoutAnalysisError,
+    MergeError,
+    PipelineError,
+)
 from .progress import ProgressCallback
 
 logger = logging.getLogger(__name__)
@@ -245,12 +251,16 @@ class TranslationPipeline:
         """
         self._report_progress("extract", 0, 1, "Starting extraction...")
 
+        processor: PDFProcessor | None = None
         try:
             processor = PDFProcessor(pdf_path)
             pdf_doc = processor.extract_text_objects()
             self._report_progress("extract", 1, 1, "Extraction complete")
             return pdf_doc, processor
         except Exception as e:
+            # Clean up processor if extraction fails after opening
+            if processor is not None:
+                processor.close()
             raise ExtractionError(f"Failed to extract text from PDF: {e}", cause=e)
 
     async def _stage_analyze(
@@ -323,24 +333,32 @@ class TranslationPipeline:
 
         Returns:
             Dict mapping page_number -> sorted translatable TextObjects
+
+        Raises:
+            MergeError: On merge/sort failure
         """
         page_count = len(pdf_doc.pages)
         self._report_progress("merge", 0, page_count, "Sorting text objects...")
 
-        merger = TextMerger(
-            line_y_tolerance=self._config.line_y_tolerance,
-            merge_threshold_x=self._config.merge_threshold_x,
-            merge_threshold_y=self._config.merge_threshold_y,
-            x_overlap_ratio=self._config.x_overlap_ratio,
-        )
+        try:
+            merger = TextMerger(
+                line_y_tolerance=self._config.line_y_tolerance,
+                merge_threshold_x=self._config.merge_threshold_x,
+                merge_threshold_y=self._config.merge_threshold_y,
+                x_overlap_ratio=self._config.x_overlap_ratio,
+            )
 
-        result: dict[int, list[TextObject]] = {}
-        for i, page in enumerate(pdf_doc.pages):
-            sorted_objects = merger.merge(page.text_objects, categories)
-            result[page.page_number] = sorted_objects
-            self._report_progress("merge", i + 1, page_count, f"Page {page.page_number + 1} sorted")
+            result: dict[int, list[TextObject]] = {}
+            for i, page in enumerate(pdf_doc.pages):
+                sorted_objects = merger.merge(page.text_objects, categories)
+                result[page.page_number] = sorted_objects
+                self._report_progress(
+                    "merge", i + 1, page_count, f"Page {page.page_number + 1} sorted"
+                )
 
-        return result
+            return result
+        except Exception as e:
+            raise MergeError(f"Failed to merge/sort text objects: {e}", cause=e)
 
     async def _stage_translate(
         self,
@@ -432,6 +450,9 @@ class TranslationPipeline:
 
         Args:
             sorted_objects_by_page: TextObjects with translated text
+
+        Raises:
+            FontAdjustmentError: On font adjustment failure
         """
         all_objects: list[TextObject] = []
         for objects in sorted_objects_by_page.values():
@@ -444,25 +465,28 @@ class TranslationPipeline:
 
         self._report_progress("font_adjust", 0, total, "Adjusting font sizes...")
 
-        adjuster = FontSizeAdjuster(
-            min_font_size=self._config.min_font_size,
-            font_size_decrement=self._config.font_size_decrement,
-        )
+        try:
+            adjuster = FontSizeAdjuster(
+                min_font_size=self._config.min_font_size,
+                font_size_decrement=self._config.font_size_decrement,
+            )
 
-        for i, obj in enumerate(all_objects):
-            if obj.font is not None:
-                new_size = adjuster.calculate_font_size(
-                    obj.text,
-                    obj.bbox,
-                    obj.font.size,
-                    self._config.target_lang,
-                )
-                obj.font.size = new_size
+            for i, obj in enumerate(all_objects):
+                if obj.font is not None:
+                    new_size = adjuster.calculate_font_size(
+                        obj.text,
+                        obj.bbox,
+                        obj.font.size,
+                        self._config.target_lang,
+                    )
+                    obj.font.size = new_size
 
-            if (i + 1) % 100 == 0 or i == total - 1:
-                self._report_progress("font_adjust", i + 1, total, f"{i + 1}/{total} adjusted")
+                if (i + 1) % 100 == 0 or i == total - 1:
+                    self._report_progress("font_adjust", i + 1, total, f"{i + 1}/{total} adjusted")
 
-        self._report_progress("font_adjust", total, total, "Font adjustment complete")
+            self._report_progress("font_adjust", total, total, "Font adjustment complete")
+        except Exception as e:
+            raise FontAdjustmentError(f"Failed to adjust font sizes: {e}", cause=e)
 
     def _stage_apply(
         self,

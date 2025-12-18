@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for FontSizeAdjuster class."""
 
-import pytest
 
 from pdf_translator.core.font_adjuster import (
     CJK_LANGUAGES,

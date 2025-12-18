@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for TextMerger class."""
 
-import pytest
 
 from pdf_translator.core.models import BBox, ProjectCategory, TextObject
 from pdf_translator.core.text_merger import (

@@ -3,6 +3,7 @@
 
 from .font_adjuster import FontSizeAdjuster
 from .models import (
+    TRANSLATABLE_CATEGORIES,
     BBox,
     CharPosition,
     Color,
@@ -14,7 +15,6 @@ from .models import (
     ProjectCategory,
     TextObject,
     Transform,
-    TRANSLATABLE_CATEGORIES,
 )
 from .pdf_processor import PDFProcessor
 from .text_merger import TextMerger
