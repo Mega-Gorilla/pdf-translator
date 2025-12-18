@@ -82,6 +82,28 @@ v1 では以下の制約を設け、実装範囲を限定する。これらは v
 | クロスブロック翻訳 | 終端句読点がない場合に次ブロックと結合 |
 | フォントサイズ調整 | 翻訳後テキストがbboxに収まるよう調整 |
 | パイプライン統合 | 全ステージの統合、進捗、エラーハンドリング |
+| PDFProcessor.to_bytes() | PDFをbytes出力するメソッド（パイプライン出力に必要） |
+
+### 2.4 PDFProcessor.to_bytes() 追加
+
+パイプラインの出力が `TranslationResult.pdf_bytes` であるため、`PDFProcessor` に bytes 出力メソッドが必要。
+
+**追加理由**:
+- 後方互換性: 既存の `save(path)` の動作を変えない
+- 意図の明確さ: 「ファイル保存」と「バイト取得」は別の操作
+
+**実装イメージ**:
+```python
+def to_bytes(self) -> bytes:
+    """Export PDF as bytes."""
+    from io import BytesIO
+    buffer = BytesIO()
+    pdf = self._ensure_open()
+    pdf.save(buffer)
+    return buffer.getvalue()
+```
+
+> **NOTE**: Issue #4 のスコープ外だが、パイプラインが必要とするので同時に実装する。
 
 ---
 
@@ -168,7 +190,7 @@ src/pdf_translator/
 ```python
 @dataclass
 class TextGroup:
-    """読み順でソートされた TextObject のグループ.
+    """読み順でソートされた翻訳対象 TextObject のグループ.
 
     v1 では「読み順ソート・翻訳対象のバッチ化」のために使用。
     翻訳は TextObject 単位で 1:1 に行い、結果は直接 TextObject.text に書き戻す。
@@ -177,12 +199,12 @@ class TextGroup:
         id: グループ一意識別子
         text_object_ids: 構成する TextObject の ID リスト（読み順）
         page_num: ページ番号
-        category: ProjectCategory
     """
     id: str
     text_object_ids: list[str]
     page_num: int
-    category: ProjectCategory
+    # NOTE: category は v1 では不要（TextGroup に含まれる TextObject はすべて翻訳対象）
+    # v2 で非翻訳対象グループの管理やカテゴリ別処理が必要になったら追加する
 ```
 
 #### 4.1.1 翻訳単位の設計方針（v1: 1:1 翻訳）
@@ -290,7 +312,31 @@ class ProgressCallback(Protocol):
 
 #### 5.1.1 目的
 
-TextObject を読み順でソートし、文の連続性を保ってグループ化する。
+翻訳対象の TextObject を読み順でソートし、グループ化する。
+
+**責務の集約**: TextMerger 内部で `filter_translatable()` を呼び、翻訳対象のフィルタリングを行う。呼び出し側は `categories` だけ渡せばよい。
+
+**API 設計**:
+```python
+class TextMerger:
+    def merge(
+        self,
+        text_objects: list[TextObject],
+        categories: dict[str, ProjectCategory],
+        page_num: int,
+    ) -> list[TextGroup]:
+        """翻訳対象 TextObject を読み順でグループ化.
+
+        内部で filter_translatable() を呼び出し、翻訳対象のみを処理する。
+        """
+        # 内部で翻訳対象フィルタリング
+        translatable = [
+            obj for obj in text_objects
+            if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
+        ]
+        # 読み順ソート + グループ化
+        ...
+```
 
 #### 5.1.2 アルゴリズム
 
@@ -298,7 +344,7 @@ TextObject を読み順でソートし、文の連続性を保ってグループ
 入力: list[TextObject], dict[str, ProjectCategory], page_num
 出力: list[TextGroup]
 
-1. 翻訳対象カテゴリ（TEXT, TITLE, CAPTION）のみフィルタ
+1. 内部で翻訳対象カテゴリ（TEXT, TITLE, CAPTION）のみフィルタ
 2. 行クラスタリング:
    - y 座標を line_y_tolerance で丸めて行グループを形成
    - 同一行内は x0 昇順でソート
@@ -525,7 +571,34 @@ class TranslationPipeline:
     ) -> TranslationResult: ...
 ```
 
-#### 5.3.2 bytes 入力時の注意
+#### 5.3.2 use_layout_analysis=False の動作
+
+レイアウト解析を無効化した場合の動作を定義する。
+
+**動作**: すべての TextObject を翻訳対象（`ProjectCategory.TEXT`）として扱い、警告ログを出力する。
+
+**ユースケース**:
+- レイアウト解析が不要な単純な PDF（テキストのみ）
+- レイアウト解析が失敗した場合のフォールバック
+- 以前の実装（`_archive`）との整合性
+
+**実装イメージ**:
+```python
+if not self._use_layout_analysis:
+    logger.warning(
+        "Layout analysis disabled. All text objects will be translated. "
+        "Formulas, tables, and other non-text elements may be incorrectly translated."
+    )
+    # すべての TextObject を TEXT カテゴリとして扱う
+    categories = {obj.id: ProjectCategory.TEXT for obj in all_objects}
+else:
+    layout_blocks = await self._analyzer.analyze_all(pdf_path)
+    categories = match_text_with_layout(all_objects, layout_blocks)
+```
+
+**注意点**: 警告メッセージで「数式や表も翻訳される可能性がある」ことを明示する。
+
+#### 5.3.3 bytes 入力時の注意
 
 **重要**: `LayoutAnalyzer` は `Path` を前提としている（内部で pypdfium2 に渡す）。
 `bytes` 入力の場合は一時ファイル経由が必要。
@@ -550,7 +623,7 @@ async def translate(
         return await self._translate_impl(path, output_path)
 ```
 
-#### 5.3.3 ステージ構成
+#### 5.3.4 ステージ構成
 
 | ステージ (stage値) | メソッド | 処理内容 |
 |-------------------|---------|---------|
@@ -563,7 +636,7 @@ async def translate(
 
 > **NOTE**: ステージ名は §4.3 の ProgressCallback stage 値と一致させている。
 
-#### 5.3.4 リトライロジック
+#### 5.3.5 リトライロジック
 
 **リトライ対象の例外**:
 - `TranslationError`: リトライ対象（API 障害、レート制限など一時的エラー）
@@ -631,6 +704,31 @@ class MergeError(PipelineError):
 class FontAdjustmentError(PipelineError):
     """フォント調整エラー."""
     pass
+```
+
+#### 5.4.1 エラー発生時の動作（v1: 全体失敗）
+
+**v1 方針**: エラー発生時は全体失敗とする。部分的成功（一部ページのみ翻訳）は v2 以降で検討。
+
+**理由**:
+1. **シンプルさ**: 部分的成功の処理は複雑（どのページが失敗したか追跡、UI への通知など）
+2. **ユーザー期待**: 翻訳を依頼したら全ページ翻訳されることを期待する
+3. **リトライで回復可能**: 一時的エラー（レート制限、ネットワーク）なら再実行で成功する
+4. **デバッグ容易性**: 全体失敗のほうが問題の切り分けが容易
+
+**v1 の動作**:
+- リトライ上限に達したら `PipelineError` を raise
+- エラーメッセージに失敗したステージと原因を含める
+
+**v2 での拡張案**:
+```python
+@dataclass
+class TranslationResult:
+    pdf_bytes: bytes
+    stats: Optional[dict[str, Any]] = None
+    # v2 で追加予定:
+    # failed_pages: list[int] = field(default_factory=list)
+    # partial_success: bool = False
 ```
 
 ---
