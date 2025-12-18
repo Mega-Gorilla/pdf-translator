@@ -697,7 +697,7 @@ else:
     # ページごとにマッチングを実行し、結果を集約
     categories: dict[str, ProjectCategory] = {}
     for page in pdf_doc.pages:
-        page_blocks = layout_by_page.get(page.page_num, [])
+        page_blocks = layout_by_page.get(page.page_number, [])
         page_categories = match_text_with_layout(
             page.text_objects,
             page_blocks,
