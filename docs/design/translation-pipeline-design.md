@@ -53,23 +53,7 @@ v1 では以下の制約を設け、実装範囲を限定する。これらは v
 
 **v2 以降の対応予定**:
 - LLM バックエンドでの structured output を活用したクロスブロック翻訳
-- `merge_enabled` 設定の本格活用
-
-#### 1.4.3 merge_enabled 設定は v1 では無効
-
-**制約**: `PipelineConfig.merge_enabled` は v1 では常に `True` 固定として扱う。
-
-**理由**:
-- v1 では 1:1 翻訳のため、`merge_enabled=True/False` で結果が変わらない
-- この設定は v2 のクロスブロック翻訳で意味を持つ
-
-**設計上の位置づけ**:
-- 設定項目としては定義しておく（API 互換性のため）
-- v1 では値を無視し、常に読み順ソート + 個別翻訳を実行
-
-**実装時の対応**:
-- `merge_enabled=False` が指定された場合、WARNING ログを出力
-- 「v1 では merge_enabled は無視されます。v2 で対応予定です。」
+- 文脈を考慮した翻訳品質向上
 
 ---
 
@@ -752,7 +736,7 @@ class TestTranslationPipeline:
 
 | リスク | 影響度 | 対策 |
 |--------|-------|------|
-| 複雑なレイアウトでの読み順誤り | 中 | v2 で `merge_enabled=False` による無効化を実装予定 |
+| 複雑なレイアウトでの読み順誤り | 中 | `line_y_tolerance` 等のパラメータ調整で対応 |
 | フォント幅推定の不正確さ | 中 | 保守的な推定値を使用 |
 | 翻訳APIのレート制限 | 低 | 指数バックオフ、バッチサイズ調整 |
 | 大規模PDFでのメモリ使用 | 低 | ページ単位処理 |
@@ -783,9 +767,6 @@ class PipelineConfig:
     layout_containment_threshold: float = 0.5
 
     # テキスト結合（TextMerger 用）
-    # NOTE: v1 では merge_enabled は無視される（常に True 扱い）
-    # v2 のクロスブロック翻訳で本格活用予定（§1.4.3 参照）
-    merge_enabled: bool = True       # [v2] False で読み順ソート・グループ化を無効化
     line_y_tolerance: float = 3.0    # 同一行判定の y 許容差（pt）
     merge_threshold_x: float = 20.0  # 同一行内の x gap 閾値（pt）
     merge_threshold_y: float = 5.0   # 次行への y gap 閾値（pt）
