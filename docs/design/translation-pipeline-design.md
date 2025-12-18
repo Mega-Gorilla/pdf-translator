@@ -463,12 +463,14 @@ def _should_merge_next_line(
 
 TextMerger の設定パラメータは `PipelineConfig` に統合（§9 参照）。
 
-| パラメータ | デフォルト | 説明 |
-|-----------|-----------|------|
-| `line_y_tolerance` | 3.0 pt | 同一行判定の y 許容差 |
-| `merge_threshold_x` | 20.0 pt | 同一行内の x gap 閾値 |
-| `merge_threshold_y` | 5.0 pt | 次行への y gap 閾値 |
-| `x_overlap_ratio` | 0.5 | 次行結合に必要な x overlap 比率 |
+| パラメータ | デフォルト | 説明 | v1 での用途 |
+|-----------|-----------|------|-------------|
+| `line_y_tolerance` | 3.0 pt | 同一行判定の y 許容差 | 行クラスタリング |
+| `merge_threshold_x` | 20.0 pt | 同一行内の x gap 閾値 | 将来用（v2 結合判定） |
+| `merge_threshold_y` | 5.0 pt | 次行への y gap 閾値 | 将来用（v2 結合判定） |
+| `x_overlap_ratio` | 0.5 | 次行結合に必要な x overlap 比率 | 将来用（v2 結合判定） |
+
+> **NOTE**: v1 では `line_y_tolerance` のみ実際に使用されます。他のパラメータは v2 でのクロスブロック結合に備えて定義しています。実装時に不要と判断した場合は削除可能です。
 
 ### 5.2 FontSizeAdjuster
 
@@ -689,8 +691,19 @@ if not self._config.use_layout_analysis:
     # すべての TextObject を TEXT カテゴリとして扱う
     categories = {obj.id: ProjectCategory.TEXT for obj in all_objects}
 else:
-    layout_blocks = await self._stage_analyze(pdf_path)
-    categories = match_text_with_layout(all_objects, layout_blocks)
+    # LayoutAnalyzer.analyze_all() は dict[int, list[LayoutBlock]] を返す
+    layout_by_page = await self._stage_analyze(pdf_path)
+
+    # ページごとにマッチングを実行し、結果を集約
+    categories: dict[str, ProjectCategory] = {}
+    for page in pdf_doc.pages:
+        page_blocks = layout_by_page.get(page.page_num, [])
+        page_categories = match_text_with_layout(
+            page.text_objects,
+            page_blocks,
+            self._config.layout_containment_threshold,
+        )
+        categories.update(page_categories)
 ```
 
 **注意点**: 警告メッセージで「数式や表も翻訳される可能性がある」ことを明示する。
@@ -892,12 +905,21 @@ class TranslationResult:
 
 ```python
 class TestTextMerger:
-    def test_reading_order_sorting(self): ...
+    # 読み順ソート
+    def test_reading_order_single_line(self): ...
+    def test_reading_order_multiple_lines(self): ...
+    def test_reading_order_with_y_tolerance(self): ...  # 微小 y ブレ対策
+
+    # カテゴリフィルタリング
+    def test_filters_translatable_categories(self): ...
+    def test_excludes_formula_and_table(self): ...
+
+    # ページ単位処理
+    def test_preserves_page_order(self): ...
+
+    # 文末判定（将来の結合用だが v1 でも実装）
     def test_sentence_end_detection_english(self): ...
     def test_sentence_end_detection_japanese(self): ...
-    def test_cross_block_merging(self): ...
-    def test_no_merge_at_sentence_boundary(self): ...
-    def test_single_object_becomes_single_group(self): ...
 ```
 
 ### 7.2 FontSizeAdjuster テスト
