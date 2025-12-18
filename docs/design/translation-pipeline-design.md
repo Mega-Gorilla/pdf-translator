@@ -67,6 +67,10 @@ v1 では以下の制約を設け、実装範囲を限定する。これらは v
 - 設定項目としては定義しておく（API 互換性のため）
 - v1 では値を無視し、常に読み順ソート + 個別翻訳を実行
 
+**実装時の対応**:
+- `merge_enabled=False` が指定された場合、WARNING ログを出力
+- 「v1 では merge_enabled は無視されます。v2 で対応予定です。」
+
 ---
 
 ## 2. 現状分析
@@ -564,14 +568,16 @@ async def translate(
 
 #### 5.3.3 ステージ構成
 
-| ステージ | メソッド | 処理内容 |
-|---------|---------|---------|
-| Extract | `_stage_extract` | PDFからテキスト抽出 |
-| Analyze | `_stage_analyze` | レイアウト解析＋マッチング |
-| Merge | `_stage_merge` | TextGroup作成 |
-| Translate | `_stage_translate` | バッチ翻訳（リトライあり） |
-| FontAdjust | `_stage_font_adjust` | フォントサイズ調整 |
-| Apply | `_stage_apply` | PDFに適用 |
+| ステージ (stage値) | メソッド | 処理内容 |
+|-------------------|---------|---------|
+| `extract` | `_stage_extract` | PDFからテキスト抽出 |
+| `analyze` | `_stage_analyze` | レイアウト解析＋マッチング |
+| `merge` | `_stage_merge` | TextGroup作成 |
+| `translate` | `_stage_translate` | バッチ翻訳（リトライあり） |
+| `font_adjust` | `_stage_font_adjust` | フォントサイズ調整 |
+| `apply` | `_stage_apply` | PDFに適用 |
+
+> **NOTE**: ステージ名は §4.3 の ProgressCallback stage 値と一致させている。
 
 #### 5.3.4 リトライロジック
 
