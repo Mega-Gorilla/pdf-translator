@@ -517,6 +517,7 @@ async def translate(
 | Analyze | `_stage_analyze` | レイアウト解析＋マッチング |
 | Merge | `_stage_merge` | TextGroup作成 |
 | Translate | `_stage_translate` | バッチ翻訳（リトライあり） |
+| FontAdjust | `_stage_font_adjust` | フォントサイズ調整 |
 | Apply | `_stage_apply` | PDFに適用 |
 
 #### 5.3.4 リトライロジック
@@ -692,7 +693,7 @@ class TestTranslationPipeline:
 
 | リスク | 影響度 | 対策 |
 |--------|-------|------|
-| 複雑なレイアウトでの読み順誤り | 中 | 設定でマージ無効化可能に |
+| 複雑なレイアウトでの読み順誤り | 中 | `merge_enabled=False` で無効化可能 |
 | フォント幅推定の不正確さ | 中 | 保守的な推定値を使用 |
 | 翻訳APIのレート制限 | 低 | 指数バックオフ、バッチサイズ調整 |
 | 大規模PDFでのメモリ使用 | 低 | ページ単位処理 |
@@ -722,6 +723,7 @@ class PipelineConfig:
     layout_containment_threshold: float = 0.5
 
     # テキスト結合（TextMerger 用）
+    merge_enabled: bool = True       # False で読み順ソート・グループ化を無効化
     line_y_tolerance: float = 3.0    # 同一行判定の y 許容差（pt）
     merge_threshold_x: float = 20.0  # 同一行内の x gap 閾値（pt）
     merge_threshold_y: float = 5.0   # 次行への y gap 閾値（pt）
