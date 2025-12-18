@@ -135,80 +135,67 @@ src/pdf_translator/
 ```python
 @dataclass
 class TextGroup:
-    """文の連続性を保った TextObject のグループ.
+    """読み順でソートされた TextObject のグループ.
 
-    TextGroup は「翻訳入力の単位」として使用する。
-    翻訳結果は text_object_ids と 1:1 対応で各 TextObject.text に書き戻す。
+    v1 では「読み順ソート・翻訳対象のバッチ化」のために使用。
+    翻訳は TextObject 単位で 1:1 に行い、結果は直接 TextObject.text に書き戻す。
 
     Attributes:
         id: グループ一意識別子
         text_object_ids: 構成する TextObject の ID リスト（読み順）
-        original_texts: 各 TextObject の元テキスト（分割時に使用）
-        merged_text: 結合されたテキスト
-        bboxes: 各 TextObject の BBox リスト
-        fonts: 各 TextObject の Font リスト
-        colors: 各 TextObject の Color リスト
         page_num: ページ番号
         category: ProjectCategory
-        translated_text: 翻訳後テキスト（翻訳前は None）
-        distributed_texts: 分割後の各 TextObject 用テキスト（分割後に設定）
     """
     id: str
     text_object_ids: list[str]
-    original_texts: list[str]  # 元テキストを保持（分割規則に使用）
-    merged_text: str
-    bboxes: list[BBox]
-    fonts: list[Optional[Font]]
-    colors: list[Optional[Color]]
     page_num: int
     category: ProjectCategory
-    translated_text: Optional[str] = None
-    distributed_texts: Optional[list[str]] = None  # 分割後テキスト
 ```
 
-#### 4.1.1 再挿入単位の整合性
+#### 4.1.1 翻訳単位の設計方針（v1: 1:1 翻訳）
 
 `PDFProcessor.apply()` は `TextObject` 単位で再挿入を行うため、パイプラインの最終成果は TextObject 単位に書き戻せる形である必要がある。
 
-**設計方針**:
-- TextGroup は「翻訳入力の単位」に限定
-- 翻訳結果は `text_object_ids` と 1:1 対応で `TextObject.text` に戻す
-- 分割規則: 元テキストの文字数比率に基づいて翻訳テキストを分配
+**v1 設計方針（安全側）**:
 
-**分割アルゴリズム**:
+翻訳結果の分配（スライス）は、翻訳による伸縮・語順変化・記号単体 TextObject（`,` や `∗` など）混在で破綻しやすい。そのため、v1 では以下の方針を採用する:
+
+1. **TextGroup は「読み順ソート・翻訳対象のバッチ化」までに留める**
+2. **翻訳は TextObject 単位で 1:1 に行う**（`translate_batch(texts=original_texts)`）
+3. **翻訳結果はそのまま各 `TextObject.text` に書き戻す**
+
 ```python
-def distribute_translation(group: TextGroup) -> list[str]:
-    """翻訳テキストを元の TextObject 比率で分配."""
-    if group.translated_text is None:
-        return group.original_texts
+# v1: 1:1 翻訳（TextObject 単位）
+texts_to_translate = [obj.text for obj in translatable_objects]
+translated_texts = await translator.translate_batch(
+    texts_to_translate, source_lang, target_lang
+)
 
-    # 元テキストの文字数比率を計算
-    total_chars = sum(len(t) for t in group.original_texts)
-    if total_chars == 0:
-        return [""] * len(group.original_texts)
-
-    ratios = [len(t) / total_chars for t in group.original_texts]
-
-    # 翻訳テキストを比率で分割
-    translated = group.translated_text
-    result = []
-    pos = 0
-    for i, ratio in enumerate(ratios):
-        if i == len(ratios) - 1:
-            # 最後は残り全部
-            result.append(translated[pos:])
-        else:
-            length = int(len(translated) * ratio)
-            result.append(translated[pos:pos + length])
-            pos += length
-
-    return result
+# 結果を TextObject に書き戻し
+for obj, translated in zip(translatable_objects, translated_texts):
+    obj.text = translated
 ```
 
-**フェイルセーフ**:
-- 分割数が一致しない場合: TextObject 単位へフォールバック再翻訳
-- 当該グループだけ結合無効化して個別翻訳
-- エラーログ出力で追跡可能に
+**TextGroup の役割（v1）**:
+- 読み順のソート
+- 翻訳対象カテゴリのフィルタリング
+- 将来のクロスブロック翻訳のための構造維持
+
+**将来拡張（v2 以降）**:
+
+クロスブロックで文脈を活かす設計は、以下のタイミングで再検討:
+- LLM バックエンドでの structured output 対応
+- 翻訳品質の評価基盤整備後
+
+その際は以下の方式を検討:
+```python
+# v2（将来）: LLM での structured output を活用
+response = await llm_translator.translate_with_structure(
+    texts=original_texts,
+    instruction="各テキストを個別に翻訳し、JSON配列で返してください"
+)
+# response: ["翻訳1", "翻訳2", ...]
+```
 
 ### 4.2 TranslationResult（新規）
 
@@ -234,12 +221,23 @@ class ProgressCallback(Protocol):
 
     def __call__(
         self,
-        stage: str,        # "extract", "analyze", "translate", "apply"
+        stage: str,        # ステージ名（下記参照）
         current: int,      # 現在の処理数
         total: int,        # 総数
         message: str = "", # 状態メッセージ
     ) -> None: ...
 ```
+
+**ステージ一覧**:
+
+| stage | 説明 |
+|-------|------|
+| `extract` | PDFからテキスト抽出 |
+| `analyze` | レイアウト解析 |
+| `merge` | テキストグループ化（読み順ソート） |
+| `translate` | バッチ翻訳 |
+| `font_adjust` | フォントサイズ調整 |
+| `apply` | PDFに適用 |
 
 ---
 
@@ -375,15 +373,14 @@ def _should_merge_next_line(
 
 #### 5.1.6 設定パラメータ
 
-```python
-@dataclass
-class TextMergerConfig:
-    """TextMerger 設定."""
-    line_y_tolerance: float = 3.0   # 同一行判定の y 許容差（pt）
-    merge_threshold_x: float = 20.0  # 同一行内の x gap 閾値（pt）
-    merge_threshold_y: float = 5.0   # 次行への y gap 閾値（pt）
-    x_overlap_ratio: float = 0.5     # 次行結合に必要な x overlap 比率
-```
+TextMerger の設定パラメータは `PipelineConfig` に統合（§9 参照）。
+
+| パラメータ | デフォルト | 説明 |
+|-----------|-----------|------|
+| `line_y_tolerance` | 3.0 pt | 同一行判定の y 許容差 |
+| `merge_threshold_x` | 20.0 pt | 同一行内の x gap 閾値 |
+| `merge_threshold_y` | 5.0 pt | 次行への y gap 閾値 |
+| `x_overlap_ratio` | 0.5 | 次行結合に必要な x overlap 比率 |
 
 ### 5.2 FontSizeAdjuster
 
@@ -704,10 +701,17 @@ class TestTranslationPipeline:
 
 ## 9. 設定オプション
 
+**設定の方針**: すべての設定パラメータは `PipelineConfig` に統合する。
+個別コンポーネント（TextMerger, FontSizeAdjuster）は `PipelineConfig` から必要な値を受け取る。
+
 ```python
 @dataclass
 class PipelineConfig:
-    """パイプライン設定."""
+    """パイプライン設定.
+
+    すべての設定パラメータを統合管理する。
+    個別コンポーネントはここから必要な値を受け取る。
+    """
 
     # 翻訳設定
     source_lang: str = "en"
@@ -717,18 +721,38 @@ class PipelineConfig:
     use_layout_analysis: bool = True
     layout_containment_threshold: float = 0.5
 
-    # テキスト結合
-    merge_cross_block: bool = True
-    merge_threshold_y: float = 5.0
+    # テキスト結合（TextMerger 用）
+    line_y_tolerance: float = 3.0    # 同一行判定の y 許容差（pt）
+    merge_threshold_x: float = 20.0  # 同一行内の x gap 閾値（pt）
+    merge_threshold_y: float = 5.0   # 次行への y gap 閾値（pt）
+    x_overlap_ratio: float = 0.5     # 次行結合に必要な x overlap 比率
 
-    # フォント調整
+    # フォント調整（FontSizeAdjuster 用）
     min_font_size: float = 6.0
     font_size_decrement: float = 0.1
-    line_height_factor: float = 1.5
 
     # 翻訳リトライ
     max_retries: int = 3
     retry_delay: float = 1.0
+```
+
+**使用例**:
+```python
+config = PipelineConfig(target_lang="ja", line_y_tolerance=5.0)
+
+# TextMerger に渡す
+merger = TextMerger(
+    line_y_tolerance=config.line_y_tolerance,
+    merge_threshold_x=config.merge_threshold_x,
+    merge_threshold_y=config.merge_threshold_y,
+    x_overlap_ratio=config.x_overlap_ratio,
+)
+
+# FontSizeAdjuster に渡す
+adjuster = FontSizeAdjuster(
+    min_font_size=config.min_font_size,
+    font_size_decrement=config.font_size_decrement,
+)
 ```
 
 ---
