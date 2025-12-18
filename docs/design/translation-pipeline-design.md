@@ -32,7 +32,7 @@ PDF翻訳の全体フローを統合するパイプラインを実装する。�
 
 **理由**:
 - `PDFProcessor.insert_text_object()` は標準フォント（Helvetica, Times-Roman 等）を使用
-- CJK 文字は標準フォントに含まれないため、フォントファイル（TTF）の指定が必要
+- CJK 文字は標準フォントに含まれないため、フォントファイル（TTF/TTC）の指定が必要
 - CJK フォントの同梱はライセンス確認・サイズ（数十MB）の検討が必要
 
 **現在の動作**:
@@ -41,7 +41,39 @@ PDF翻訳の全体フローを統合するパイプラインを実装する。�
 
 **対応予定** (Issue #18):
 - `PipelineConfig.cjk_font_path: Optional[Path]` を追加
-- システムフォント検索、または Noto Sans CJK 同梱を検討
+- システムフォント検索、または Noto Sans JP 同梱を検討
+- ライセンス: SIL OFL 1.1（Apache-2.0 とバンドル互換）
+
+##### デバッグ用: システムフォントの利用
+
+本格実装前のデバッグでは、システムにインストールされた Noto Sans CJK を直接指定して日本語表示をテストできる。
+
+**検証済みフォント**:
+```
+/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+```
+
+**使用方法**:
+```python
+from pdf_translator.core.pdf_processor import PDFProcessor
+from pdf_translator.core.models import Font, BBox
+
+processor = PDFProcessor("input.pdf")
+
+# CJK フォントを指定して日本語テキストを挿入
+processor.insert_text_object(
+    page_num=0,
+    text="こんにちは日本語テスト",
+    bbox=BBox(x0=50, y0=700, x1=300, y1=750),
+    font=Font(name="NotoSansCJK", size=12.0),
+    font_path="/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+)
+```
+
+**注意事項**:
+- TTC（TrueType Collection）フォーマットは pypdfium2 で読み込み可能（検証済み）
+- CJK 文字を含むテキストは自動的に CID フォントとして処理される（`_needs_cid_font()`）
+- システムフォントのパスは環境依存のため、本番実装では Issue #18 で対応
 
 #### 1.4.2 PDFテキスト構造の制約と対応
 
