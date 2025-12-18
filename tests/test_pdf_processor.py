@@ -314,6 +314,28 @@ class TestPDFProcessor:
             assert output_path.exists()
             assert output_path.stat().st_size > 0
 
+    def test_to_bytes(self):
+        """Test exporting PDF as bytes."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            pdf_bytes = processor.to_bytes()
+
+        # Should return bytes
+        assert isinstance(pdf_bytes, bytes)
+        # Should have content
+        assert len(pdf_bytes) > 0
+        # Should start with PDF magic number
+        assert pdf_bytes.startswith(b"%PDF-")
+
+    def test_to_bytes_roundtrip(self):
+        """Test that to_bytes output can be loaded again."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            original_page_count = processor.page_count
+            pdf_bytes = processor.to_bytes()
+
+        # Load the bytes and verify
+        with PDFProcessor(pdf_bytes) as processor2:
+            assert processor2.page_count == original_page_count
+
     def test_insert_text_standard_font(self):
         """Test inserting text with standard font."""
         with tempfile.TemporaryDirectory() as tmpdir:

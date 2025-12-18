@@ -964,3 +964,19 @@ class PDFProcessor:
         pdf = self._ensure_open()
         with open(path, "wb") as f:
             pdf.save(f)
+
+    def to_bytes(self) -> bytes:
+        """Export the PDF as bytes.
+
+        This is useful for pipeline output where direct byte access
+        is needed without writing to a file.
+
+        Returns:
+            PDF content as bytes
+        """
+        import io
+
+        pdf = self._ensure_open()
+        buffer = io.BytesIO()
+        pdf.save(buffer)
+        return buffer.getvalue()
