@@ -237,6 +237,28 @@ override-dependencies = ["pypdfium2>=5.2.0"]
 > **NOTE**: pdftext は `pypdfium2==4.30.0` を要求するが、実際には pypdfium2 5.2.0 でも動作する。
 > `[tool.uv]` の `override-dependencies` で最新版を強制。
 
+#### 2.1.1 依存関係の運用方針
+
+**採用方針: uv override + ドキュメント明記**
+
+| 環境 | pypdfium2 バージョン | 備考 |
+|------|---------------------|------|
+| uv (推奨) | 5.2.0 | override-dependencies により強制 |
+| pip | 4.30.0 | pdftext の要求バージョン |
+
+**理由**:
+- pypdfium2 5.2.0 は PDFProcessor の機能（テキスト挿入等）に必要
+- pdftext のブロック抽出は 4.30.0/5.2.0 どちらでも動作確認済み
+- 本プロジェクトは uv を公式ビルドツールとして採用
+
+**代替案（不採用）**:
+- (A) dependencies で `pypdfium2>=5.2.0` を直接指定 → pdftext との整合性エラー
+- (B) 4.30.0 を前提に設計 → PDFProcessor の一部機能に制限
+- (C) pdftext を optional extra に → セットアップが複雑化
+
+**pip 利用者への対応**:
+README に「`uv sync` 推奨、pip 使用時は `pip install pypdfium2>=5.2.0` を追加実行」と明記。
+
 ### 2.2 依存Issue
 
 - ✅ #1 pypdfium2 ラッパー（実装済み）
@@ -477,31 +499,88 @@ processor.apply_paragraphs(paragraphs)
 #### 4.1.3 PDFProcessor.apply_paragraphs() の動作
 
 ```python
-def apply_paragraphs(self, paragraphs: list[Paragraph]) -> None:
+def apply_paragraphs(
+    self,
+    paragraphs: list[Paragraph],
+    font_path: Optional[Path] = None,
+) -> None:
     """段落単位で翻訳テキストを適用.
 
     各 Paragraph について:
     1. block_bbox 内の既存テキストを削除
     2. block_bbox の位置に translated_text を挿入
+
+    Args:
+        paragraphs: 翻訳済み Paragraph リスト
+        font_path: カスタムフォントパス（CJK用, Optional）
     """
     for para in paragraphs:
+        if not para.translated_text:
+            continue
+
         # block_bbox 内のテキストを削除
         self.remove_text_in_bbox(
-            page_number=para.page_number,
+            page_num=para.page_number,
             bbox=para.block_bbox,
         )
 
-        # 翻訳テキストを挿入
+        # 翻訳テキストを挿入（既存 API に合わせる）
+        font = Font(name="Helvetica", size=para.adjusted_font_size or 12.0)
         self.insert_text_object(
-            page_number=para.page_number,
+            page_num=para.page_number,
             text=para.translated_text,
             bbox=para.block_bbox,
-            font_size=para.adjusted_font_size,
+            font=font,
+            font_path=font_path,  # CJK 対応時に使用
         )
 ```
 
 > **NOTE**: `remove_text_in_bbox()` は新規メソッド。block_bbox 内のテキストオブジェクトを
 > 一括削除する。pdftext のブロック境界は正確なので、bbox ベースの削除が可能。
+> 既存 `insert_text_object(page_num, text, bbox, font, font_path, ...)` API を使用。
+
+#### 4.1.3.1 remove_text_in_bbox() の安全性ルール
+
+**部分重複（partial overlap）の扱い**:
+
+```python
+def remove_text_in_bbox(
+    self,
+    page_num: int,
+    bbox: BBox,
+    containment_threshold: float = 0.5,  # 削除基準
+) -> int:
+    """BBox 内のテキストオブジェクトを削除.
+
+    Args:
+        page_num: ページ番号
+        bbox: 削除対象範囲
+        containment_threshold: 削除判定の閾値（TextObject の何%が bbox 内にあれば削除）
+
+    Returns:
+        削除したオブジェクト数
+
+    削除判定:
+        containment = (intersection_area / text_object_area)
+        if containment >= containment_threshold:
+            削除する
+    """
+```
+
+**設計方針（保守的削除）**:
+
+| 状況 | containment | 判定 |
+|------|-------------|------|
+| 完全包含 | 1.0 | ✅ 削除 |
+| 80% 重複 | 0.8 | ✅ 削除（threshold=0.5） |
+| 50% 重複 | 0.5 | ✅ 削除（境界） |
+| 30% 重複 | 0.3 | ❌ 保持 |
+| 重複なし | 0.0 | ❌ 保持 |
+
+**リスク軽減策**:
+- `containment_threshold` をデフォルト 0.5 に設定（50% 以上重複で削除）
+- 隣接ブロックの誤削除を防ぐため、pdftext bbox をそのまま使用（マージンなし）
+- デバッグ用にログ出力（削除対象オブジェクト ID と containment 値）
 
 #### 4.1.4 将来拡張
 
@@ -852,13 +931,14 @@ def assign_categories(
     Args:
         paragraphs: pdftext から抽出した Paragraph リスト
         layout_blocks: ページ番号 → LayoutBlock リストのマッピング
-        threshold: 重複判定の閾値（IoU または containment ratio）
+        threshold: 重複判定の閾値（containment ratio）
 
     Returns:
         カテゴリが付与された Paragraph リスト（入力と同じオブジェクト）
 
     Note:
-        - 複数の LayoutBlock と重複する場合は、最も重複率が高いものを採用
+        - 複数の LayoutBlock と重複する場合は CATEGORY_PRIORITY に基づき選択
+        - 翻訳除外カテゴリ（formula, table, image）を優先（fail-safe）
         - どの LayoutBlock とも重複しない場合は category = None のまま
         - LayoutBlock.project_category を Paragraph.category に設定
     """
@@ -875,17 +955,31 @@ def _find_best_matching_block(
     blocks: list[LayoutBlock],
     threshold: float,
 ) -> Optional[LayoutBlock]:
-    """最も重複率が高い LayoutBlock を検索."""
-    best_block = None
-    best_overlap = 0.0
+    """最適な LayoutBlock を検索（fail-safe: 翻訳除外カテゴリを優先）.
+
+    既存 layout_utils.CATEGORY_PRIORITY を使用してカテゴリ優先度を判定。
+    数式・表・図は優先度が高く、少しでも重複すれば翻訳除外となる。
+    """
+    candidates: list[tuple[LayoutBlock, float]] = []
 
     for block in blocks:
         overlap = _calculate_overlap_ratio(para_bbox, block.bbox)
-        if overlap >= threshold and overlap > best_overlap:
-            best_overlap = overlap
-            best_block = block
+        if overlap >= threshold:
+            candidates.append((block, overlap))
 
-    return best_block
+    if not candidates:
+        return None
+
+    # CATEGORY_PRIORITY に基づきソート（優先度昇順 → 重複率降順）
+    # 翻訳除外カテゴリ（formula=1, table=3, image=4）が先に来る
+    candidates.sort(
+        key=lambda x: (
+            CATEGORY_PRIORITY.get(x[0].raw_category, DEFAULT_PRIORITY),
+            -x[1],  # 同一優先度なら重複率が高い方
+        )
+    )
+
+    return candidates[0][0]
 
 
 def _calculate_overlap_ratio(bbox1: BBox, bbox2: BBox) -> float:
@@ -911,6 +1005,10 @@ def _calculate_overlap_ratio(bbox1: BBox, bbox2: BBox) -> float:
 
 PP-DocLayoutV2 が検出するカテゴリは `RawLayoutCategory` として定義され、
 `ProjectCategory` にマッピングされる（`models.py` 参照）。
+
+**CATEGORY_PRIORITY（layout_utils.py）**:
+既存の `CATEGORY_PRIORITY` を使用して fail-safe なマッチングを実現。
+翻訳除外カテゴリ（formula=1, table=3, image=4）が優先される。
 
 **RawLayoutCategory → ProjectCategory マッピング**:
 
@@ -1082,14 +1180,13 @@ def _estimate_char_width(self, font_size: float, target_lang: str) -> float:
 class TranslationPipeline:
     """PDF翻訳パイプライン.
 
-    ワークフロー:
-    1. PDFからテキスト抽出
-    2. レイアウト解析（asyncio.to_thread 経由）
-    3. テキストとレイアウトのマッチング
-    4. 翻訳対象フィルタリング + 読み順ソート
-    5. バッチ翻訳
-    6. フォントサイズ調整
-    7. PDFに適用
+    ワークフロー（pdftext 統合版）:
+    1. extract: pdftext でブロック抽出 → Paragraph 変換
+    2. analyze: レイアウト解析（Optional, asyncio.to_thread 経由）
+    3. categorize: PP-DocLayout カテゴリ付与（assign_categories）
+    4. translate: バッチ翻訳（is_translatable のみ）
+    5. font_adjust: フォントサイズ調整
+    6. apply: PDFに適用（remove_text_in_bbox → insert_text_object）
     """
 
     def __init__(
@@ -1365,13 +1462,13 @@ pdftext 統合により、実装フェーズが簡略化される。
 1. ParagraphExtractor クラス実装
 2. pdftext ブロック → Paragraph 変換
 3. 座標系変換（pdftext → PDF）
-4. ハイフネーション処理実装
-5. ユニットテスト作成
+4. ユニットテスト作成
 
-**削減されたタスク**（pdftext が担当）:
-- ~~行クラスタリング~~
-- ~~列分離（多段組対応）~~
-- ~~段落境界検出~~
+**削減されたタスク**（pdftext / 翻訳サービスが担当）:
+- ~~行クラスタリング~~ → pdftext
+- ~~列分離（多段組対応）~~ → pdftext
+- ~~段落境界検出~~ → pdftext
+- ~~ハイフネーション処理~~ → 翻訳サービスが自動処理（§5.1.4 参照）
 
 ### Phase 3: FontSizeAdjuster（フォント調整）
 
@@ -1531,7 +1628,9 @@ class TestPDFProcessorParagraphs:
     # remove_text_in_bbox
     def test_remove_text_in_bbox_removes_contained_objects(self): ...
     def test_remove_text_in_bbox_preserves_outside_objects(self): ...
-    def test_remove_text_in_bbox_partial_overlap_behavior(self): ...
+    def test_remove_text_in_bbox_partial_overlap_above_threshold(self): ...  # 50%以上→削除
+    def test_remove_text_in_bbox_partial_overlap_below_threshold(self): ...  # 50%未満→保持
+    def test_remove_text_in_bbox_adjacent_blocks_preserved(self): ...  # 隣接ブロック保護
 
     # apply_paragraphs
     def test_apply_paragraphs_removes_text_in_bbox(self): ...
@@ -1561,7 +1660,7 @@ class TestTranslationPipeline:
 
     # 翻訳フロー
     async def test_paragraph_based_translation(self): ...
-    async def test_hyphenation_handled_correctly(self): ...
+    async def test_translatable_filtering(self): ...  # is_translatable によるフィルタリング
 ```
 
 ### 7.6 E2E テスト（サンプルPDF）
