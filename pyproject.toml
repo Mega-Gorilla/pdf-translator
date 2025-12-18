@@ -23,7 +23,8 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 dependencies = [
-    "pypdfium2>=4.0.0",
+    "pypdfium2>=4.30.0",
+    "pdftext>=0.6.0",
     "spacy>=3.7.0",
     "deep-translator>=1.11.0",
     "numpy>=1.24.0",
@@ -74,4 +75,12 @@ filterwarnings = [
     # (?s) flag makes . match newlines, allowing pattern to match multi-line warning messages
     # Root cause fix tracked in: https://github.com/Mega-Gorilla/pdf-translator/issues/10
     "ignore:(?s).*pypdfium2.*:pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.uv]
+# Override pdftext's pypdfium2==4.30.0 constraint to use latest version
+# pdftext works with pypdfium2 5.2.0 (tested), but pins to 4.30.0 to avoid 4.30.1 regression
+# See: https://github.com/pypdfium2-team/pypdfium2/issues/335
+override-dependencies = [
+    "pypdfium2>=5.2.0",
 ]

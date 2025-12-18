@@ -64,56 +64,84 @@ PDF からテキストを抽出すると、**物理的な行単位**で TextObje
   [翻訳] "tion言語モデルは7Bから65Bの範囲です"
   ```
 
-##### v1 の対応方針: 段落単位マージ
+##### v1 の対応方針: pdftext によるブロック単位抽出
 
-**v1 では TextMerger で段落単位にマージしてから翻訳する**。
+**v1 では pdftext ライブラリを使用してブロック（段落）単位で抽出する**。
 
 ```
-抽出(行単位) → マージ(段落単位) → 翻訳 → 配置 → 挿入
+PDF → pdftext (ブロック抽出) → ハイフネーション処理 → 翻訳 → 配置 → 挿入
 ```
 
-**v1 で実装するマージ機能**:
+**pdftext の利点**:
 
-| 機能 | 説明 | 優先度 |
-|------|------|--------|
-| 行クラスタリング | Y座標近接度で同一段落を判定 | 必須 |
-| ハイフネーション結合 | 行末 `-` を検出し次行と結合 | 必須 |
-| 段落境界検出 | 文末句読点、空行、インデントで段落を分割 | 必須 |
-| 多段組対応 | X座標のオーバーラップで列を分離 | 必須 |
+| 機能 | 従来（自前実装） | pdftext |
+|------|-----------------|---------|
+| 段落検出 | 複雑なアルゴリズム必要 | **自動（scikit-learn ベース）** |
+| 行クラスタリング | Y-tolerance 計算必要 | **不要** |
+| 多段組対応 | X-overlap 計算必要 | **自動** |
+| ハイフネーション | カスタム処理 | **シンプルな関数で対応** |
+
+**pdftext 検証結果（LLaMA 論文）**:
+- Page 0: 15 ブロック検出
+- Abstract（13行）が1ブロックに正しくグループ化
+- 2段組レイアウトが自動で分離（左列 x~88-274, 右列 x~306-526）
+
+**v1 で実装する機能**:
+
+| 機能 | 説明 | 実装方法 |
+|------|------|----------|
+| ブロック抽出 | pdftext でブロック単位取得 | `dictionary_output()` API |
+| 座標変換 | pdftext → PDF 座標系 | `pdf_y = page_height - pdftext_y` |
+| ハイフネーション結合 | 行末 `-` + 小文字開始で結合 | シンプルな関数 |
 
 **v1 の制約（v2 以降で対応予定）**:
 
 | 制約 | 理由 | v2 対応案 |
 |------|------|-----------|
-| 翻訳後テキストは最初の行の BBox に配置 | 行ごとの分配は複雑で破綻しやすい | LLM で段落レイアウト再構成 |
+| 翻訳後テキストはブロック BBox に配置 | 行ごとの分配は複雑で破綻しやすい | LLM で段落レイアウト再構成 |
 | 段落が元の BBox を超過する場合はフォント縮小 | シンプルな対応 | 動的レイアウト調整 |
 
 ##### 翻訳後テキスト配置戦略（v1）
 
-マージされた段落の翻訳後、テキストをどこに配置するか：
-
-**方針**: 段落の最初の行の BBox を基準として配置
+pdftext で検出されたブロックの BBox を基準として配置。
 
 ```
 元の PDF:
 ┌──────────────────────────────────┐
-│ We introduce LLaMA, a collection │ ← 行1 (BBox A)
-│ of foundation language models    │ ← 行2 (BBox B)
-│ ranging from 7B to 65B.         │ ← 行3 (BBox C)
+│ We introduce LLaMA, a collection │ ← pdftext block
+│ of foundation language models    │   bbox で
+│ ranging from 7B to 65B.         │   1ブロックとして検出
 └──────────────────────────────────┘
 
 翻訳後:
 ┌──────────────────────────────────┐
-│ 我々はLLaMAを紹介します。これは  │ ← BBox A を基準に配置
-│ 7Bから65Bまでの基盤言語モデル   │    （元の行2,3は削除）
+│ 我々はLLaMAを紹介します。これは  │ ← block_bbox を基準に配置
+│ 7Bから65Bまでの基盤言語モデル   │   （元のテキストは削除）
 │ のコレクションです。             │
 └──────────────────────────────────┘
 ```
 
 **注意点**:
-- 翻訳前の行2, 行3 のテキストは削除される
-- 翻訳後テキストは行1の位置から開始
-- フォントサイズは BBox A に収まるよう調整
+- pdftext block bbox を翻訳テキスト配置の基準とする
+- 元のテキストオブジェクトは全削除
+- フォントサイズは block_bbox に収まるよう調整
+
+##### 座標系の違い（重要）
+
+pdftext と PDF/pypdfium2 では Y 座標系が異なる:
+
+| ライブラリ | Y 座標原点 | Y 増加方向 |
+|-----------|-----------|-----------|
+| pdftext | ページ左上 | 上→下 |
+| PDF/pypdfium2 | ページ左下 | 下→上 |
+
+**変換式**:
+```python
+# pdftext bbox: [x0, y0_top, x1, y1_bottom]
+# PDF bbox: (x0, y0_bottom, x1, y1_top)
+pdf_y0 = page_height - y1_bottom  # PDF の下端
+pdf_y1 = page_height - y0_top     # PDF の上端
+```
 
 ##### 将来拡張（v2 以降）
 
@@ -133,6 +161,44 @@ PDF からテキストを抽出すると、**物理的な行単位**で TextObje
 | LayoutAnalyzer | `core/layout_analyzer.py` | PP-DocLayoutV2によるレイアウト解析 |
 | layout_utils | `core/layout_utils.py` | TextObject↔LayoutBlockマッチング |
 | TranslatorBackend | `translators/*.py` | Google/DeepL/OpenAI翻訳バックエンド |
+| pdftext | 外部ライブラリ | ブロック（段落）単位テキスト抽出 |
+
+#### pdftext ライブラリ
+
+**概要**: pypdfium2 ベースの PDF テキスト抽出ライブラリ。scikit-learn の決定木を使用してブロック（段落）を自動検出。
+
+**ライセンス**: Apache-2.0（プロジェクト互換）
+
+**主要 API**:
+```python
+from pdftext.extraction import dictionary_output
+
+result = dictionary_output(
+    pdf_path,
+    page_range=[0, 1, 2],  # 対象ページ（省略で全ページ）
+    sort=False,            # ソート無効（デフォルト）
+    keep_chars=False,      # 文字単位情報は不要
+)
+# 戻り値: list[dict] - ページごとの辞書
+# result[0]['blocks']: ブロックリスト
+# result[0]['blocks'][0]['lines']: 行リスト
+# result[0]['blocks'][0]['bbox']: [x0, y0_top, x1, y1_bottom]
+```
+
+**依存関係設定** (`pyproject.toml`):
+```toml
+dependencies = [
+    "pypdfium2>=4.30.0",
+    "pdftext>=0.6.0",
+    ...
+]
+
+[tool.uv]
+override-dependencies = ["pypdfium2>=5.2.0"]
+```
+
+> **NOTE**: pdftext は `pypdfium2==4.30.0` を要求するが、実際には pypdfium2 5.2.0 でも動作する。
+> `[tool.uv]` の `override-dependencies` で最新版を強制。
 
 ### 2.2 依存Issue
 
@@ -182,31 +248,32 @@ PDF Input
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ PDFProcessor.extract_text_objects()          │
-│ → PDFDocument (TextObjects)                  │
-│ ※ TextObject は行単位で分離されている        │
+│ pdftext.dictionary_output()            [NEW] │
+│ → ブロック（段落）単位のテキスト             │
+│ ※ 多段組も自動で分離                        │
 └─────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ LayoutAnalyzer.analyze_all()                 │
+│ ParagraphExtractor.extract()           [NEW] │
+│ → list[Paragraph]                            │
+│ ※ pdftext blocks → Paragraph 変換           │
+│ ※ 座標変換 + ハイフネーション処理            │
+└─────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│ LayoutAnalyzer.analyze_all()      (Optional) │
 │ → dict[int, list[LayoutBlock]]               │
+│ ※ 数式・表・図のフィルタリング用             │
 │ ※ asyncio.to_thread() 経由で呼び出し         │
 └─────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ layout_utils.match_text_with_layout()        │
-│ → dict[str, ProjectCategory]                 │
-│ ※ 数式・表・図をフィルタリング               │
-└─────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│ TextMerger.merge()                     [NEW] │
-│ → list[Paragraph]                            │
-│ ※ 行単位 TextObject を段落単位にマージ       │
-│ ※ ハイフネーション結合を含む                 │
+│ layout_utils.filter_paragraphs()       [NEW] │
+│ → list[Paragraph] (翻訳対象のみ)             │
+│ ※ 数式・表・図ブロックと重複する段落を除外   │
 └─────────────────────────────────────────┘
     │
     ▼
@@ -220,38 +287,52 @@ PDF Input
 ┌─────────────────────────────────────────┐
 │ FontSizeAdjuster.calculate_font_size() [NEW] │
 │ → 調整済みフォントサイズ                     │
-│ ※ 段落の anchor_bbox に収まるよう調整        │
+│ ※ 段落の block_bbox に収まるよう調整         │
 └─────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ PDFProcessor.apply()                         │
+│ PDFProcessor.apply_paragraphs()        [NEW] │
 │ → 翻訳済みPDF                                │
-│ ※ 元の行を全削除し、翻訳テキストを挿入       │
+│ ※ 元テキストを削除し、翻訳テキストを挿入     │
 └─────────────────────────────────────────┘
     │
     ▼
 Output PDF
 ```
 
+**データフロー変更点（pdftext 統合前との比較）**:
+
+| 従来 | 新（pdftext 統合） |
+|------|-------------------|
+| PDFProcessor で行単位抽出 | pdftext でブロック単位抽出 |
+| TextMerger で段落マージ（複雑） | ParagraphExtractor（シンプル） |
+| 行クラスタリング必要 | **不要** |
+| 列分離ロジック必要 | **不要** |
+| 段落境界検出必要 | **不要** |
+
 ### 3.2 ファイル構成
 
 ```
 src/pdf_translator/
 ├── core/
-│   ├── models.py             # 既存（変更なし）
-│   ├── pdf_processor.py      # 既存 + to_bytes() 追加
-│   ├── layout_analyzer.py    # 既存
-│   ├── layout_utils.py       # 既存
-│   ├── text_merger.py        # 新規: 読み順ソート
-│   └── font_adjuster.py      # 新規: フォント調整
-├── pipeline/                  # 新規ディレクトリ
-│   ├── __init__.py           # 公開 API エクスポート
+│   ├── models.py              # 既存 + Paragraph 追加
+│   ├── pdf_processor.py       # 既存 + to_bytes(), apply_paragraphs() 追加
+│   ├── layout_analyzer.py     # 既存
+│   ├── layout_utils.py        # 既存 + filter_paragraphs() 追加
+│   ├── paragraph_extractor.py # 新規: pdftext ブロック → Paragraph 変換
+│   └── font_adjuster.py       # 新規: フォント調整
+├── pipeline/                   # 新規ディレクトリ
+│   ├── __init__.py            # 公開 API エクスポート
 │   ├── translation_pipeline.py  # TranslationPipeline, PipelineConfig, TranslationResult
-│   ├── progress.py           # ProgressCallback
-│   └── errors.py             # PipelineError 等
-└── translators/              # 既存
+│   ├── progress.py            # ProgressCallback
+│   └── errors.py              # PipelineError 等
+└── translators/               # 既存
 ```
+
+**変更点（pdftext 統合）**:
+- `text_merger.py` → `paragraph_extractor.py` に変更（役割が大幅に簡略化）
+- `layout_utils.py` に `filter_paragraphs()` 追加
 
 ---
 
@@ -259,10 +340,10 @@ src/pdf_translator/
 
 ### 4.1 Paragraph データ構造（新規）
 
-#### 4.1.1 設計方針: 段落単位でのマージと翻訳
+#### 4.1.1 設計方針: pdftext ブロックベース
 
-PDF から抽出される TextObject は行単位で分離されているため、翻訳前に段落単位でマージする必要がある。
-`Paragraph` dataclass は、複数の TextObject をまとめた翻訳単位を表す。
+pdftext が自動でブロック（段落）を検出するため、`Paragraph` dataclass はシンプルな構造になる。
+pdftext block の情報を保持し、翻訳・配置に必要な情報を提供する。
 
 **配置**: `src/pdf_translator/core/models.py`
 
@@ -271,36 +352,47 @@ PDF から抽出される TextObject は行単位で分離されているため�
 class Paragraph:
     """段落（翻訳単位）.
 
-    複数の TextObject をマージした翻訳単位。
-    翻訳後テキストは anchor_bbox の位置に配置される。
+    pdftext で検出されたブロックを翻訳単位として表す。
+    翻訳後テキストは block_bbox の位置に配置される。
 
     Attributes:
-        id: 段落ID（"para_p{page}_i{index}" 形式）
+        id: 段落ID（"para_p{page}_b{block_index}" 形式）
         page_number: ページ番号
         text: マージされたテキスト（ハイフネーション結合済み）
-        text_object_ids: 元の TextObject ID リスト（削除対象）
-        anchor_bbox: 翻訳テキスト配置基準（最初の行の BBox）
-        anchor_font: 翻訳テキストのフォント情報（最初の行から取得）
-        anchor_transform: 翻訳テキストの Transform（最初の行から取得）
+        block_bbox: pdftext ブロックの BBox（PDF 座標系に変換済み）
+        line_count: 元の行数（デバッグ/統計用）
+        original_font_size: 元のフォントサイズ（推定値）
     """
     id: str
     page_number: int
     text: str
-    text_object_ids: list[str]
-    anchor_bbox: BBox
-    anchor_font: Font
-    anchor_transform: Transform
+    block_bbox: BBox
+    line_count: int
+    original_font_size: float = 12.0  # デフォルト値
 
     # 翻訳後に設定されるフィールド
     translated_text: Optional[str] = None
     adjusted_font_size: Optional[float] = None
 ```
 
+**変更点（従来設計との比較）**:
+
+| 従来 | pdftext 統合後 |
+|------|---------------|
+| `text_object_ids: list[str]` | 削除（pdftext はブロック単位で管理） |
+| `anchor_bbox` (最初の行) | `block_bbox` (ブロック全体) |
+| `anchor_font`, `anchor_transform` | 削除（シンプル化） |
+
 #### 4.1.2 Paragraph 生成フロー
 
 ```python
-# TextMerger が Paragraph リストを生成
-paragraphs = merger.merge(text_objects, categories)
+from pdftext.extraction import dictionary_output
+
+# pdftext でブロック抽出
+pdftext_result = dictionary_output(pdf_path, page_range=page_range)
+
+# ParagraphExtractor が Paragraph リストを生成
+paragraphs = extractor.extract(pdftext_result)
 
 # 翻訳（段落単位）
 texts_to_translate = [p.text for p in paragraphs]
@@ -316,13 +408,13 @@ for para, translated in zip(paragraphs, translated_texts):
 for para in paragraphs:
     para.adjusted_font_size = adjuster.calculate_font_size(
         para.translated_text,
-        para.anchor_bbox,
-        para.anchor_font.size,
+        para.block_bbox,
+        para.original_font_size,
         target_lang,
     )
 
 # PDF 適用
-processor.apply_paragraphs(paragraphs)  # 元の TextObject を削除し、翻訳テキストを挿入
+processor.apply_paragraphs(paragraphs)
 ```
 
 #### 4.1.3 PDFProcessor.apply_paragraphs() の動作
@@ -332,23 +424,27 @@ def apply_paragraphs(self, paragraphs: list[Paragraph]) -> None:
     """段落単位で翻訳テキストを適用.
 
     各 Paragraph について:
-    1. text_object_ids の TextObject を全て削除
-    2. anchor_bbox の位置に translated_text を挿入
+    1. block_bbox 内の既存テキストを削除
+    2. block_bbox の位置に translated_text を挿入
     """
     for para in paragraphs:
-        # 元の TextObject を全削除
-        for obj_id in para.text_object_ids:
-            self.remove_text_object(obj_id)
+        # block_bbox 内のテキストを削除
+        self.remove_text_in_bbox(
+            page_number=para.page_number,
+            bbox=para.block_bbox,
+        )
 
         # 翻訳テキストを挿入
         self.insert_text_object(
             page_number=para.page_number,
             text=para.translated_text,
-            bbox=para.anchor_bbox,
+            bbox=para.block_bbox,
             font_size=para.adjusted_font_size,
-            transform=para.anchor_transform,
         )
 ```
+
+> **NOTE**: `remove_text_in_bbox()` は新規メソッド。block_bbox 内のテキストオブジェクトを
+> 一括削除する。pdftext のブロック境界は正確なので、bbox ベースの削除が可能。
 
 #### 4.1.4 将来拡張（v2 以降）
 
@@ -403,307 +499,256 @@ class ProgressCallback(Protocol):
 
 | stage | 説明 | total |
 |-------|------|-------|
-| `extract` | PDFからテキスト抽出 | 1（PDF 1 ファイル） |
-| `analyze` | レイアウト解析 | page_count |
-| `merge` | 読み順ソート | page_count |
-| `translate` | バッチ翻訳 | len(translatable_objects) |
-| `font_adjust` | フォントサイズ調整 | len(translatable_objects) |
+| `extract` | pdftext でブロック抽出 + Paragraph 変換 | page_count |
+| `analyze` | レイアウト解析（Optional） | page_count |
+| `filter` | 数式・表・図フィルタリング | 1 |
+| `translate` | バッチ翻訳 | len(paragraphs) |
+| `font_adjust` | フォントサイズ調整 | len(paragraphs) |
 | `apply` | PDFに適用 | 1（PDF 1 ファイル） |
+
+**変更点（pdftext 統合）**:
+- `extract`: PDFProcessor → pdftext + ParagraphExtractor
+- `merge` → `filter` に名称変更
 
 ---
 
 ## 5. コンポーネント設計
 
-### 5.1 TextMerger
+### 5.1 ParagraphExtractor（旧 TextMerger）
 
-**ファイル**: `src/pdf_translator/core/text_merger.py`
+**ファイル**: `src/pdf_translator/core/paragraph_extractor.py`
 
 #### 5.1.1 目的
 
-行単位で分離された TextObject を**段落単位にマージ**し、`Paragraph` リストを生成する。
-これにより、文脈を保持した翻訳が可能になる。
+pdftext で抽出されたブロックを `Paragraph` リストに変換する。
+pdftext がブロック検出を自動で行うため、このコンポーネントの責務は**大幅に簡略化**される。
 
 **責務**:
-1. 翻訳対象カテゴリ（TEXT, TITLE, CAPTION）のフィルタリング
-2. 行単位 TextObject の段落へのマージ
-3. ハイフネーション結合（行末 `-` の処理）
-4. 多段組の列分離
-5. `Paragraph` リストの生成
+1. pdftext ブロック → Paragraph 変換
+2. 座標系変換（pdftext → PDF）
+3. ハイフネーション結合（行末 `-` + 小文字開始）
+
+**削除された責務**（pdftext が担当）:
+- ~~行クラスタリング~~
+- ~~列分離（多段組対応）~~
+- ~~段落境界検出~~
 
 **API 設計**:
 ```python
-class TextMerger:
-    def __init__(
-        self,
-        line_y_tolerance: float = 3.0,
-        paragraph_gap_threshold: float = 1.5,  # 行高さの倍率
-        x_overlap_ratio: float = 0.3,
-    ) -> None:
-        """TextMerger を初期化.
+class ParagraphExtractor:
+    """pdftext ブロックから Paragraph を抽出."""
 
-        Args:
-            line_y_tolerance: 同一行判定の y 許容差（pt）
-            paragraph_gap_threshold: 段落境界判定の行間閾値（行高さの倍率）
-            x_overlap_ratio: 同一列判定に必要な x overlap 比率
-        """
-        ...
-
-    def merge(
+    def extract(
         self,
-        text_objects: list[TextObject],
-        categories: dict[str, ProjectCategory],
-        page_number: int,
+        pdftext_result: list[dict],
+        page_range: list[int] | None = None,
     ) -> list[Paragraph]:
-        """TextObject を段落にマージして返す.
+        """pdftext の出力から Paragraph リストを生成.
 
         Args:
-            text_objects: ページ内の全 TextObject
-            categories: TextObject.id → ProjectCategory のマッピング
-            page_number: ページ番号
+            pdftext_result: pdftext.dictionary_output() の戻り値
+            page_range: 対象ページ番号リスト（None で全ページ）
 
         Returns:
-            段落のリスト（読み順）
+            段落のリスト
         """
         ...
+
+    @staticmethod
+    def extract_from_pdf(
+        pdf_path: str | Path,
+        page_range: list[int] | None = None,
+    ) -> list[Paragraph]:
+        """PDF ファイルから直接 Paragraph を抽出（便利メソッド）.
+
+        Args:
+            pdf_path: PDF ファイルパス
+            page_range: 対象ページ番号リスト
+
+        Returns:
+            段落のリスト
+        """
+        from pdftext.extraction import dictionary_output
+        result = dictionary_output(str(pdf_path), page_range=page_range)
+        extractor = ParagraphExtractor()
+        return extractor.extract(result, page_range)
 ```
 
 #### 5.1.2 アルゴリズム概要
 
 ```
-入力: list[TextObject], dict[str, ProjectCategory], page_number
+入力: pdftext_result (list[dict])
 出力: list[Paragraph]
 
-1. カテゴリフィルタリング
-   - TEXT, TITLE, CAPTION のみ抽出
+1. ページごとにループ
+   - page_data = pdftext_result[page_idx]
+   - page_height = page_data['bbox'][3]  # 座標変換用
 
-2. 行クラスタリング
-   - Y座標で行をグループ化（line_y_tolerance 許容）
-   - 同一行内は X0 昇順でソート
+2. ブロックごとにループ
+   - block = page_data['blocks'][block_idx]
 
-3. 列分離（多段組対応）
-   - X座標のオーバーラップで列を判定
-   - 各列を独立して処理
+3. 行テキスト抽出
+   - lines = [join(span['text'] for span in line['spans']) for line in block['lines']]
 
-4. 段落検出
-   - 段落境界の判定:
-     a. 行間が paragraph_gap_threshold × 行高さ を超える
-     b. 文末句読点で終わる行
-     c. インデントの変化
-   - 境界で分割して段落グループを形成
+4. ハイフネーション処理
+   - merged_text = merge_hyphenation(lines)
 
-5. テキストマージ
-   - 段落内の行を結合
-   - ハイフネーション処理（行末 `-` を削除して次行と連結）
+5. 座標変換
+   - pdftext bbox → PDF bbox
+   - pdf_y0 = page_height - y1_bottom
+   - pdf_y1 = page_height - y0_top
 
 6. Paragraph 生成
-   - 各段落から Paragraph オブジェクトを生成
-   - anchor_bbox, anchor_font, anchor_transform は最初の行から取得
+   - id, page_number, text, block_bbox, line_count を設定
 ```
 
-#### 5.1.3 行クラスタリング
+#### 5.1.3 実装
 
 ```python
-def _cluster_by_line(
-    self,
-    text_objects: list[TextObject],
-) -> list[list[TextObject]]:
-    """Y座標でクラスタリングして行グループを形成."""
-    if not text_objects:
-        return []
+import re
+from pathlib import Path
+from dataclasses import dataclass
+from pdf_translator.core.models import Paragraph, BBox
 
-    # Y1（上端）でソート（上から下へ）
-    sorted_objs = sorted(text_objects, key=lambda o: -o.bbox.y1)
 
-    lines: list[list[TextObject]] = []
-    current_line: list[TextObject] = [sorted_objs[0]]
-    current_y = sorted_objs[0].bbox.y1
+class ParagraphExtractor:
+    """pdftext ブロックから Paragraph を抽出."""
 
-    for obj in sorted_objs[1:]:
-        if abs(obj.bbox.y1 - current_y) <= self._line_y_tolerance:
-            current_line.append(obj)
-        else:
-            current_line.sort(key=lambda o: o.bbox.x0)  # X0 昇順
-            lines.append(current_line)
-            current_line = [obj]
-            current_y = obj.bbox.y1
+    def extract(
+        self,
+        pdftext_result: list[dict],
+        page_range: list[int] | None = None,
+    ) -> list[Paragraph]:
+        """pdftext の出力から Paragraph リストを生成."""
+        paragraphs: list[Paragraph] = []
 
-    if current_line:
-        current_line.sort(key=lambda o: o.bbox.x0)
-        lines.append(current_line)
+        for page_idx, page_data in enumerate(pdftext_result):
+            # page_range 指定時はフィルタリング
+            if page_range is not None and page_idx not in page_range:
+                continue
 
-    return lines
-```
+            page_height = page_data['bbox'][3]
 
-#### 5.1.4 多段組対応（列分離）
+            for block_idx, block in enumerate(page_data['blocks']):
+                para = self._process_block(
+                    block, page_idx, block_idx, page_height
+                )
+                if para:
+                    paragraphs.append(para)
 
-学術論文などの多段組レイアウトで、左列と右列を誤って結合しないよう列を分離する。
+        return paragraphs
 
-```python
-def _separate_columns(
-    self,
-    lines: list[list[TextObject]],
-) -> list[list[list[TextObject]]]:
-    """行リストを列ごとに分離.
+    def _process_block(
+        self,
+        block: dict,
+        page_idx: int,
+        block_idx: int,
+        page_height: float,
+    ) -> Paragraph | None:
+        """単一ブロックを Paragraph に変換."""
+        # 行テキスト抽出
+        lines = []
+        for line in block['lines']:
+            line_text = "".join(span['text'] for span in line['spans'])
+            lines.append(line_text)
 
-    Returns:
-        列ごとの行リスト（左から右の順）
-    """
-    if not lines:
-        return []
+        if not lines:
+            return None
 
-    # 全行の X 範囲を収集
-    x_ranges = []
-    for line in lines:
-        x0 = min(obj.bbox.x0 for obj in line)
-        x1 = max(obj.bbox.x1 for obj in line)
-        x_ranges.append((x0, x1))
+        # ハイフネーション処理
+        merged_text = self._merge_hyphenation(lines)
+        if not merged_text.strip():
+            return None
 
-    # 列境界を検出（大きな X ギャップを探す）
-    columns = self._detect_column_boundaries(x_ranges)
+        # 座標変換（pdftext → PDF）
+        x0, y0_top, x1, y1_bottom = block['bbox']
+        pdf_y0 = page_height - y1_bottom  # PDF の下端
+        pdf_y1 = page_height - y0_top     # PDF の上端
 
-    # 各列に属する行を分類
-    column_lines: list[list[list[TextObject]]] = [[] for _ in columns]
-    for line, (x0, x1) in zip(lines, x_ranges):
-        for i, (col_x0, col_x1) in enumerate(columns):
-            # X オーバーラップで列を判定
-            overlap = min(x1, col_x1) - max(x0, col_x0)
-            line_width = x1 - x0
-            if overlap >= line_width * self._x_overlap_ratio:
-                column_lines[i].append(line)
-                break
+        # フォントサイズ推定（最初の span から）
+        font_size = 12.0  # デフォルト
+        if block['lines'] and block['lines'][0]['spans']:
+            first_span = block['lines'][0]['spans'][0]
+            font_size = first_span.get('font', {}).get('size', 12.0)
 
-    return column_lines
-```
+        return Paragraph(
+            id=f"para_p{page_idx}_b{block_idx}",
+            page_number=page_idx,
+            text=merged_text,
+            block_bbox=BBox(x0=x0, y0=pdf_y0, x1=x1, y1=pdf_y1),
+            line_count=len(lines),
+            original_font_size=font_size,
+        )
 
-#### 5.1.5 段落境界検出
+    def _merge_hyphenation(self, lines: list[str]) -> str:
+        """行末ハイフンを適切に処理して行をマージ.
 
-```python
-def _detect_paragraph_boundaries(
-    self,
-    lines: list[list[TextObject]],
-) -> list[int]:
-    """段落境界のインデックスを検出.
+        ルール:
+        - 行末が `-` で、次行の先頭が小文字 → ハイフンを削除して結合
+        - それ以外 → スペースで結合（複合語を保持）
 
-    Returns:
-        段落境界（新しい段落の開始行インデックス）のリスト
-    """
-    boundaries = [0]  # 最初の行は常に段落開始
+        例:
+        - "founda-" + "tion" → "foundation"（単語継続）
+        - "LLaMA-" + "65B" → "LLaMA- 65B"（複合語保持）
+        - "state-of-the-art" → そのまま（同一行内）
+        """
+        if not lines:
+            return ""
 
-    for i in range(len(lines) - 1):
-        current_line = lines[i]
-        next_line = lines[i + 1]
+        merged = lines[0].strip()
 
-        if self._is_paragraph_boundary(current_line, next_line):
-            boundaries.append(i + 1)
+        for line in lines[1:]:
+            line = line.strip()
+            if not line:
+                continue
 
-    return boundaries
-
-def _is_paragraph_boundary(
-    self,
-    current_line: list[TextObject],
-    next_line: list[TextObject],
-) -> bool:
-    """2行間が段落境界かどうか判定."""
-    # 1. 文末判定
-    last_text = current_line[-1].text.rstrip()
-    if last_text and last_text[-1] in self._sentence_terminals:
-        # 文末で終わり、かつ行間が広い場合は境界
-        line_height = self._estimate_line_height(current_line)
-        y_gap = current_line[-1].bbox.y0 - next_line[0].bbox.y1
-        if y_gap > line_height * self._paragraph_gap_threshold:
-            return True
-
-    # 2. インデント検出
-    current_x0 = min(obj.bbox.x0 for obj in current_line)
-    next_x0 = min(obj.bbox.x0 for obj in next_line)
-    if next_x0 - current_x0 > 10:  # インデント閾値
-        return True
-
-    # 3. 行間が著しく広い場合
-    line_height = self._estimate_line_height(current_line)
-    y_gap = current_line[-1].bbox.y0 - next_line[0].bbox.y1
-    if y_gap > line_height * (self._paragraph_gap_threshold + 0.5):
-        return True
-
-    return False
-```
-
-#### 5.1.6 ハイフネーション処理
-
-```python
-def _merge_lines_to_text(
-    self,
-    lines: list[list[TextObject]],
-) -> str:
-    """行リストをテキストにマージ（ハイフネーション処理含む）."""
-    merged_parts = []
-
-    for i, line in enumerate(lines):
-        # 行内のテキストを結合
-        line_text = " ".join(obj.text for obj in line)
-
-        if i > 0 and merged_parts:
-            prev_text = merged_parts[-1]
-
-            # ハイフネーション結合
-            if prev_text.endswith("-"):
-                # 行末ハイフンを削除して連結
-                merged_parts[-1] = prev_text[:-1] + line_text
+            if merged.endswith('-'):
+                # 次の文字が小文字なら単語継続
+                if line and line[0].islower():
+                    merged = merged[:-1] + line  # ハイフン削除して結合
+                else:
+                    merged = merged + " " + line  # 複合語保持
             else:
-                # スペースで連結
-                merged_parts[-1] = prev_text + " " + line_text
-        else:
-            merged_parts.append(line_text)
+                merged = merged + " " + line
 
-    return merged_parts[0] if merged_parts else ""
+        # 連続スペースを正規化
+        return re.sub(r'\s+', ' ', merged).strip()
 ```
 
-#### 5.1.7 Paragraph 生成
+#### 5.1.4 ハイフネーション処理の検証結果
 
-```python
-def _create_paragraph(
-    self,
-    lines: list[list[TextObject]],
-    page_number: int,
-    para_index: int,
-) -> Paragraph:
-    """行グループから Paragraph を生成."""
-    # 全 TextObject ID を収集
-    text_object_ids = [obj.id for line in lines for obj in line]
+LLaMA 論文 Abstract での検証結果:
 
-    # 最初の行の最初の TextObject から anchor 情報を取得
-    anchor_obj = lines[0][0]
+| 入力 | 出力 | 結果 |
+|------|------|------|
+| "founda-" + "tion" | "foundation" | ✅ 単語継続 |
+| "avail-" + "able" | "available" | ✅ 単語継続 |
+| "Hoff-" + "mann" | "Hoffmann" | ✅ 固有名詞 |
+| "LLaMA-" + "65B" | "LLaMA- 65B" | ✅ 複合語保持 |
+| "LLaMA-13B" | "LLaMA-13B" | ✅ 同一行（変更なし） |
+| "state-of-the-art" | "state-of-the-art" | ✅ 同一行（変更なし） |
 
-    # テキストをマージ
-    merged_text = self._merge_lines_to_text(lines)
+#### 5.1.5 設計の簡略化
 
-    return Paragraph(
-        id=f"para_p{page_number}_i{para_index}",
-        page_number=page_number,
-        text=merged_text,
-        text_object_ids=text_object_ids,
-        anchor_bbox=anchor_obj.bbox,
-        anchor_font=anchor_obj.font,
-        anchor_transform=anchor_obj.transform,
-    )
-```
+従来の TextMerger と比較した削減内容:
 
-#### 5.1.8 設定パラメータ
+| 従来の責務 | 新設計 | 理由 |
+|-----------|--------|------|
+| 行クラスタリング | **削除** | pdftext が自動処理 |
+| 列分離（多段組対応） | **削除** | pdftext が自動処理 |
+| 段落境界検出 | **削除** | pdftext が自動処理 |
+| ハイフネーション処理 | **保持** | 行末 `-` の結合ロジック |
 
-| パラメータ | デフォルト | 説明 |
-|-----------|-----------|------|
-| `line_y_tolerance` | 3.0 pt | 同一行判定の Y 許容差 |
-| `paragraph_gap_threshold` | 1.5 | 段落境界判定の行間閾値（行高さの倍率） |
-| `x_overlap_ratio` | 0.3 | 同一列判定に必要な X overlap 比率 |
+**コード量の削減**: 約 200 行 → 約 80 行（60% 削減）
 
-#### 5.1.9 エッジケース対応
+#### 5.1.6 エッジケース対応
 
 | ケース | 対応 |
 |--------|------|
-| 単一行段落 | そのまま 1 行の Paragraph を生成 |
-| 空白のみの行 | フィルタリングで除外 |
-| 特殊文字のみ | フィルタリングで除外 |
-| 多段組の途中改ページ | 列分離後、各列を独立処理 |
+| 空のブロック | `None` を返しスキップ |
+| 空白のみのブロック | `None` を返しスキップ |
+| フォントサイズ不明 | デフォルト 12.0 pt を使用 |
+| 単一行ブロック | そのまま Paragraph 生成 |
 
 ### 5.2 FontSizeAdjuster
 
@@ -970,12 +1015,16 @@ async def translate(
 
 | ステージ (stage値) | メソッド | 処理内容 |
 |-------------------|---------|---------|
-| `extract` | `_stage_extract` | PDFからテキスト抽出 |
-| `analyze` | `_stage_analyze` | レイアウト解析＋マッチング |
-| `merge` | `_stage_merge` | 翻訳対象フィルタリング + 読み順ソート |
+| `extract` | `_stage_extract` | pdftext でブロック抽出 + Paragraph 変換 |
+| `analyze` | `_stage_analyze` | レイアウト解析（Optional） |
+| `filter` | `_stage_filter` | 数式・表・図のフィルタリング |
 | `translate` | `_stage_translate` | バッチ翻訳（リトライあり） |
 | `font_adjust` | `_stage_font_adjust` | フォントサイズ調整 |
 | `apply` | `_stage_apply` | PDFに適用 |
+
+**変更点（pdftext 統合）**:
+- `extract`: PDFProcessor → pdftext + ParagraphExtractor
+- `merge` → `filter` に名称変更（役割変更）
 
 > **NOTE**: ステージ名は §4.3 の ProgressCallback stage 値と一致させている。
 
@@ -1076,29 +1125,34 @@ class TranslationResult:
 
 ## 6. 実装フェーズ
 
+pdftext 統合により、実装フェーズが簡略化される。
+
 ### Phase 1: データモデル拡張
 
 **成果物**:
 - `src/pdf_translator/core/models.py` に Paragraph 追加
 
 **タスク**:
-1. Paragraph dataclass 実装
+1. Paragraph dataclass 実装（シンプル版）
 2. 既存テストが壊れていないことを確認
 
-### Phase 2: TextMerger（段落マージ）
+### Phase 2: ParagraphExtractor（pdftext 統合）
 
 **成果物**:
-- `src/pdf_translator/core/text_merger.py`
-- `tests/test_text_merger.py`
+- `src/pdf_translator/core/paragraph_extractor.py`
+- `tests/test_paragraph_extractor.py`
 
 **タスク**:
-1. TextMerger クラス実装
-2. 行クラスタリング実装
-3. 列分離（多段組対応）実装
-4. 段落境界検出実装
-5. ハイフネーション結合実装
-6. Paragraph 生成実装
-7. ユニットテスト作成
+1. ParagraphExtractor クラス実装
+2. pdftext ブロック → Paragraph 変換
+3. 座標系変換（pdftext → PDF）
+4. ハイフネーション処理実装
+5. ユニットテスト作成
+
+**削減されたタスク**（pdftext が担当）:
+- ~~行クラスタリング~~
+- ~~列分離（多段組対応）~~
+- ~~段落境界検出~~
 
 ### Phase 3: FontSizeAdjuster（フォント調整）
 
@@ -1115,12 +1169,13 @@ class TranslationResult:
 ### Phase 4: PDFProcessor 拡張
 
 **成果物**:
-- `src/pdf_translator/core/pdf_processor.py` に apply_paragraphs() 追加
+- `src/pdf_translator/core/pdf_processor.py` に `apply_paragraphs()`, `remove_text_in_bbox()` 追加
 
 **タスク**:
-1. apply_paragraphs() メソッド実装
-2. 既存 apply() との整合性確認
-3. ユニットテスト作成
+1. `remove_text_in_bbox()` メソッド実装（bbox 内テキスト一括削除）
+2. `apply_paragraphs()` メソッド実装
+3. 既存 apply() との整合性確認
+4. ユニットテスト作成
 
 ### Phase 5: Pipeline（パイプライン統合）
 
@@ -1135,7 +1190,7 @@ class TranslationResult:
 1. エラークラス定義
 2. 進捗コールバック定義
 3. TranslationPipeline クラス実装
-4. 各ステージ実装（Paragraph ベース）
+4. 各ステージ実装（pdftext + ParagraphExtractor ベース）
 5. リトライロジック実装
 6. 統合テスト作成
 
@@ -1151,44 +1206,61 @@ class TranslationResult:
 3. ruff lint 確認
 4. サンプルPDF（LLaMA論文等）で E2E テスト
 5. 翻訳品質の目視確認（ハイフネーション結合が正しく動作しているか）
+6. pdftext ブロック検出精度の確認
+
+### 工数見積もり（pdftext 統合による削減）
+
+| フェーズ | 従来見積もり | pdftext 統合後 | 削減理由 |
+|---------|-------------|---------------|----------|
+| Phase 2 | 大 | **小** | 段落検出ロジック不要 |
+| Phase 4 | 中 | 中 | 変更なし |
+| Phase 5 | 大 | 中 | ステージ数削減 |
+| 合計 | - | **約 40% 削減** | - |
 
 ---
 
 ## 7. テスト計画
 
-### 7.1 TextMerger テスト
+### 7.1 ParagraphExtractor テスト
 
 ```python
-class TestTextMerger:
-    # 行クラスタリング
-    def test_cluster_single_line(self): ...
-    def test_cluster_multiple_lines(self): ...
-    def test_cluster_with_y_tolerance(self): ...  # 微小 Y ブレ対策
+class TestParagraphExtractor:
+    # 基本機能
+    def test_extract_single_block(self): ...
+    def test_extract_multiple_blocks(self): ...
+    def test_extract_multiple_pages(self): ...
+    def test_page_range_filtering(self): ...
 
-    # カテゴリフィルタリング
-    def test_filters_translatable_categories(self): ...
-    def test_excludes_formula_and_table(self): ...
-
-    # 多段組対応
-    def test_separate_two_columns(self): ...
-    def test_single_column_unchanged(self): ...
-    def test_column_reading_order(self): ...  # 左列 → 右列の順
-
-    # 段落境界検出
-    def test_paragraph_boundary_by_gap(self): ...
-    def test_paragraph_boundary_by_indent(self): ...
-    def test_paragraph_boundary_by_sentence_end(self): ...
+    # 座標変換
+    def test_coordinate_conversion_top_to_bottom(self): ...
+    def test_block_bbox_in_pdf_coordinates(self): ...
 
     # ハイフネーション結合
-    def test_hyphenation_merge(self): ...  # "founda-" + "tion" → "foundation"
-    def test_no_merge_without_hyphen(self): ...
-    def test_preserve_compound_hyphen(self): ...  # "state-of-the-art" は保持
+    def test_hyphenation_merge_word_break(self): ...  # "founda-" + "tion" → "foundation"
+    def test_hyphenation_preserve_compound(self): ...  # "LLaMA-" + "65B" preserved
+    def test_hyphenation_preserve_same_line(self): ...  # "state-of-the-art" unchanged
+    def test_hyphenation_proper_noun(self): ...  # "Hoff-" + "mann" → "Hoffmann"
 
-    # Paragraph 生成
-    def test_paragraph_has_all_text_object_ids(self): ...
-    def test_paragraph_anchor_from_first_line(self): ...
-    def test_paragraph_merged_text_correct(self): ...
+    # エッジケース
+    def test_empty_block_skipped(self): ...
+    def test_whitespace_only_block_skipped(self): ...
+    def test_single_line_block(self): ...
+    def test_font_size_extraction(self): ...
+    def test_font_size_default_fallback(self): ...
+
+    # 実PDFテスト
+    def test_llama_paper_abstract_block(self): ...  # 13行が1ブロック
+    def test_llama_paper_two_column(self): ...  # 2段組が分離される
 ```
+
+**従来テストとの比較**:
+
+| 従来（TextMerger） | 新（ParagraphExtractor） | 理由 |
+|-------------------|-------------------------|------|
+| `test_cluster_*` | **削除** | pdftext が担当 |
+| `test_separate_columns` | **削除** | pdftext が担当 |
+| `test_paragraph_boundary_*` | **削除** | pdftext が担当 |
+| `test_hyphenation_*` | **保持** | 自前ロジック |
 
 ### 7.2 FontSizeAdjuster テスト
 
@@ -1206,55 +1278,98 @@ class TestFontSizeAdjuster:
 
 ```python
 class TestPDFProcessorParagraphs:
-    def test_apply_paragraphs_removes_all_source_objects(self): ...
+    # remove_text_in_bbox
+    def test_remove_text_in_bbox_removes_contained_objects(self): ...
+    def test_remove_text_in_bbox_preserves_outside_objects(self): ...
+    def test_remove_text_in_bbox_partial_overlap_behavior(self): ...
+
+    # apply_paragraphs
+    def test_apply_paragraphs_removes_text_in_bbox(self): ...
     def test_apply_paragraphs_inserts_translated_text(self): ...
-    def test_apply_paragraphs_uses_anchor_position(self): ...
+    def test_apply_paragraphs_uses_block_bbox_position(self): ...
     def test_apply_paragraphs_multiple_paragraphs(self): ...
+    def test_apply_paragraphs_respects_font_size(self): ...
 ```
 
 ### 7.4 TranslationPipeline テスト
 
 ```python
 class TestTranslationPipeline:
+    # 基本フロー
     async def test_full_pipeline_mocked_translator(self): ...
     async def test_progress_callback_invoked(self): ...
+    async def test_output_path_saves_file(self): ...
+
+    # pdftext 統合
+    async def test_pdftext_extraction_called(self): ...
+    async def test_paragraph_extractor_integration(self): ...
+
+    # エラーハンドリング
     async def test_error_handling_extraction_failure(self): ...
     async def test_retry_on_transient_error(self): ...
-    async def test_paragraph_based_translation(self): ...  # 段落単位翻訳
-    async def test_hyphenation_handled_correctly(self): ...  # E2E ハイフネーション
+    async def test_configuration_error_no_retry(self): ...
+
+    # 翻訳フロー
+    async def test_paragraph_based_translation(self): ...
+    async def test_hyphenation_handled_correctly(self): ...
 ```
 
 ### 7.5 E2E テスト（サンプルPDF）
 
 ```python
 class TestE2ETranslation:
+    # LLaMA 論文テスト
     async def test_llama_paper_abstract_translation(self): ...
-    async def test_two_column_layout_preserved(self): ...
-    async def test_hyphenated_words_merged(self): ...
+    async def test_llama_paper_two_column_preserved(self): ...
+    async def test_llama_paper_hyphenated_words_merged(self): ...
+
+    # pdftext ブロック検出
+    async def test_pdftext_block_detection_accuracy(self): ...
+    async def test_coordinate_conversion_correct(self): ...
+
+    # 翻訳品質
     async def test_paragraph_context_preserved(self): ...
+    async def test_no_broken_sentences(self): ...
 ```
 
 ---
 
 ## 8. リスクと対策
 
+### 8.1 pdftext 統合に伴うリスク
+
 | リスク | 影響度 | 対策 |
 |--------|-------|------|
-| 段落境界の誤検出 | 高 | `paragraph_gap_threshold` パラメータで調整、E2E テストで検証 |
-| 多段組の列分離ミス | 高 | `x_overlap_ratio` パラメータで調整、2段組論文でテスト |
-| ハイフネーション誤結合 | 中 | 複合語（state-of-the-art）を保持するロジック実装 |
-| 複雑なレイアウトでの読み順誤り | 中 | `line_y_tolerance` 等のパラメータ調整で対応 |
+| pdftext ブロック検出の精度 | 中 | LLaMA 論文で検証済み（15 ブロック正確検出）、E2E テストで継続検証 |
+| pdftext の pypdfium2 バージョン依存 | 低 | `[tool.uv] override-dependencies` で 5.2.0 強制、動作確認済み |
+| pdftext の将来的なメンテナンス | 低 | Apache-2.0 ライセンス、必要なら fork 可能 |
+| 座標変換ミス | 中 | 座標変換ロジックをユニットテストで検証 |
+
+### 8.2 従来のリスク（軽減）
+
+| リスク | 影響度 | 対策 | pdftext による変化 |
+|--------|-------|------|-------------------|
+| 段落境界の誤検出 | ~~高~~ → **低** | pdftext が自動検出 | **リスク軽減** |
+| 多段組の列分離ミス | ~~高~~ → **低** | pdftext が自動処理 | **リスク軽減** |
+| ハイフネーション誤結合 | 中 | 小文字開始チェックで複合語保持 | 変更なし |
+| 複雑なレイアウトでの読み順誤り | ~~中~~ → **低** | pdftext が処理 | **リスク軽減** |
+
+### 8.3 残存リスク
+
+| リスク | 影響度 | 対策 |
+|--------|-------|------|
 | フォント幅推定の不正確さ | 中 | 保守的な推定値を使用 |
 | 翻訳APIのレート制限 | 低 | 指数バックオフ、バッチサイズ調整 |
 | 大規模PDFでのメモリ使用 | 低 | ページ単位処理 |
 | CJK 言語への翻訳時の文字化け | 中 | v1.1 で CJK フォント対応予定（§1.4.1 参照） |
+| pdftext 非対応の特殊 PDF | 低 | フォールバック処理を検討（v2） |
 
 ---
 
 ## 9. 設定オプション
 
 **設定の方針**: すべての設定パラメータは `PipelineConfig` に統合する。
-個別コンポーネント（TextMerger, FontSizeAdjuster）は `PipelineConfig` から必要な値を受け取る。
+pdftext 統合により、段落検出関連のパラメータが**削除**される。
 
 ```python
 @dataclass
@@ -1262,21 +1377,16 @@ class PipelineConfig:
     """パイプライン設定.
 
     すべての設定パラメータを統合管理する。
-    個別コンポーネントはここから必要な値を受け取る。
+    pdftext 統合により、段落検出パラメータは不要になった。
     """
 
     # 翻訳設定
     source_lang: str = "en"
     target_lang: str = "ja"
 
-    # レイアウト解析
+    # レイアウト解析（Optional - 数式・表・図フィルタリング用）
     use_layout_analysis: bool = True
     layout_containment_threshold: float = 0.5
-
-    # テキストマージ（TextMerger 用）
-    line_y_tolerance: float = 3.0           # 同一行判定の Y 許容差（pt）
-    paragraph_gap_threshold: float = 1.5    # 段落境界の行間閾値（行高さの倍率）
-    x_overlap_ratio: float = 0.3            # 同一列判定に必要な X overlap 比率
 
     # フォント調整（FontSizeAdjuster 用）
     min_font_size: float = 6.0
@@ -1290,38 +1400,64 @@ class PipelineConfig:
     # cjk_font_path: Optional[Path] = None
 ```
 
+**削除されたパラメータ**（pdftext が担当）:
+
+| 削除パラメータ | 理由 |
+|---------------|------|
+| `line_y_tolerance` | pdftext が行検出 |
+| `paragraph_gap_threshold` | pdftext が段落検出 |
+| `x_overlap_ratio` | pdftext が列分離 |
+
 **使用例**:
 ```python
-config = PipelineConfig(target_lang="ja", paragraph_gap_threshold=2.0)
-
-# TextMerger に渡す
-merger = TextMerger(
-    line_y_tolerance=config.line_y_tolerance,
-    paragraph_gap_threshold=config.paragraph_gap_threshold,
-    x_overlap_ratio=config.x_overlap_ratio,
-)
+config = PipelineConfig(target_lang="ja")
 
 # FontSizeAdjuster に渡す
 adjuster = FontSizeAdjuster(
     min_font_size=config.min_font_size,
     font_size_decrement=config.font_size_decrement,
 )
+
+# ParagraphExtractor はパラメータ不要（pdftext がすべて処理）
+extractor = ParagraphExtractor()
 ```
 
 ---
 
 ## 10. 出力ファイル一覧
 
-| ファイル | 種別 |
-|---------|------|
-| `src/pdf_translator/core/models.py` | 変更（`Paragraph` dataclass 追加） |
-| `src/pdf_translator/core/text_merger.py` | 新規（段落マージ機能） |
-| `src/pdf_translator/core/font_adjuster.py` | 新規 |
-| `src/pdf_translator/core/pdf_processor.py` | 変更（`to_bytes()`, `apply_paragraphs()` 追加） |
-| `src/pdf_translator/pipeline/__init__.py` | 新規 |
-| `src/pdf_translator/pipeline/translation_pipeline.py` | 新規（PipelineConfig, TranslationResult 含む） |
-| `src/pdf_translator/pipeline/progress.py` | 新規 |
-| `src/pdf_translator/pipeline/errors.py` | 新規 |
-| `tests/test_text_merger.py` | 新規 |
-| `tests/test_font_adjuster.py` | 新規 |
-| `tests/test_translation_pipeline.py` | 新規 |
+### 10.1 実装ファイル
+
+| ファイル | 種別 | 説明 |
+|---------|------|------|
+| `src/pdf_translator/core/models.py` | 変更 | `Paragraph` dataclass 追加（シンプル版） |
+| `src/pdf_translator/core/paragraph_extractor.py` | **新規** | pdftext ブロック → Paragraph 変換 |
+| `src/pdf_translator/core/font_adjuster.py` | 新規 | フォントサイズ調整 |
+| `src/pdf_translator/core/pdf_processor.py` | 変更 | `to_bytes()`, `apply_paragraphs()`, `remove_text_in_bbox()` 追加 |
+| `src/pdf_translator/core/layout_utils.py` | 変更 | `filter_paragraphs()` 追加 |
+| `src/pdf_translator/pipeline/__init__.py` | 新規 | 公開 API エクスポート |
+| `src/pdf_translator/pipeline/translation_pipeline.py` | 新規 | PipelineConfig, TranslationResult 含む |
+| `src/pdf_translator/pipeline/progress.py` | 新規 | ProgressCallback |
+| `src/pdf_translator/pipeline/errors.py` | 新規 | PipelineError 等 |
+
+### 10.2 テストファイル
+
+| ファイル | 種別 | 説明 |
+|---------|------|------|
+| `tests/test_paragraph_extractor.py` | **新規** | ParagraphExtractor テスト |
+| `tests/test_font_adjuster.py` | 新規 | FontSizeAdjuster テスト |
+| `tests/test_translation_pipeline.py` | 新規 | パイプライン統合テスト |
+
+### 10.3 設定ファイル
+
+| ファイル | 種別 | 説明 |
+|---------|------|------|
+| `pyproject.toml` | 変更 | `pdftext>=0.6.0` 追加、`[tool.uv]` セクション追加 |
+
+### 10.4 変更点サマリー（pdftext 統合）
+
+| 従来 | 新設計 |
+|------|--------|
+| `text_merger.py` (約200行) | `paragraph_extractor.py` (約80行) |
+| 複雑な段落検出ロジック | pdftext に委譲 |
+| 多数の設定パラメータ | シンプルな設定 |
