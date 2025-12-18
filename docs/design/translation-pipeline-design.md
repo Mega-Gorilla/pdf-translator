@@ -302,21 +302,23 @@ PDF Input
 ┌─────────────────────────────────────────┐
 │ LayoutAnalyzer.analyze_all()      (Optional) │
 │ → dict[int, list[LayoutBlock]]               │
-│ ※ 数式・表・図のフィルタリング用             │
+│ ※ 数式・表・図の検出                         │
 │ ※ asyncio.to_thread() 経由で呼び出し         │
 └─────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ layout_utils.filter_paragraphs()       [NEW] │
-│ → list[Paragraph] (翻訳対象のみ)             │
-│ ※ 数式・表・図ブロックと重複する段落を除外   │
+│ layout_utils.assign_categories()       [NEW] │
+│ → list[Paragraph] (カテゴリ付与済み)         │
+│ ※ pdftext bbox と LayoutBlock bbox を比較   │
+│ ※ 重複する Paragraph に category を設定     │
 └─────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────┐
 │ TranslatorBackend.translate_batch()          │
 │ → 翻訳済みテキスト（段落単位）               │
+│ ※ para.is_translatable == True のみ翻訳     │
 │ ※ 文脈を保持した翻訳が可能                   │
 └─────────────────────────────────────────┘
     │
@@ -369,7 +371,7 @@ src/pdf_translator/
 
 **変更点（pdftext 統合）**:
 - `text_merger.py` → `paragraph_extractor.py` に変更（役割が大幅に簡略化）
-- `layout_utils.py` に `filter_paragraphs()` 追加
+- `layout_utils.py` に `assign_categories()` 追加（カテゴリ付与）
 
 ---
 
@@ -395,10 +397,11 @@ class Paragraph:
     Attributes:
         id: 段落ID（"para_p{page}_b{block_index}" 形式）
         page_number: ページ番号
-        text: マージされたテキスト（ハイフネーション結合済み）
+        text: マージされたテキスト
         block_bbox: pdftext ブロックの BBox（PDF 座標系に変換済み）
         line_count: 元の行数（デバッグ/統計用）
         original_font_size: 元のフォントサイズ（推定値）
+        category: PP-DocLayout によるカテゴリ（"text", "formula", "table" 等）
     """
     id: str
     page_number: int
@@ -407,9 +410,20 @@ class Paragraph:
     line_count: int
     original_font_size: float = 12.0  # デフォルト値
 
+    # PP-DocLayout によるカテゴリ分類
+    category: Optional[str] = None  # None = 未分類, "text", "title", "formula", "table", "figure" 等
+
     # 翻訳後に設定されるフィールド
     translated_text: Optional[str] = None
     adjusted_font_size: Optional[float] = None
+
+    @property
+    def is_translatable(self) -> bool:
+        """翻訳対象かどうかを判定."""
+        # category が None（レイアウト解析無効）または TEXT 系カテゴリの場合は翻訳対象
+        if self.category is None:
+            return True
+        return self.category.lower() in ("text", "title", "plain text", "abandon")
 ```
 
 **変更点（従来設計との比較）**:
@@ -419,6 +433,7 @@ class Paragraph:
 | `text_object_ids: list[str]` | 削除（pdftext はブロック単位で管理） |
 | `anchor_bbox` (最初の行) | `block_bbox` (ブロック全体) |
 | `anchor_font`, `anchor_transform` | 削除（シンプル化） |
+| なし | `category` 追加（PP-DocLayout 連携） |
 
 #### 4.1.2 Paragraph 生成フロー
 
@@ -538,14 +553,14 @@ class ProgressCallback(Protocol):
 |-------|------|-------|
 | `extract` | pdftext でブロック抽出 + Paragraph 変換 | page_count |
 | `analyze` | レイアウト解析（Optional） | page_count |
-| `filter` | 数式・表・図フィルタリング | 1 |
-| `translate` | バッチ翻訳 | len(paragraphs) |
-| `font_adjust` | フォントサイズ調整 | len(paragraphs) |
+| `categorize` | PP-DocLayout カテゴリ付与 | len(paragraphs) |
+| `translate` | バッチ翻訳（`is_translatable` のみ） | len(translatable_paragraphs) |
+| `font_adjust` | フォントサイズ調整 | len(translatable_paragraphs) |
 | `apply` | PDFに適用 | 1（PDF 1 ファイル） |
 
 **変更点（pdftext 統合）**:
 - `extract`: PDFProcessor → pdftext + ParagraphExtractor
-- `merge` → `filter` に名称変更
+- `merge` → `categorize` に名称変更（カテゴリ付与）
 
 ---
 
@@ -799,15 +814,154 @@ LLaMA 論文から抽出したハイフネーション付きテキストを、3 
 | フォントサイズ不明 | デフォルト 12.0 pt を使用 |
 | 単一行ブロック | そのまま Paragraph 生成 |
 
-### 5.2 FontSizeAdjuster
+### 5.2 カテゴリ付与（assign_categories）
 
-**ファイル**: `src/pdf_translator/core/font_adjuster.py`
+**ファイル**: `src/pdf_translator/core/layout_utils.py`
 
 #### 5.2.1 目的
 
-翻訳後テキストが元の BBox に収まるようフォントサイズを調整する。
+PP-DocLayout で検出した LayoutBlock と pdftext の Paragraph を照合し、
+各 Paragraph に適切なカテゴリ（text, formula, table, figure 等）を付与する。
+
+**処理フロー**:
+```
+pdftext Paragraphs + PP-DocLayout LayoutBlocks
+                    ↓
+    bbox 重複判定（IoU または containment）
+                    ↓
+    重複する LayoutBlock のカテゴリを Paragraph に付与
+                    ↓
+    カテゴリ付き Paragraphs（中間 JSON に保存可能）
+```
 
 #### 5.2.2 API 設計
+
+```python
+def assign_categories(
+    paragraphs: list[Paragraph],
+    layout_blocks: dict[int, list[LayoutBlock]],
+    threshold: float = 0.5,
+) -> list[Paragraph]:
+    """Paragraph に PP-DocLayout のカテゴリを付与.
+
+    Args:
+        paragraphs: pdftext から抽出した Paragraph リスト
+        layout_blocks: ページ番号 → LayoutBlock リストのマッピング
+        threshold: 重複判定の閾値（IoU または containment ratio）
+
+    Returns:
+        カテゴリが付与された Paragraph リスト（入力と同じオブジェクト）
+
+    Note:
+        - 複数の LayoutBlock と重複する場合は、最も重複率が高いものを採用
+        - どの LayoutBlock とも重複しない場合は category = None のまま
+    """
+    for para in paragraphs:
+        page_blocks = layout_blocks.get(para.page_number, [])
+        best_match = _find_best_matching_block(para.block_bbox, page_blocks, threshold)
+        if best_match:
+            para.category = best_match.category
+    return paragraphs
+
+
+def _find_best_matching_block(
+    para_bbox: BBox,
+    blocks: list[LayoutBlock],
+    threshold: float,
+) -> Optional[LayoutBlock]:
+    """最も重複率が高い LayoutBlock を検索."""
+    best_block = None
+    best_overlap = 0.0
+
+    for block in blocks:
+        overlap = _calculate_overlap_ratio(para_bbox, block.bbox)
+        if overlap >= threshold and overlap > best_overlap:
+            best_overlap = overlap
+            best_block = block
+
+    return best_block
+
+
+def _calculate_overlap_ratio(bbox1: BBox, bbox2: BBox) -> float:
+    """2つの BBox の重複率を計算（intersection / bbox1 area）."""
+    inter_x0 = max(bbox1.x0, bbox2.x0)
+    inter_y0 = max(bbox1.y0, bbox2.y0)
+    inter_x1 = min(bbox1.x1, bbox2.x1)
+    inter_y1 = min(bbox1.y1, bbox2.y1)
+
+    if inter_x0 >= inter_x1 or inter_y0 >= inter_y1:
+        return 0.0
+
+    inter_area = (inter_x1 - inter_x0) * (inter_y1 - inter_y0)
+    bbox1_area = (bbox1.x1 - bbox1.x0) * (bbox1.y1 - bbox1.y0)
+
+    if bbox1_area <= 0:
+        return 0.0
+
+    return inter_area / bbox1_area
+```
+
+#### 5.2.3 PP-DocLayout カテゴリ一覧
+
+PP-DocLayoutV2 が検出するカテゴリと翻訳対象の判定:
+
+| カテゴリ | 説明 | 翻訳対象 |
+|---------|------|---------|
+| `text` | 本文テキスト | ✅ Yes |
+| `title` | タイトル・見出し | ✅ Yes |
+| `plain text` | プレーンテキスト | ✅ Yes |
+| `abandon` | 破棄テキスト（ヘッダ・フッタ等） | ✅ Yes |
+| `figure` | 図 | ❌ No |
+| `figure_caption` | 図のキャプション | ✅ Yes |
+| `table` | 表 | ❌ No |
+| `table_caption` | 表のキャプション | ✅ Yes |
+| `table_footnote` | 表の脚注 | ✅ Yes |
+| `isolate_formula` | 独立数式 | ❌ No |
+| `formula_caption` | 数式のキャプション | ✅ Yes |
+
+> **NOTE**: `Paragraph.is_translatable` プロパティでこの判定を行う。
+
+#### 5.2.4 座標系の注意点
+
+PP-DocLayout と pdftext は異なる座標系を使用する可能性がある:
+
+| ライブラリ | 座標系 |
+|-----------|--------|
+| pdftext | Y: 上→下（ページ左上原点）→ **PDF座標系に変換済み** |
+| PP-DocLayout | 画像座標系（Y: 上→下） |
+| PDF/pypdfium2 | Y: 下→上（ページ左下原点） |
+
+**対応方針**:
+- `ParagraphExtractor` で pdftext bbox を PDF 座標系に変換済み
+- `LayoutAnalyzer` で PP-DocLayout bbox を PDF 座標系に変換（既存実装）
+- `assign_categories()` では両者が PDF 座標系であることを前提とする
+
+#### 5.2.5 use_layout_analysis=False の場合
+
+レイアウト解析が無効の場合、`assign_categories()` はスキップされ、
+すべての Paragraph は `category = None` のまま翻訳対象となる。
+
+```python
+if self._config.use_layout_analysis:
+    layout_blocks = await self._stage_analyze(pdf_path)
+    assign_categories(paragraphs, layout_blocks, self._config.layout_containment_threshold)
+else:
+    logger.warning(
+        "Layout analysis disabled. All paragraphs will be translated. "
+        "Formulas, tables, and figures may be incorrectly translated."
+    )
+    # category = None のまま → is_translatable = True
+```
+
+### 5.3 FontSizeAdjuster
+
+**ファイル**: `src/pdf_translator/core/font_adjuster.py`
+
+#### 5.3.1 目的
+
+翻訳後テキストが元の BBox に収まるようフォントサイズを調整する。
+
+#### 5.3.2 API 設計
 
 ```python
 class FontSizeAdjuster:
@@ -845,7 +999,7 @@ class FontSizeAdjuster:
         ...
 ```
 
-#### 5.2.3 前提条件
+#### 5.3.3 前提条件
 
 **重要**: 現在の `PDFProcessor.insert_text_object()` は**自動改行しない**。
 したがって、初期実装では「bbox 幅に収まるまで縮小」を中心に設計する。
@@ -853,14 +1007,14 @@ class FontSizeAdjuster:
 - 高さ/行数計算は、実際の改行処理が入ってから対応
 - 現段階では単一行として扱い、幅に収まるかを判定
 
-#### 5.2.3 定数
+#### 5.3.4 定数
 
 ```python
 FONT_SIZE_DECREMENT = 0.1   # 縮小ステップ（pt）
 MIN_FONT_SIZE = 6.0         # 最小フォントサイズ（pt）
 ```
 
-#### 5.2.4 アルゴリズム（幅ベース・初期実装）
+#### 5.3.5 アルゴリズム（幅ベース・初期実装）
 
 ```
 入力: text, bbox, original_font_size, target_lang
@@ -890,7 +1044,7 @@ MIN_FONT_SIZE = 6.0         # 最小フォントサイズ（pt）
 3. return MIN_FONT_SIZE
 ```
 
-#### 5.2.5 文字幅推定
+#### 5.3.6 文字幅推定
 
 ```python
 def _estimate_char_width(self, font_size: float, target_lang: str) -> float:
@@ -902,11 +1056,11 @@ def _estimate_char_width(self, font_size: float, target_lang: str) -> float:
         return font_size * 0.55
 ```
 
-### 5.3 TranslationPipeline
+### 5.4 TranslationPipeline
 
 **ファイル**: `src/pdf_translator/pipeline/translation_pipeline.py`
 
-#### 5.3.1 クラス設計
+#### 5.4.1 クラス設計
 
 ```python
 class TranslationPipeline:
@@ -957,7 +1111,7 @@ class TranslationPipeline:
         ...
 ```
 
-#### 5.3.2 output_path 指定時の動作
+#### 5.4.2 output_path 指定時の動作
 
 `output_path` が指定された場合、ファイル保存を行い、かつ `TranslationResult` も返却する。
 
@@ -976,7 +1130,7 @@ async def translate(...) -> TranslationResult:
 
 **理由**: 常に `TranslationResult` を返すことで、呼び出し側の処理を統一できる。
 
-#### 5.3.3 LayoutAnalyzer の非同期対応
+#### 5.4.3 LayoutAnalyzer の非同期対応
 
 `LayoutAnalyzer.analyze_all()` は同期メソッドだが、Pipeline は非同期。
 CPU バウンドの処理をブロックしないよう `asyncio.to_thread()` を使用する。
@@ -997,7 +1151,7 @@ async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
 - CPU バウンド処理（PP-DocLayout 推論）をイベントループから分離
 - Pipeline 側の責務として適切
 
-#### 5.3.4 use_layout_analysis=False の動作
+#### 5.4.4 use_layout_analysis=False の動作
 
 レイアウト解析を無効化した場合の動作を定義する。
 
@@ -1035,7 +1189,7 @@ else:
 
 **注意点**: 警告メッセージで「数式や表も翻訳される可能性がある」ことを明示する。
 
-#### 5.3.5 bytes 入力時の注意
+#### 5.4.5 bytes 入力時の注意
 
 **重要**: `LayoutAnalyzer` は `Path` を前提としている（内部で pypdfium2 に渡す）。
 `bytes` 入力の場合は一時ファイル経由が必要。
@@ -1060,24 +1214,24 @@ async def translate(
         return await self._translate_impl(path, output_path)
 ```
 
-#### 5.3.6 ステージ構成
+#### 5.4.6 ステージ構成
 
 | ステージ (stage値) | メソッド | 処理内容 |
 |-------------------|---------|---------|
 | `extract` | `_stage_extract` | pdftext でブロック抽出 + Paragraph 変換 |
 | `analyze` | `_stage_analyze` | レイアウト解析（Optional） |
-| `filter` | `_stage_filter` | 数式・表・図のフィルタリング |
-| `translate` | `_stage_translate` | バッチ翻訳（リトライあり） |
+| `categorize` | `_stage_categorize` | カテゴリ付与（`assign_categories()`） |
+| `translate` | `_stage_translate` | バッチ翻訳（`is_translatable` のみ） |
 | `font_adjust` | `_stage_font_adjust` | フォントサイズ調整 |
 | `apply` | `_stage_apply` | PDFに適用 |
 
 **変更点（pdftext 統合）**:
 - `extract`: PDFProcessor → pdftext + ParagraphExtractor
-- `merge` → `filter` に名称変更（役割変更）
+- `merge` → `categorize` に名称変更（カテゴリ付与）
 
 > **NOTE**: ステージ名は §4.3 の ProgressCallback stage 値と一致させている。
 
-#### 5.3.7 リトライロジック
+#### 5.4.7 リトライロジック
 
 **リトライ対象の例外**:
 - `TranslationError`: リトライ対象（API 障害、レート制限など一時的エラー）
@@ -1110,7 +1264,7 @@ async def _translate_with_retry(
                 )
 ```
 
-### 5.4 エラーハンドリング
+### 5.5 エラーハンドリング
 
 **ファイル**: `src/pdf_translator/pipeline/errors.py`
 
@@ -1145,7 +1299,7 @@ class FontAdjustmentError(PipelineError):
     pass
 ```
 
-#### 5.4.1 エラー発生時の動作
+#### 5.5.1 エラー発生時の動作
 
 **方針**: エラー発生時は全体失敗とする。
 
@@ -1312,7 +1466,37 @@ class TestParagraphExtractor:
 > **NOTE**: ハイフネーション関連テストは不要。翻訳サービスがハイフネーションを
 > 自動処理することは §5.1.4 で検証済み。
 
-### 7.2 FontSizeAdjuster テスト
+### 7.2 カテゴリ付与（assign_categories）テスト
+
+```python
+class TestAssignCategories:
+    # 基本機能
+    def test_assign_text_category(self): ...
+    def test_assign_formula_category(self): ...
+    def test_assign_table_category(self): ...
+    def test_assign_figure_category(self): ...
+
+    # マッチング
+    def test_best_overlap_selected(self): ...
+    def test_threshold_filtering(self): ...
+    def test_no_match_keeps_none(self): ...
+
+    # is_translatable プロパティ
+    def test_text_is_translatable(self): ...
+    def test_title_is_translatable(self): ...
+    def test_formula_not_translatable(self): ...
+    def test_table_not_translatable(self): ...
+    def test_none_category_is_translatable(self): ...
+
+    # 座標系
+    def test_pdf_coordinates_used(self): ...
+
+    # エッジケース
+    def test_empty_layout_blocks(self): ...
+    def test_multiple_pages(self): ...
+```
+
+### 7.3 FontSizeAdjuster テスト
 
 ```python
 class TestFontSizeAdjuster:
@@ -1324,7 +1508,7 @@ class TestFontSizeAdjuster:
     def test_long_paragraph_sizing(self): ...  # 段落全体が収まるサイズ計算
 ```
 
-### 7.3 PDFProcessor 拡張テスト
+### 7.4 PDFProcessor 拡張テスト
 
 ```python
 class TestPDFProcessorParagraphs:
@@ -1341,7 +1525,7 @@ class TestPDFProcessorParagraphs:
     def test_apply_paragraphs_respects_font_size(self): ...
 ```
 
-### 7.4 TranslationPipeline テスト
+### 7.5 TranslationPipeline テスト
 
 ```python
 class TestTranslationPipeline:
@@ -1364,7 +1548,7 @@ class TestTranslationPipeline:
     async def test_hyphenation_handled_correctly(self): ...
 ```
 
-### 7.5 E2E テスト（サンプルPDF）
+### 7.6 E2E テスト（サンプルPDF）
 
 ```python
 class TestE2ETranslation:
@@ -1483,11 +1667,11 @@ extractor = ParagraphExtractor()
 
 | ファイル | 種別 | 説明 |
 |---------|------|------|
-| `src/pdf_translator/core/models.py` | 変更 | `Paragraph` dataclass 追加（シンプル版） |
+| `src/pdf_translator/core/models.py` | 変更 | `Paragraph` dataclass 追加（`category` フィールド含む） |
 | `src/pdf_translator/core/paragraph_extractor.py` | **新規** | pdftext ブロック → Paragraph 変換 |
 | `src/pdf_translator/core/font_adjuster.py` | 新規 | フォントサイズ調整 |
 | `src/pdf_translator/core/pdf_processor.py` | 変更 | `to_bytes()`, `apply_paragraphs()`, `remove_text_in_bbox()` 追加 |
-| `src/pdf_translator/core/layout_utils.py` | 変更 | `filter_paragraphs()` 追加 |
+| `src/pdf_translator/core/layout_utils.py` | 変更 | `assign_categories()` 追加（PP-DocLayout カテゴリ付与） |
 | `src/pdf_translator/pipeline/__init__.py` | 新規 | 公開 API エクスポート |
 | `src/pdf_translator/pipeline/translation_pipeline.py` | 新規 | PipelineConfig, TranslationResult 含む |
 | `src/pdf_translator/pipeline/progress.py` | 新規 | ProgressCallback |
@@ -1498,6 +1682,7 @@ extractor = ParagraphExtractor()
 | ファイル | 種別 | 説明 |
 |---------|------|------|
 | `tests/test_paragraph_extractor.py` | **新規** | ParagraphExtractor テスト |
+| `tests/test_assign_categories.py` | **新規** | カテゴリ付与テスト |
 | `tests/test_font_adjuster.py` | 新規 | FontSizeAdjuster テスト |
 | `tests/test_translation_pipeline.py` | 新規 | パイプライン統合テスト |
 
@@ -1507,21 +1692,28 @@ extractor = ParagraphExtractor()
 |---------|------|------|
 | `pyproject.toml` | 変更 | `pdftext>=0.6.0` 追加、`[tool.uv]` セクション追加 |
 
-### 10.4 変更点サマリー（pdftext 統合 + 翻訳サービス検証）
+### 10.4 変更点サマリー（pdftext 統合 + PP-DocLayout カテゴリ付与）
 
 | 従来 | 新設計 |
 |------|--------|
 | `text_merger.py` (約200行) | `paragraph_extractor.py` (約50行) |
 | 複雑な段落検出ロジック | pdftext に委譲 |
 | ハイフネーション結合ロジック | **翻訳サービスが自動処理**（§5.1.4 参照） |
+| フィルタリングで段落除外 | **カテゴリ付与**（`Paragraph.category`） |
 | 多数の設定パラメータ | シンプルな設定 |
 
 **設計簡略化の経緯**:
 
 1. **pdftext 統合** (§1.4.2): 段落検出・多段組分離を pdftext に委譲 → 60% 削減
 2. **翻訳サービス検証** (§5.1.4): ハイフネーション処理も不要と判明 → **75% 削減**
+3. **PP-DocLayout カテゴリ付与** (§5.2): 中間データに category 情報を保持
 
-**検証結果サマリー**:
+**PP-DocLayout 連携**:
+- `Paragraph.category`: PP-DocLayout カテゴリ（text, formula, table, figure 等）
+- `Paragraph.is_translatable`: カテゴリに基づく翻訳対象判定
+- `assign_categories()`: pdftext bbox と LayoutBlock bbox の重複判定
+
+**検証結果サマリー（翻訳サービス）**:
 - Google Translate: ハイフネーション自動処理 ✅
 - DeepL: ハイフネーション自動処理 ✅
 - OpenAI: ハイフネーション自動処理 ✅（4/4 完全一致）
