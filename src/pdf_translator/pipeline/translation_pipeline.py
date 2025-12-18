@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from ..core.font_adjuster import FontSizeAdjuster
+from ..core.font_adjuster import CJK_LANGUAGES, FontSizeAdjuster
 from ..core.layout_analyzer import LayoutAnalyzer
 from ..core.layout_utils import match_text_with_layout
 from ..core.models import PDFDocument, ProjectCategory, TextObject
@@ -199,6 +199,17 @@ class TranslationPipeline:
             "translated_objects": 0,
         }
 
+        # Warn if target language is CJK (v1 limitation: CJK fonts not supported)
+        target_lang_lower = self._config.target_lang.lower()
+        target_lang_base = target_lang_lower.split("-")[0]
+        if target_lang_base in CJK_LANGUAGES or target_lang_lower in CJK_LANGUAGES:
+            logger.warning(
+                "Target language '%s' is CJK. "
+                "CJK fonts are not supported in v1 - output PDF may have garbled characters. "
+                "CJK font support is planned for v1.1.",
+                self._config.target_lang,
+            )
+
         # Stage 1: Extract text objects
         pdf_doc, processor = await self._stage_extract(pdf_path)
         stats["pages"] = len(pdf_doc.pages)
@@ -261,7 +272,7 @@ class TranslationPipeline:
             # Clean up processor if extraction fails after opening
             if processor is not None:
                 processor.close()
-            raise ExtractionError(f"Failed to extract text from PDF: {e}", cause=e)
+            raise ExtractionError(f"Failed to extract text from PDF: {e}", cause=e) from e
 
     async def _stage_analyze(
         self,
@@ -318,7 +329,7 @@ class TranslationPipeline:
             return categories
 
         except Exception as e:
-            raise LayoutAnalysisError(f"Layout analysis failed: {e}", cause=e)
+            raise LayoutAnalysisError(f"Layout analysis failed: {e}", cause=e) from e
 
     def _stage_merge(
         self,
@@ -358,7 +369,7 @@ class TranslationPipeline:
 
             return result
         except Exception as e:
-            raise MergeError(f"Failed to merge/sort text objects: {e}", cause=e)
+            raise MergeError(f"Failed to merge/sort text objects: {e}", cause=e) from e
 
     async def _stage_translate(
         self,
@@ -434,7 +445,7 @@ class TranslationPipeline:
                         f"Translation failed after {self._config.max_retries} retries: {e}",
                         stage="translate",
                         cause=e,
-                    )
+                    ) from e
 
         # Should not reach here, but satisfy type checker
         raise PipelineError(
@@ -486,7 +497,7 @@ class TranslationPipeline:
 
             self._report_progress("font_adjust", total, total, "Font adjustment complete")
         except Exception as e:
-            raise FontAdjustmentError(f"Failed to adjust font sizes: {e}", cause=e)
+            raise FontAdjustmentError(f"Failed to adjust font sizes: {e}", cause=e) from e
 
     def _stage_apply(
         self,
