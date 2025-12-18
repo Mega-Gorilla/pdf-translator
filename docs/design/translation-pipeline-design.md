@@ -124,6 +124,7 @@ PDF Input
 ┌─────────────────────────────────┐
 │ LayoutAnalyzer.analyze_all()        │
 │ → dict[int, list[LayoutBlock]]      │
+│ ※ asyncio.to_thread() 経由で呼び出し │
 └─────────────────────────────────┘
     │
     ▼
@@ -134,8 +135,8 @@ PDF Input
     │
     ▼
 ┌─────────────────────────────────┐
-│ TextMerger.merge_text_objects()  [NEW] │
-│ → list[TextGroup]                      │
+│ TextMerger.merge()              [NEW] │
+│ → list[TextObject] (読み順ソート済み) │
 └─────────────────────────────────┘
     │
     ▼
@@ -146,8 +147,8 @@ PDF Input
     │
     ▼
 ┌─────────────────────────────────┐
-│ FontSizeAdjuster.calculate_fit_font_size() [NEW] │
-│ → 調整済みフォントサイズ                          │
+│ FontSizeAdjuster.calculate_font_size() [NEW] │
+│ → 調整済みフォントサイズ                      │
 └─────────────────────────────────┘
     │
     ▼
@@ -165,17 +166,17 @@ Output PDF
 ```
 src/pdf_translator/
 ├── core/
-│   ├── models.py             # 既存 + TextGroup追加
-│   ├── pdf_processor.py      # 既存
+│   ├── models.py             # 既存（変更なし）
+│   ├── pdf_processor.py      # 既存 + to_bytes() 追加
 │   ├── layout_analyzer.py    # 既存
 │   ├── layout_utils.py       # 既存
-│   ├── text_merger.py        # 新規: テキスト結合
+│   ├── text_merger.py        # 新規: 読み順ソート
 │   └── font_adjuster.py      # 新規: フォント調整
 ├── pipeline/                  # 新規ディレクトリ
-│   ├── __init__.py
-│   ├── translation_pipeline.py
-│   ├── progress.py
-│   └── errors.py
+│   ├── __init__.py           # 公開 API エクスポート
+│   ├── translation_pipeline.py  # TranslationPipeline, PipelineConfig, TranslationResult
+│   ├── progress.py           # ProgressCallback
+│   └── errors.py             # PipelineError 等
 └── translators/              # 既存
 ```
 
@@ -183,66 +184,35 @@ src/pdf_translator/
 
 ## 4. データモデル
 
-### 4.1 TextGroup（新規）
-
-`core/models.py` に追加:
-
-```python
-@dataclass
-class TextGroup:
-    """読み順でソートされた翻訳対象 TextObject のグループ.
-
-    v1 では「読み順ソート・翻訳対象のバッチ化」のために使用。
-    翻訳は TextObject 単位で 1:1 に行い、結果は直接 TextObject.text に書き戻す。
-
-    Attributes:
-        id: グループ一意識別子
-        text_object_ids: 構成する TextObject の ID リスト（読み順）
-        page_num: ページ番号
-    """
-    id: str
-    text_object_ids: list[str]
-    page_num: int
-    # NOTE: category は v1 では不要（TextGroup に含まれる TextObject はすべて翻訳対象）
-    # v2 で非翻訳対象グループの管理やカテゴリ別処理が必要になったら追加する
-```
+### 4.1 v1 設計方針: TextGroup は実装しない
 
 #### 4.1.1 翻訳単位の設計方針（v1: 1:1 翻訳）
 
 `PDFProcessor.apply()` は `TextObject` 単位で再挿入を行うため、パイプラインの最終成果は TextObject 単位に書き戻せる形である必要がある。
 
-**v1 設計方針（安全側）**:
+**v1 設計方針（YAGNI）**:
 
-翻訳結果の分配（スライス）は、翻訳による伸縮・語順変化・記号単体 TextObject（`,` や `∗` など）混在で破綻しやすい。そのため、v1 では以下の方針を採用する:
+v1 では 1:1 翻訳のため、`TextGroup` dataclass は実装しない。TextMerger は読み順でソートした `list[TextObject]` を返す。
 
-1. **TextGroup は「読み順ソート・翻訳対象のバッチ化」までに留める**
-2. **翻訳は TextObject 単位で 1:1 に行う**（`translate_batch(texts=original_texts)`）
-3. **翻訳結果はそのまま各 `TextObject.text` に書き戻す**
+**理由**:
+1. **YAGNI**: v1 では TextGroup を使う場面がない（1:1 翻訳のため）
+2. **シンプルさ**: 不要な抽象化を避ける
+3. **将来の柔軟性**: v2 で本当に必要になった際に、適切な設計で追加できる
 
 ```python
-# v1: 1:1 翻訳（TextObject 単位）
-texts_to_translate = [obj.text for obj in translatable_objects]
+# v1: TextMerger は読み順ソート済み list[TextObject] を返す
+sorted_objects = merger.merge(text_objects, categories, page_num)
+
+# 1:1 翻訳（TextObject 単位）
+texts_to_translate = [obj.text for obj in sorted_objects]
 translated_texts = await translator.translate_batch(
     texts_to_translate, source_lang, target_lang
 )
 
 # 結果を TextObject に書き戻し
-for obj, translated in zip(translatable_objects, translated_texts):
+for obj, translated in zip(sorted_objects, translated_texts):
     obj.text = translated
 ```
-
-**TextGroup の役割（v1）**:
-- 読み順のソート結果を保持する器
-- ページ単位での TextObject 管理を明確化
-- 将来のクロスブロック翻訳のための構造維持（v2 移行時のリファクタリングを最小化）
-
-**なぜ v1 でも TextGroup を実装するか**:
-
-v1 では翻訳が 1:1 なので、単純な `list[TextObject]` でも動作上は問題ない。しかし以下の理由で TextGroup を実装する:
-
-1. **ソート済みの保証**: `list[TextObject]` だけでは「読み順でソート済み」という情報が失われる
-2. **ページ境界の明確化**: TextGroup.page_num でページ単位の処理が明確になる
-3. **v2 移行コストの削減**: クロスブロック翻訳追加時、TextGroup の構造が土台となる
 
 **将来拡張（v2 以降）**:
 
@@ -250,9 +220,15 @@ v1 では翻訳が 1:1 なので、単純な `list[TextObject]` でも動作上�
 - LLM バックエンドでの structured output 対応
 - 翻訳品質の評価基盤整備後
 
-その際は以下の方式を検討:
+その際に TextGroup dataclass を導入し、以下の方式を検討:
 ```python
-# v2（将来）: LLM での structured output を活用
+# v2（将来）: TextGroup を導入し、LLM での structured output を活用
+@dataclass
+class TextGroup:
+    id: str
+    text_object_ids: list[str]
+    page_num: int
+
 response = await llm_translator.translate_with_structure(
     texts=original_texts,
     instruction="各テキストを個別に翻訳し、JSON配列で返してください"
@@ -261,6 +237,8 @@ response = await llm_translator.translate_with_structure(
 ```
 
 ### 4.2 TranslationResult（新規）
+
+**配置**: `pipeline/translation_pipeline.py`
 
 ```python
 @dataclass
@@ -277,6 +255,8 @@ class TranslationResult:
 
 ### 4.3 ProgressCallback Protocol（新規）
 
+**配置**: `pipeline/progress.py`
+
 ```python
 @runtime_checkable
 class ProgressCallback(Protocol):
@@ -291,16 +271,16 @@ class ProgressCallback(Protocol):
     ) -> None: ...
 ```
 
-**ステージ一覧**:
+**ステージ一覧と total の計算方法**:
 
-| stage | 説明 |
-|-------|------|
-| `extract` | PDFからテキスト抽出 |
-| `analyze` | レイアウト解析 |
-| `merge` | テキストグループ化（読み順ソート） |
-| `translate` | バッチ翻訳 |
-| `font_adjust` | フォントサイズ調整 |
-| `apply` | PDFに適用 |
+| stage | 説明 | total |
+|-------|------|-------|
+| `extract` | PDFからテキスト抽出 | 1（PDF 1 ファイル） |
+| `analyze` | レイアウト解析 | page_count |
+| `merge` | 読み順ソート | page_count |
+| `translate` | バッチ翻訳 | len(translatable_objects) |
+| `font_adjust` | フォントサイズ調整 | len(translatable_objects) |
+| `apply` | PDFに適用 | 1（PDF 1 ファイル） |
 
 ---
 
@@ -312,37 +292,60 @@ class ProgressCallback(Protocol):
 
 #### 5.1.1 目的
 
-翻訳対象の TextObject を読み順でソートし、グループ化する。
+翻訳対象の TextObject を読み順でソートする。
 
-**責務の集約**: TextMerger 内部で `filter_translatable()` を呼び、翻訳対象のフィルタリングを行う。呼び出し側は `categories` だけ渡せばよい。
+**責務の集約**: TextMerger 内部で翻訳対象のフィルタリングを行う。呼び出し側は `categories` だけ渡せばよい。
 
 **API 設計**:
 ```python
 class TextMerger:
+    def __init__(
+        self,
+        line_y_tolerance: float = 3.0,
+        merge_threshold_x: float = 20.0,
+        merge_threshold_y: float = 5.0,
+        x_overlap_ratio: float = 0.5,
+    ) -> None:
+        """TextMerger を初期化.
+
+        Args:
+            line_y_tolerance: 同一行判定の y 許容差（pt）
+            merge_threshold_x: 同一行内の x gap 閾値（pt）
+            merge_threshold_y: 次行への y gap 閾値（pt）
+            x_overlap_ratio: 次行結合に必要な x overlap 比率
+        """
+        ...
+
     def merge(
         self,
         text_objects: list[TextObject],
         categories: dict[str, ProjectCategory],
-        page_num: int,
-    ) -> list[TextGroup]:
-        """翻訳対象 TextObject を読み順でグループ化.
+    ) -> list[TextObject]:
+        """翻訳対象 TextObject を読み順でソートして返す.
 
-        内部で filter_translatable() を呼び出し、翻訳対象のみを処理する。
+        内部で翻訳対象のフィルタリングを行い、読み順でソートする。
+
+        Args:
+            text_objects: ページ内の全 TextObject
+            categories: TextObject.id → ProjectCategory のマッピング
+
+        Returns:
+            読み順でソートされた翻訳対象 TextObject のリスト
         """
         # 内部で翻訳対象フィルタリング
         translatable = [
             obj for obj in text_objects
             if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
         ]
-        # 読み順ソート + グループ化
+        # 読み順ソート
         ...
 ```
 
 #### 5.1.2 アルゴリズム
 
 ```
-入力: list[TextObject], dict[str, ProjectCategory], page_num
-出力: list[TextGroup]
+入力: list[TextObject], dict[str, ProjectCategory]
+出力: list[TextObject] (読み順ソート済み)
 
 1. 内部で翻訳対象カテゴリ（TEXT, TITLE, CAPTION）のみフィルタ
 2. 行クラスタリング:
@@ -350,15 +353,13 @@ class TextMerger:
    - 同一行内は x0 昇順でソート
 3. 行間ソート:
    - 行グループを y1 降順でソート（上から下へ）
-4. 結合ループ:
-   a. current_group = 空
-   b. For each text_object:
-      - current_group が空 → 新グループ開始
-      - should_merge(last, current) → グループに追加
-      - else → グループ確定、新グループ開始
-   c. 最後のグループ確定
-5. TextGroup リスト返却
+4. フラット化:
+   - 行グループを展開してソート済みリストを作成
+5. list[TextObject] 返却
 ```
+
+> **NOTE**: v1 では「結合」は行わず、読み順ソートのみ。「merge」という名前だが、
+> v2 でクロスブロック翻訳を実装する際の拡張を見据えた命名。
 
 #### 5.1.3 行クラスタリング（y 座標の微小ブレ対策）
 
@@ -454,8 +455,8 @@ def _should_merge_next_line(
     x_overlap = min(current.bbox.x1, next_obj.bbox.x1) - max(current.bbox.x0, next_obj.bbox.x0)
     min_width = min(current.bbox.width, next_obj.bbox.width)
 
-    # 少なくとも 50% のオーバーラップを要求
-    return x_overlap >= min_width * 0.5
+    # 設定された比率以上のオーバーラップを要求
+    return x_overlap >= min_width * self._x_overlap_ratio
 ```
 
 #### 5.1.6 設定パラメータ
@@ -477,7 +478,45 @@ TextMerger の設定パラメータは `PipelineConfig` に統合（§9 参照�
 
 翻訳後テキストが元の BBox に収まるようフォントサイズを調整する。
 
-#### 5.2.2 前提条件
+#### 5.2.2 API 設計
+
+```python
+class FontSizeAdjuster:
+    def __init__(
+        self,
+        min_font_size: float = 6.0,
+        font_size_decrement: float = 0.1,
+    ) -> None:
+        """FontSizeAdjuster を初期化.
+
+        Args:
+            min_font_size: 最小フォントサイズ（pt）
+            font_size_decrement: 縮小ステップ（pt）
+        """
+        ...
+
+    def calculate_font_size(
+        self,
+        text: str,
+        bbox: BBox,
+        original_font_size: float,
+        target_lang: str,
+    ) -> float:
+        """テキストが bbox に収まるフォントサイズを計算.
+
+        Args:
+            text: 翻訳後テキスト
+            bbox: 元の TextObject の BBox
+            original_font_size: 元のフォントサイズ
+            target_lang: 翻訳先言語（文字幅推定に使用）
+
+        Returns:
+            調整後のフォントサイズ（min_font_size 以上）
+        """
+        ...
+```
+
+#### 5.2.3 前提条件
 
 **重要**: 現在の `PDFProcessor.insert_text_object()` は**自動改行しない**。
 したがって、初期実装では「bbox 幅に収まるまで縮小」を中心に設計する。
@@ -546,32 +585,90 @@ class TranslationPipeline:
 
     ワークフロー:
     1. PDFからテキスト抽出
-    2. レイアウト解析
+    2. レイアウト解析（asyncio.to_thread 経由）
     3. テキストとレイアウトのマッチング
-    4. 翻訳対象フィルタリング
-    5. テキストグループ化
-    6. バッチ翻訳
-    7. フォントサイズ調整
-    8. PDFに適用
+    4. 翻訳対象フィルタリング + 読み順ソート
+    5. バッチ翻訳
+    6. フォントサイズ調整
+    7. PDFに適用
     """
 
     def __init__(
         self,
         translator: TranslatorBackend,
-        source_lang: str = "en",
-        target_lang: str = "ja",
-        use_layout_analysis: bool = True,
-        progress_callback: Optional[ProgressCallback] = None,
-    ): ...
+        config: PipelineConfig | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
+        """TranslationPipeline を初期化.
+
+        Args:
+            translator: 翻訳バックエンド
+            config: パイプライン設定（None の場合はデフォルト値）
+            progress_callback: 進捗コールバック
+        """
+        self._translator = translator
+        self._config = config or PipelineConfig()
+        self._progress_callback = progress_callback
+        self._analyzer = LayoutAnalyzer()  # Lazy 初期化でも可
 
     async def translate(
         self,
-        pdf_source: Union[Path, str, bytes],
-        output_path: Optional[Path] = None,
-    ) -> TranslationResult: ...
+        pdf_source: Path | str | bytes,
+        output_path: Path | None = None,
+    ) -> TranslationResult:
+        """PDFを翻訳.
+
+        Args:
+            pdf_source: 入力 PDF（パスまたは bytes）
+            output_path: 出力先パス（指定時はファイル保存も行う）
+
+        Returns:
+            TranslationResult（常に pdf_bytes を含む）
+        """
+        ...
 ```
 
-#### 5.3.2 use_layout_analysis=False の動作
+#### 5.3.2 output_path 指定時の動作
+
+`output_path` が指定された場合、ファイル保存を行い、かつ `TranslationResult` も返却する。
+
+```python
+async def translate(...) -> TranslationResult:
+    ...
+    pdf_bytes = processor.to_bytes()
+
+    # output_path が指定されていればファイル保存
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(pdf_bytes)
+
+    return TranslationResult(pdf_bytes=pdf_bytes, stats=stats)
+```
+
+**理由**: 常に `TranslationResult` を返すことで、呼び出し側の処理を統一できる。
+
+#### 5.3.3 LayoutAnalyzer の非同期対応
+
+`LayoutAnalyzer.analyze_all()` は同期メソッドだが、Pipeline は非同期。
+CPU バウンドの処理をブロックしないよう `asyncio.to_thread()` を使用する。
+
+```python
+async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
+    if not self._config.use_layout_analysis:
+        return {}
+
+    # CPU バウンドの処理をスレッドプールで実行
+    return await asyncio.to_thread(
+        self._analyzer.analyze_all, pdf_path
+    )
+```
+
+**理由**:
+- `LayoutAnalyzer` の既存コードを変更しない
+- CPU バウンド処理（PP-DocLayout 推論）をイベントループから分離
+- Pipeline 側の責務として適切
+
+#### 5.3.4 use_layout_analysis=False の動作
 
 レイアウト解析を無効化した場合の動作を定義する。
 
@@ -584,7 +681,7 @@ class TranslationPipeline:
 
 **実装イメージ**:
 ```python
-if not self._use_layout_analysis:
+if not self._config.use_layout_analysis:
     logger.warning(
         "Layout analysis disabled. All text objects will be translated. "
         "Formulas, tables, and other non-text elements may be incorrectly translated."
@@ -592,13 +689,13 @@ if not self._use_layout_analysis:
     # すべての TextObject を TEXT カテゴリとして扱う
     categories = {obj.id: ProjectCategory.TEXT for obj in all_objects}
 else:
-    layout_blocks = await self._analyzer.analyze_all(pdf_path)
+    layout_blocks = await self._stage_analyze(pdf_path)
     categories = match_text_with_layout(all_objects, layout_blocks)
 ```
 
 **注意点**: 警告メッセージで「数式や表も翻訳される可能性がある」ことを明示する。
 
-#### 5.3.3 bytes 入力時の注意
+#### 5.3.5 bytes 入力時の注意
 
 **重要**: `LayoutAnalyzer` は `Path` を前提としている（内部で pypdfium2 に渡す）。
 `bytes` 入力の場合は一時ファイル経由が必要。
@@ -623,20 +720,20 @@ async def translate(
         return await self._translate_impl(path, output_path)
 ```
 
-#### 5.3.4 ステージ構成
+#### 5.3.6 ステージ構成
 
 | ステージ (stage値) | メソッド | 処理内容 |
 |-------------------|---------|---------|
 | `extract` | `_stage_extract` | PDFからテキスト抽出 |
 | `analyze` | `_stage_analyze` | レイアウト解析＋マッチング |
-| `merge` | `_stage_merge` | TextGroup作成 |
+| `merge` | `_stage_merge` | 翻訳対象フィルタリング + 読み順ソート |
 | `translate` | `_stage_translate` | バッチ翻訳（リトライあり） |
 | `font_adjust` | `_stage_font_adjust` | フォントサイズ調整 |
 | `apply` | `_stage_apply` | PDFに適用 |
 
 > **NOTE**: ステージ名は §4.3 の ProgressCallback stage 値と一致させている。
 
-#### 5.3.5 リトライロジック
+#### 5.3.7 リトライロジック
 
 **リトライ対象の例外**:
 - `TranslationError`: リトライ対象（API 障害、レート制限など一時的エラー）
@@ -648,24 +745,22 @@ from pdf_translator.translators.base import ConfigurationError, TranslationError
 async def _translate_with_retry(
     self,
     texts: list[str],
-    max_retries: int = 3,
-    retry_delay: float = 1.0,
 ) -> list[str]:
-    for attempt in range(max_retries + 1):
+    for attempt in range(self._config.max_retries + 1):
         try:
             return await self._translator.translate_batch(
-                texts, self._source_lang, self._target_lang
+                texts, self._config.source_lang, self._config.target_lang
             )
         except ConfigurationError:
             # 設定エラーはリトライせず即 fail
             raise
         except TranslationError as e:
-            if attempt < max_retries:
-                delay = retry_delay * (2 ** attempt)  # 指数バックオフ
+            if attempt < self._config.max_retries:
+                delay = self._config.retry_delay * (2 ** attempt)  # 指数バックオフ
                 await asyncio.sleep(delay)
             else:
                 raise PipelineError(
-                    f"Translation failed after {max_retries} retries",
+                    f"Translation failed after {self._config.max_retries} retries",
                     stage="translate",
                     cause=e,
                 )
@@ -735,20 +830,18 @@ class TranslationResult:
 
 ## 6. 実装フェーズ
 
-### Phase 1: TextMerger（テキスト結合）
+### Phase 1: TextMerger（読み順ソート）
 
 **成果物**:
 - `src/pdf_translator/core/text_merger.py`
-- `src/pdf_translator/core/models.py` への TextGroup 追加
 - `tests/test_text_merger.py`
 
 **タスク**:
-1. TextGroup dataclass 追加
-2. TextMerger クラス実装
-3. 読み順ソート実装
+1. TextMerger クラス実装
+2. 翻訳対象フィルタリング実装
+3. 読み順ソート実装（行クラスタリング + x ソート）
 4. 文末判定実装
-5. 結合ロジック実装
-6. ユニットテスト作成
+5. ユニットテスト作成
 
 ### Phase 2: FontSizeAdjuster（フォント調整）
 
@@ -906,9 +999,9 @@ adjuster = FontSizeAdjuster(
 |---------|------|
 | `src/pdf_translator/core/text_merger.py` | 新規 |
 | `src/pdf_translator/core/font_adjuster.py` | 新規 |
-| `src/pdf_translator/core/models.py` | 変更（TextGroup追加） |
+| `src/pdf_translator/core/pdf_processor.py` | 変更（`to_bytes()` 追加） |
 | `src/pdf_translator/pipeline/__init__.py` | 新規 |
-| `src/pdf_translator/pipeline/translation_pipeline.py` | 新規 |
+| `src/pdf_translator/pipeline/translation_pipeline.py` | 新規（PipelineConfig, TranslationResult 含む） |
 | `src/pdf_translator/pipeline/progress.py` | 新規 |
 | `src/pdf_translator/pipeline/errors.py` | 新規 |
 | `tests/test_text_merger.py` | 新規 |
