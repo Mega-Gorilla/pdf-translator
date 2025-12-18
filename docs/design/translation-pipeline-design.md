@@ -22,9 +22,9 @@ PDF翻訳の全体フローを統合するパイプラインを実装する。�
 - 見開きPDF出力（Issue #6）
 - CLIインターフェース（Issue #7）
 
-### 1.4 v1 制約事項
+### 1.4 制約事項
 
-v1 では以下の制約を設け、実装範囲を限定する。これらは v1.1 以降で段階的に対応予定。
+本設計における既知の制約事項を記載する。
 
 #### 1.4.1 CJK フォント未対応
 
@@ -35,11 +35,11 @@ v1 では以下の制約を設け、実装範囲を限定する。これらは v
 - CJK 文字は標準フォントに含まれないため、フォントファイル（TTF）の指定が必要
 - CJK フォントの同梱はライセンス確認・サイズ（数十MB）の検討が必要
 
-**v1 の動作**:
+**現在の動作**:
 - 翻訳先が CJK 言語の場合、警告ログを出力
 - 翻訳処理は実行するが、PDF 出力時に文字化けする可能性あり
 
-**v1.1 以降の対応予定**:
+**対応予定** (Issue #18):
 - `PipelineConfig.cjk_font_path: Optional[Path]` を追加
 - システムフォント検索、または Noto Sans CJK 同梱を検討
 
@@ -64,9 +64,9 @@ PDF からテキストを抽出すると、**物理的な行単位**で TextObje
   [翻訳] "tion言語モデルは7Bから65Bの範囲です"
   ```
 
-##### v1 の対応方針: pdftext によるブロック単位抽出
+##### 対応方針: pdftext によるブロック単位抽出
 
-**v1 では pdftext ライブラリを使用してブロック（段落）単位で抽出する**。
+**pdftext ライブラリを使用してブロック（段落）単位で抽出する**。
 
 ```
 PDF → pdftext (ブロック抽出) → ハイフネーション処理 → 翻訳 → 配置 → 挿入
@@ -86,7 +86,7 @@ PDF → pdftext (ブロック抽出) → ハイフネーション処理 → 翻�
 - Abstract（13行）が1ブロックに正しくグループ化
 - 2段組レイアウトが自動で分離（左列 x~88-274, 右列 x~306-526）
 
-**v1 で実装する機能**:
+**実装する機能**:
 
 | 機能 | 説明 | 実装方法 |
 |------|------|----------|
@@ -94,14 +94,14 @@ PDF → pdftext (ブロック抽出) → ハイフネーション処理 → 翻�
 | 座標変換 | pdftext → PDF 座標系 | `pdf_y = page_height - pdftext_y` |
 | ハイフネーション結合 | 行末 `-` + 小文字開始で結合 | シンプルな関数 |
 
-**v1 の制約（v2 以降で対応予定）**:
+**現在の制約**:
 
-| 制約 | 理由 | v2 対応案 |
+| 制約 | 理由 | 将来拡張案 |
 |------|------|-----------|
 | 翻訳後テキストはブロック BBox に配置 | 行ごとの分配は複雑で破綻しやすい | LLM で段落レイアウト再構成 |
 | 段落が元の BBox を超過する場合はフォント縮小 | シンプルな対応 | 動的レイアウト調整 |
 
-##### 翻訳後テキスト配置戦略（v1）
+##### 翻訳後テキスト配置戦略
 
 pdftext で検出されたブロックの BBox を基準として配置。
 
@@ -143,7 +143,7 @@ pdf_y0 = page_height - y1_bottom  # PDF の下端
 pdf_y1 = page_height - y0_top     # PDF の上端
 ```
 
-##### 将来拡張（v2 以降）
+##### 将来拡張
 
 - LLM バックエンドでの structured output を活用したクロスブロック翻訳
 - 文脈を考慮した翻訳品質向上
@@ -446,16 +446,16 @@ def apply_paragraphs(self, paragraphs: list[Paragraph]) -> None:
 > **NOTE**: `remove_text_in_bbox()` は新規メソッド。block_bbox 内のテキストオブジェクトを
 > 一括削除する。pdftext のブロック境界は正確なので、bbox ベースの削除が可能。
 
-#### 4.1.4 将来拡張（v2 以降）
+#### 4.1.4 将来拡張
 
-v2 では LLM バックエンドを活用した高度な翻訳を検討:
+LLM バックエンドを活用した高度な翻訳を将来的に検討:
 
 ```python
-# v2: LLM での structured output を活用
+# 将来: LLM での structured output を活用
 @dataclass
 class Paragraph:
     ...
-    # v2 で追加予定
+    # 将来追加予定
     # layout_hint: Optional[str] = None  # "single_column", "two_column", etc.
     # semantic_type: Optional[str] = None  # "abstract", "heading", "body", etc.
 ```
@@ -1096,9 +1096,9 @@ class FontAdjustmentError(PipelineError):
     pass
 ```
 
-#### 5.4.1 エラー発生時の動作（v1: 全体失敗）
+#### 5.4.1 エラー発生時の動作
 
-**v1 方針**: エラー発生時は全体失敗とする。部分的成功（一部ページのみ翻訳）は v2 以降で検討。
+**方針**: エラー発生時は全体失敗とする。
 
 **理由**:
 1. **シンプルさ**: 部分的成功の処理は複雑（どのページが失敗したか追跡、UI への通知など）
@@ -1106,17 +1106,17 @@ class FontAdjustmentError(PipelineError):
 3. **リトライで回復可能**: 一時的エラー（レート制限、ネットワーク）なら再実行で成功する
 4. **デバッグ容易性**: 全体失敗のほうが問題の切り分けが容易
 
-**v1 の動作**:
+**動作**:
 - リトライ上限に達したら `PipelineError` を raise
 - エラーメッセージに失敗したステージと原因を含める
 
-**v2 での拡張案**:
+**将来拡張案**:
 ```python
 @dataclass
 class TranslationResult:
     pdf_bytes: bytes
     stats: Optional[dict[str, Any]] = None
-    # v2 で追加予定:
+    # 将来追加予定:
     # failed_pages: list[int] = field(default_factory=list)
     # partial_success: bool = False
 ```
@@ -1361,8 +1361,8 @@ class TestE2ETranslation:
 | フォント幅推定の不正確さ | 中 | 保守的な推定値を使用 |
 | 翻訳APIのレート制限 | 低 | 指数バックオフ、バッチサイズ調整 |
 | 大規模PDFでのメモリ使用 | 低 | ページ単位処理 |
-| CJK 言語への翻訳時の文字化け | 中 | v1.1 で CJK フォント対応予定（§1.4.1 参照） |
-| pdftext 非対応の特殊 PDF | 低 | フォールバック処理を検討（v2） |
+| CJK 言語への翻訳時の文字化け | 中 | CJK フォント対応予定（Issue #18、§1.4.1 参照） |
+| pdftext 非対応の特殊 PDF | 低 | 必要に応じてフォールバック処理を検討 |
 
 ---
 
@@ -1396,7 +1396,7 @@ class PipelineConfig:
     max_retries: int = 3
     retry_delay: float = 1.0
 
-    # CJK フォント（v1.1 対応予定、§1.4.1 参照）
+    # CJK フォント（Issue #18 で対応予定、§1.4.1 参照）
     # cjk_font_path: Optional[Path] = None
 ```
 
