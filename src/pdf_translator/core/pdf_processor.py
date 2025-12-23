@@ -902,6 +902,7 @@ class PDFProcessor:
         color: Optional[Color] = None,
         alignment: str = "left",
         rotation: float = 0.0,
+        pdftext_rotation_degrees: float = 0.0,
     ) -> bool:
         """Insert laid out text (multiple lines) into a page.
 
@@ -918,8 +919,13 @@ class PDFProcessor:
             font_size: Font size to use.
             color: Text color (default: black).
             alignment: Text alignment ("left", "center", "right", "justify").
-            rotation: Rotation angle in radians. Use math.radians() to convert
-                from degrees if needed (e.g., math.radians(270) for vertical text).
+            rotation: Rotation angle in radians for the PDF transform matrix.
+                This is the negated pdftext rotation (e.g., math.radians(-270)
+                for pdftext 270° visual rotation).
+            pdftext_rotation_degrees: Original pdftext visual rotation in degrees.
+                Used for coordinate calculation to determine text flow direction.
+                pdftext 270° = text reads bottom-to-top (sidebar text).
+                pdftext 90° = text reads top-to-bottom.
 
         Returns:
             True if all lines were inserted successfully.
@@ -936,10 +942,11 @@ class PDFProcessor:
         cos_r = math.cos(rotation)
         sin_r = math.sin(rotation)
 
-        # Determine rotation type for coordinate calculation
-        rotation_degrees = math.degrees(rotation) % 360
-        is_270_rotation = 265 <= rotation_degrees <= 275
-        is_90_rotation = 85 <= rotation_degrees <= 95
+        # Determine rotation type for coordinate calculation using pdftext visual rotation
+        # (not the PDF transform rotation which is negated)
+        visual_rotation = pdftext_rotation_degrees % 360
+        is_270_rotation = 265 <= visual_rotation <= 275
+        is_90_rotation = 85 <= visual_rotation <= 95
 
         success = True
         for line in layout_result.lines:
@@ -1140,7 +1147,10 @@ class PDFProcessor:
 
             # Insert laid out text
             # Convert rotation from degrees to radians for the transform
-            rotation_radians = math.radians(para.rotation)
+            # Note: pdftext rotation is the visual rotation angle (to read text normally),
+            # but PDF transform matrix needs the opposite direction.
+            # pdftext 270° means text reads bottom-to-top, requiring PDF matrix of -270° = 90°
+            rotation_radians = math.radians(-para.rotation)
             self.insert_laid_out_text(
                 page_num=para.page_number,
                 layout_result=layout_result,
@@ -1150,6 +1160,7 @@ class PDFProcessor:
                 color=para.text_color,
                 alignment=para.alignment,
                 rotation=rotation_radians,
+                pdftext_rotation_degrees=para.rotation,
             )
 
             if debug_draw_bbox:
