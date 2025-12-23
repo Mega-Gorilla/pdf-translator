@@ -8,6 +8,7 @@ capabilities using the pypdfium2 library.
 from __future__ import annotations
 
 import ctypes
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -899,6 +900,8 @@ class PDFProcessor:
         font_handle: Any,
         font_size: float,
         color: Optional[Color] = None,
+        alignment: str = "left",
+        rotation: float = 0.0,
     ) -> bool:
         """Insert laid out text (multiple lines) into a page.
 
@@ -912,6 +915,8 @@ class PDFProcessor:
             font_handle: PDFium font handle.
             font_size: Font size to use.
             color: Text color (default: black).
+            alignment: Text alignment ("left", "center", "right", "justify").
+            rotation: Rotation angle in radians.
 
         Returns:
             True if all lines were inserted successfully.
@@ -923,6 +928,10 @@ class PDFProcessor:
         page = pdf[page_num]
         doc_handle = pdf.raw
         page_handle = page.raw
+
+        # Pre-calculate rotation matrix components
+        cos_r = math.cos(rotation)
+        sin_r = math.sin(rotation)
 
         success = True
         for line in layout_result.lines:
@@ -947,15 +956,41 @@ class PDFProcessor:
                     text_obj, color.r, color.g, color.b, 255
                 )
 
-            # Position the text: x at bbox.x0, y at calculated line position
+            # Calculate x position based on alignment (in local coordinates)
+            if alignment == "center":
+                local_x = (bbox.width - line.width) / 2
+            elif alignment == "right":
+                local_x = bbox.width - line.width
+            else:  # left or justify (justify treated as left for now)
+                local_x = 0.0
+
+            # Calculate local y offset from bbox top
+            local_y = line.y_position - bbox.y1
+
+            # Apply rotation transform around bbox origin (x0, y1)
+            # Transform: rotate around origin, then translate to bbox position
+            # For rotated text, we rotate the local offset and add bbox origin
+            if abs(rotation) > 0.001:  # Only apply rotation if significant
+                rotated_x = local_x * cos_r - local_y * sin_r
+                rotated_y = local_x * sin_r + local_y * cos_r
+                x_pos = bbox.x0 + rotated_x
+                y_pos = bbox.y1 + rotated_y
+            else:
+                x_pos = bbox.x0 + local_x
+                y_pos = line.y_position
+
+            # Position and rotate the text using affine transform
+            # [a b 0]   [cos  sin 0]
+            # [c d 0] = [-sin cos 0]
+            # [e f 1]   [x    y   1]
             pdfium.raw.FPDFPageObj_Transform(
                 text_obj,
-                ctypes.c_double(1.0),
-                ctypes.c_double(0.0),
-                ctypes.c_double(0.0),
-                ctypes.c_double(1.0),
-                ctypes.c_double(bbox.x0),
-                ctypes.c_double(line.y_position),
+                ctypes.c_double(cos_r),
+                ctypes.c_double(sin_r),
+                ctypes.c_double(-sin_r),
+                ctypes.c_double(cos_r),
+                ctypes.c_double(x_pos),
+                ctypes.c_double(y_pos),
             )
 
             # Insert into page
@@ -1006,15 +1041,22 @@ class PDFProcessor:
                 else para.original_font_size
             ) or 12.0
 
-            # Load font (use bold variant if paragraph is bold)
+            # Load font (use bold/italic variants if paragraph has those styles)
             text = para.translated_text
             font_handle = None
             if font_path:
                 is_cid = self._needs_cid_font(text)
                 font_handle = self.load_font(font_path, is_cid=is_cid)
             else:
-                # Use bold variant of standard font if paragraph is bold
-                font_name = "Helvetica-Bold" if para.is_bold else "Helvetica"
+                # Select standard font variant based on bold/italic flags
+                if para.is_bold and para.is_italic:
+                    font_name = "Helvetica-BoldOblique"
+                elif para.is_bold:
+                    font_name = "Helvetica-Bold"
+                elif para.is_italic:
+                    font_name = "Helvetica-Oblique"
+                else:
+                    font_name = "Helvetica"
                 font_handle = self.load_standard_font(font_name)
 
             if not font_handle:
@@ -1044,6 +1086,9 @@ class PDFProcessor:
                 bbox=para.block_bbox,
                 font_handle=font_handle,
                 font_size=layout_result.font_size,
+                color=para.text_color,
+                alignment=para.alignment,
+                rotation=para.rotation,
             )
 
             if debug_draw_bbox:
