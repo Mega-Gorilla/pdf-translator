@@ -26,9 +26,50 @@ from .models import (
     TextObject,
     Transform,
 )
+from .text_layout import LayoutResult, TextLayoutEngine
 
 # PDFium object type constant for text
 FPDF_PAGEOBJ_TEXT = 1
+
+# Debug bbox colors by raw_category (R, G, B)
+# 各カテゴリーが視覚的に区別しやすいよう、異なる色相を使用
+DEBUG_RAW_CATEGORY_COLORS: dict[str | None, tuple[int, int, int]] = {
+    # テキスト系 (翻訳対象) - 各カテゴリーで異なる色
+    "text": (34, 139, 34),            # Forest Green - 本文
+    "vertical_text": (0, 206, 209),   # Dark Turquoise - 縦書き
+    "abstract": (255, 165, 0),        # Orange - アブストラクト
+    "aside_text": (147, 112, 219),    # Medium Purple - サイドテキスト
+    # タイトル系 (翻訳対象)
+    "paragraph_title": (255, 0, 0),   # Red - セクション見出し
+    "doc_title": (220, 20, 60),       # Crimson - 文書タイトル
+    # キャプション (翻訳対象)
+    "figure_title": (255, 105, 180),  # Hot Pink - 図キャプション
+    # 数式系 - 青系統で区別
+    "inline_formula": (0, 0, 255),    # Blue - インライン数式
+    "display_formula": (0, 191, 255), # Deep Sky Blue - ディスプレイ数式
+    "formula_number": (100, 149, 237),# Cornflower Blue - 数式番号
+    "algorithm": (138, 43, 226),      # Blue Violet - アルゴリズム
+    # 図表系
+    "table": (0, 128, 128),           # Teal - 表
+    "image": (255, 0, 255),           # Magenta - 画像
+    "chart": (255, 215, 0),           # Gold - チャート
+    # ナビゲーション系 - 明確に区別できる色
+    "header": (169, 169, 169),        # Dark Gray - ヘッダー
+    "header_image": (112, 128, 144),  # Slate Gray - ヘッダー画像
+    "footer": (105, 105, 105),        # Dim Gray - フッター
+    "footer_image": (119, 136, 153),  # Light Slate Gray - フッター画像
+    "number": (47, 79, 79),           # Dark Slate Gray - ページ番号
+    # 参照系
+    "reference": (139, 69, 19),       # Saddle Brown - 参考文献
+    "reference_content": (210, 105, 30),# Chocolate - 参考文献内容
+    "footnote": (188, 143, 143),      # Rosy Brown - 脚注
+    "vision_footnote": (205, 92, 92), # Indian Red - 視覚的脚注
+    # その他
+    "seal": (128, 0, 0),              # Maroon - 印鑑
+    "content": (70, 130, 180),        # Steel Blue - コンテンツ
+    "unknown": (128, 128, 0),         # Olive - 不明
+    None: (100, 100, 100),            # Default Gray
+}
 
 # Control characters to normalize (common in PDF hyphenation)
 # \x02 (STX) is used by some PDFs for soft hyphens
@@ -169,6 +210,7 @@ class PDFProcessor:
         self._pdf: Optional[pdfium.PdfDocument] = None
         self._loaded_fonts: dict[str, Any] = {}  # font_path -> font_handle
         self._loaded_font_buffers: dict[str, ctypes.Array[Any]] = {}  # keep buffers alive
+        self._layout_engine = TextLayoutEngine()
 
         if isinstance(pdf_source, bytes):
             self._pdf = pdfium.PdfDocument(pdf_source)
@@ -849,14 +891,107 @@ class PDFProcessor:
         # Return a simple ID (not stable, as inserted objects have no index)
         return "inserted"
 
+    def insert_laid_out_text(
+        self,
+        page_num: int,
+        layout_result: LayoutResult,
+        bbox: BBox,
+        font_handle: Any,
+        font_size: float,
+        color: Optional[Color] = None,
+    ) -> bool:
+        """Insert laid out text (multiple lines) into a page.
+
+        This method inserts each line as a separate text object, positioned
+        according to the layout result.
+
+        Args:
+            page_num: Page number (0-indexed).
+            layout_result: Layout result from TextLayoutEngine.
+            bbox: Bounding box for positioning.
+            font_handle: PDFium font handle.
+            font_size: Font size to use.
+            color: Text color (default: black).
+
+        Returns:
+            True if all lines were inserted successfully.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        page = pdf[page_num]
+        doc_handle = pdf.raw
+        page_handle = page.raw
+
+        success = True
+        for line in layout_result.lines:
+            # Create text object for this line
+            text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+                doc_handle, font_handle, ctypes.c_float(font_size)
+            )
+
+            if not text_obj:
+                success = False
+                continue
+
+            # Set text content
+            text_ws = to_widestring(line.text)
+            if not pdfium.raw.FPDFText_SetText(text_obj, text_ws):
+                success = False
+                continue
+
+            # Set color if specified
+            if color:
+                pdfium.raw.FPDFPageObj_SetFillColor(
+                    text_obj, color.r, color.g, color.b, 255
+                )
+
+            # Position the text: x at bbox.x0, y at calculated line position
+            pdfium.raw.FPDFPageObj_Transform(
+                text_obj,
+                ctypes.c_double(1.0),
+                ctypes.c_double(0.0),
+                ctypes.c_double(0.0),
+                ctypes.c_double(1.0),
+                ctypes.c_double(bbox.x0),
+                ctypes.c_double(line.y_position),
+            )
+
+            # Insert into page
+            pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
+
+        # Generate content for all inserted objects
+        page.gen_content()
+        return success
+
     def apply_paragraphs(
         self,
         paragraphs: list[Paragraph],
         font_path: Optional[Union[Path, str]] = None,
+        debug_draw_bbox: bool = False,
     ) -> None:
-        """Apply translated paragraphs to the PDF."""
+        """Apply translated paragraphs to the PDF.
+
+        Uses TextLayoutEngine to properly fit text within bounding boxes,
+        with automatic line wrapping and font size adjustment.
+
+        Args:
+            paragraphs: List of paragraphs to apply.
+            font_path: Path to TTF font file for custom fonts.
+            debug_draw_bbox: If True, draw colored bbox outlines with category labels.
+        """
+        self._ensure_open()
+
         for para in paragraphs:
             if not para.translated_text:
+                # Even if no translation, draw debug bbox if enabled
+                if debug_draw_bbox:
+                    self._draw_debug_bbox(
+                        page_num=para.page_number,
+                        bbox=para.block_bbox,
+                        raw_category=para.category,
+                    )
                 continue
 
             self.remove_text_in_bbox(
@@ -864,19 +999,59 @@ class PDFProcessor:
                 bbox=para.block_bbox,
             )
 
-            font_size = (
+            # Determine initial font size
+            initial_font_size = (
                 para.adjusted_font_size
                 if para.adjusted_font_size is not None
                 else para.original_font_size
-            )
-            font = Font(name="Helvetica", size=font_size or 12.0)
-            self.insert_text_object(
-                page_num=para.page_number,
-                text=para.translated_text,
+            ) or 12.0
+
+            # Load font (use bold variant if paragraph is bold)
+            text = para.translated_text
+            font_handle = None
+            if font_path:
+                is_cid = self._needs_cid_font(text)
+                font_handle = self.load_font(font_path, is_cid=is_cid)
+            else:
+                # Use bold variant of standard font if paragraph is bold
+                font_name = "Helvetica-Bold" if para.is_bold else "Helvetica"
+                font_handle = self.load_standard_font(font_name)
+
+            if not font_handle:
+                # Fallback to old method if font loading fails
+                font = Font(name="Helvetica", size=initial_font_size)
+                self.insert_text_object(
+                    page_num=para.page_number,
+                    text=text,
+                    bbox=para.block_bbox,
+                    font=font,
+                    font_path=font_path,
+                )
+                continue
+
+            # Use TextLayoutEngine to calculate layout
+            layout_result = self._layout_engine.fit_text_in_bbox(
+                text=text,
                 bbox=para.block_bbox,
-                font=font,
-                font_path=font_path,
+                font_handle=font_handle,
+                initial_font_size=initial_font_size,
             )
+
+            # Insert laid out text
+            self.insert_laid_out_text(
+                page_num=para.page_number,
+                layout_result=layout_result,
+                bbox=para.block_bbox,
+                font_handle=font_handle,
+                font_size=layout_result.font_size,
+            )
+
+            if debug_draw_bbox:
+                self._draw_debug_bbox(
+                    page_num=para.page_number,
+                    bbox=para.block_bbox,
+                    raw_category=para.category,
+                )
 
     def _needs_cid_font(self, text: str) -> bool:
         """Check if text contains CJK characters requiring CID font.
@@ -1069,3 +1244,174 @@ class PDFProcessor:
         pdf = self._ensure_open()
         pdf.save(buffer)
         return buffer.getvalue()
+
+    def _draw_debug_bbox(
+        self,
+        page_num: int,
+        bbox: BBox,
+        raw_category: Optional[str] = None,
+        line_width: float = 1.5,
+        label_font_size: float = 8.0,
+    ) -> None:
+        """Draw a colored bbox outline with category label for debugging.
+
+        Args:
+            page_num: Page number (0-indexed).
+            bbox: Bounding box to draw.
+            raw_category: Raw category string for color selection and label.
+            line_width: Stroke width in points.
+            label_font_size: Font size for category label.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            return
+
+        page = pdf[page_num]
+        page_handle = page.raw
+
+        # Get color for raw_category
+        color = DEBUG_RAW_CATEGORY_COLORS.get(
+            raw_category, DEBUG_RAW_CATEGORY_COLORS[None]
+        )
+        r, g, b = color
+
+        # Draw rectangle outline
+        rect = pdfium.raw.FPDFPageObj_CreateNewRect(
+            ctypes.c_float(bbox.x0),
+            ctypes.c_float(bbox.y0),
+            ctypes.c_float(bbox.width),
+            ctypes.c_float(bbox.height),
+        )
+
+        # Set stroke color and width
+        pdfium.raw.FPDFPageObj_SetStrokeColor(rect, r, g, b, 200)
+        pdfium.raw.FPDFPageObj_SetStrokeWidth(rect, ctypes.c_float(line_width))
+
+        # Draw mode: stroke only (fill_mode=0, stroke=1)
+        pdfium.raw.FPDFPath_SetDrawMode(rect, 0, ctypes.c_int(1))
+
+        # Insert rectangle into page
+        pdfium.raw.FPDFPage_InsertObject(page_handle, rect)
+
+        # Draw category label inside bbox at top-left
+        label_text = raw_category if raw_category else "none"
+        self._draw_debug_label(
+            doc_handle=pdf.raw,
+            page_handle=page_handle,
+            text=label_text,
+            bbox=bbox,
+            font_size=label_font_size,
+            color=Color(r=r, g=g, b=b),
+        )
+
+        page.gen_content()
+
+    def _draw_debug_label(
+        self,
+        doc_handle: Any,
+        page_handle: Any,
+        text: str,
+        bbox: BBox,
+        font_size: float = 8.0,
+        color: Optional[Color] = None,
+    ) -> None:
+        """Draw a debug label with background at top-left of bbox.
+
+        Args:
+            doc_handle: PDFium document handle.
+            page_handle: PDFium page handle.
+            text: Label text.
+            bbox: Bounding box to label.
+            font_size: Font size in points.
+            color: Text color (also used for background).
+        """
+
+        # Load Helvetica-Bold font for label
+        font_handle = self.load_standard_font("Helvetica-Bold")
+        if not font_handle:
+            return
+
+        # Estimate label dimensions
+        char_width = font_size * 0.55
+        label_width = len(text) * char_width + 6
+        label_height = font_size + 4
+
+        # Position: ABOVE bbox at top-left corner (outside the box)
+        # Text baseline position
+        text_x = bbox.x0 + 3
+        text_y = bbox.y1 + 2  # Above the box
+
+        # Background rectangle position (above the box)
+        bg_x = bbox.x0
+        bg_y = bbox.y1 + 1
+
+        # Draw background rectangle with category color
+        if color:
+            bg_rect = pdfium.raw.FPDFPageObj_CreateNewRect(
+                ctypes.c_float(bg_x),
+                ctypes.c_float(bg_y),
+                ctypes.c_float(label_width),
+                ctypes.c_float(label_height),
+            )
+            # Solid background using the category color
+            pdfium.raw.FPDFPageObj_SetFillColor(
+                bg_rect, color.r, color.g, color.b, 220
+            )
+            # Fill mode: FPDF_FILLMODE_WINDING = 2
+            pdfium.raw.FPDFPath_SetDrawMode(bg_rect, 2, ctypes.c_int(0))
+            pdfium.raw.FPDFPage_InsertObject(page_handle, bg_rect)
+
+        # Create text object
+        text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+            doc_handle, font_handle, ctypes.c_float(font_size)
+        )
+        if not text_obj:
+            return
+
+        # Set text content
+        text_ws = to_widestring(text)
+        success = pdfium.raw.FPDFText_SetText(text_obj, text_ws)
+        if not success:
+            return
+
+        # Set text color to white for contrast on colored background
+        pdfium.raw.FPDFPageObj_SetFillColor(text_obj, 255, 255, 255, 255)
+
+        # Position text at baseline
+        pdfium.raw.FPDFPageObj_Transform(
+            text_obj,
+            ctypes.c_double(1.0),
+            ctypes.c_double(0.0),
+            ctypes.c_double(0.0),
+            ctypes.c_double(1.0),
+            ctypes.c_double(text_x),
+            ctypes.c_double(text_y),
+        )
+
+        # Insert text into page
+        pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
+
+    def draw_debug_overlay(
+        self,
+        paragraphs: list[Paragraph],
+        line_width: float = 1.5,
+        label_font_size: float = 8.0,
+    ) -> None:
+        """Draw debug bbox overlays for all paragraphs without modifying text.
+
+        This method draws colored bbox outlines and category labels on top of
+        the existing PDF content, useful for verifying layout analysis results.
+
+        Args:
+            paragraphs: List of paragraphs to visualize.
+            line_width: Stroke width for bbox outlines.
+            label_font_size: Font size for category labels.
+        """
+        for para in paragraphs:
+            self._draw_debug_bbox(
+                page_num=para.page_number,
+                bbox=para.block_bbox,
+                raw_category=para.category,
+                line_width=line_width,
+                label_font_size=label_font_size,
+            )

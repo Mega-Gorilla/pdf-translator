@@ -34,9 +34,13 @@ dependencies = [
 deepl = ["aiohttp>=3.9.0"]
 openai = ["openai>=1.0.0", "pydantic>=2.0.0"]
 layout = [
-    # PP-DocLayoutV2 requires PaddlePaddle 3.2.0+
-    # GPU: pip install paddlepaddle-gpu==3.2.0 -i https://mirror.baidu.com/pypi/simple
-    # CPU: pip install paddlepaddle==3.2.0
+    # PaddlePaddle CPU版（デフォルト）- PyPI から自動インストール
+    # GPU版は PyPI にないため、以下の手順で手動インストール:
+    #   1. uv pip uninstall paddlepaddle
+    #   2. uv pip install paddlepaddle-gpu==3.2.0 \
+    #        --index-url https://www.paddlepaddle.org.cn/packages/stable/cu118/
+    # 注: cu118 は CUDA 11.8 用。CUDA 12.x は cu120 を使用
+    "paddlepaddle>=3.2.0",
     "paddleocr>=3.3.0",
     "pillow>=10.0.0",
 ]

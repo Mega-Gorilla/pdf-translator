@@ -124,9 +124,22 @@ RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
     RawLayoutCategory.UNKNOWN: ProjectCategory.OTHER,
 }
 
-# 翻訳対象カテゴリのセット
+# 翻訳対象カテゴリのセット (ProjectCategory用 - 後方互換性のため維持)
 TRANSLATABLE_CATEGORIES: frozenset[ProjectCategory] = frozenset(
     {ProjectCategory.TEXT, ProjectCategory.TITLE, ProjectCategory.CAPTION}
+)
+
+# デフォルトの翻訳対象raw_categoryリスト
+DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "text",
+        "vertical_text",
+        "abstract",
+        "aside_text",
+        "paragraph_title",
+        "doc_title",
+        "figure_title",  # 図のキャプション
+    }
 )
 
 
@@ -492,16 +505,34 @@ class Paragraph:
     block_bbox: BBox
     line_count: int
     original_font_size: float = 12.0
-    category: Optional[ProjectCategory] = None
+    category: Optional[str] = None  # レイアウト解析器のカテゴリー
     translated_text: Optional[str] = None
     adjusted_font_size: Optional[float] = None
+    is_bold: bool = False
+    is_italic: bool = False
+    font_name: Optional[str] = None
+    text_color: Optional[Color] = None
+    rotation: float = 0.0
+    alignment: str = "left"  # "left", "center", "right", "justify"
 
-    @property
-    def is_translatable(self) -> bool:
-        """Check if this paragraph should be translated."""
+    def is_translatable(
+        self,
+        translatable_categories: frozenset[str] | None = None,
+    ) -> bool:
+        """Check if this paragraph should be translated.
+
+        Args:
+            translatable_categories: Set of category names to translate.
+                If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES.
+
+        Returns:
+            True if paragraph should be translated.
+        """
         if self.category is None:
             return True
-        return self.category in TRANSLATABLE_CATEGORIES
+        if translatable_categories is None:
+            translatable_categories = DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        return self.category in translatable_categories
 
 
 @dataclass

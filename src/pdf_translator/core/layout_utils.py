@@ -250,7 +250,7 @@ def assign_categories(
             threshold,
         )
         if best_match is not None:
-            para.category = best_match.project_category
+            para.category = best_match.raw_category.value
     return paragraphs
 
 

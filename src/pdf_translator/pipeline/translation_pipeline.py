@@ -38,6 +38,10 @@ class PipelineConfig:
     use_layout_analysis: bool = True
     layout_containment_threshold: float = 0.5
 
+    # Categories to translate (raw_category strings)
+    # If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+    translatable_categories: frozenset[str] | None = None
+
     min_font_size: float = 6.0
     font_size_decrement: float = 0.1
 
@@ -159,7 +163,11 @@ class TranslationPipeline:
         self._notify("categorize", len(paragraphs), len(paragraphs))
 
     async def _stage_translate(self, paragraphs: list[Paragraph]) -> list[Paragraph]:
-        translatable = [para for para in paragraphs if para.is_translatable]
+        categories = self._config.translatable_categories
+        translatable = [
+            para for para in paragraphs
+            if para.is_translatable(categories)
+        ]
         if not translatable:
             return []
 

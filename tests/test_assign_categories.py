@@ -40,7 +40,8 @@ def test_assign_categories_prefers_formula():
     }
 
     assign_categories(paragraphs, layout_blocks, threshold=0.5)
-    assert paragraphs[0].category == ProjectCategory.FORMULA
+    # Formula has higher priority, so category should be "inline_formula"
+    assert paragraphs[0].category == "inline_formula"
 
 
 def test_assign_categories_no_match_keeps_none():
