@@ -730,6 +730,60 @@ class PDFProcessor:
         """
         return self.remove_text_objects(page_num, None)
 
+    def _find_font_variant(
+        self,
+        base_font_path: Path,
+        is_bold: bool,
+        is_italic: bool,
+    ) -> Path:
+        """Find appropriate font variant based on style flags.
+
+        Attempts to find Bold/Italic variants of a font using common naming
+        conventions. Falls back to the base font if no variant is found.
+
+        Args:
+            base_font_path: Path to the base font file.
+            is_bold: Whether to find a bold variant.
+            is_italic: Whether to find an italic variant.
+
+        Returns:
+            Path to the appropriate font variant, or base path if not found.
+        """
+        if not is_bold and not is_italic:
+            return base_font_path
+
+        base_name = base_font_path.stem
+        parent_dir = base_font_path.parent
+        extension = base_font_path.suffix
+
+        # Remove common style suffixes to get the font family base name
+        for style in ["-Regular", "-Text", "-Normal", "-Book", "Regular", "Text"]:
+            if base_name.endswith(style):
+                base_name = base_name[: -len(style)]
+                break
+
+        # Determine target suffixes based on style
+        if is_bold and is_italic:
+            target_suffixes = [
+                "-BoldItalic",
+                "-Bold Italic",
+                "BoldItalic",
+                "-SemiBoldItalic",
+            ]
+        elif is_bold:
+            target_suffixes = ["-Bold", "Bold", "-SemiBold", "-Medium"]
+        else:  # italic only
+            target_suffixes = ["-Italic", "Italic", "-Oblique", "-TextItalic"]
+
+        # Try to find variant
+        for suffix in target_suffixes:
+            variant_path = parent_dir / f"{base_name}{suffix}{extension}"
+            if variant_path.exists():
+                return variant_path
+
+        # Return original if no variant found
+        return base_font_path
+
     def load_font(
         self, font_path: Union[Path, str], is_cid: bool = False
     ) -> Optional[Any]:
@@ -1110,8 +1164,12 @@ class PDFProcessor:
             text = para.translated_text
             font_handle = None
             if font_path:
+                # Find appropriate font variant (Bold/Italic) if available
+                actual_font_path = self._find_font_variant(
+                    font_path, para.is_bold, para.is_italic
+                )
                 is_cid = self._needs_cid_font(text)
-                font_handle = self.load_font(font_path, is_cid=is_cid)
+                font_handle = self.load_font(actual_font_path, is_cid=is_cid)
             else:
                 # Select standard font variant based on bold/italic flags
                 if para.is_bold and para.is_italic:

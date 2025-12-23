@@ -491,3 +491,49 @@ class TestPDFProcessorParagraphs:
             pdf_bytes = processor.to_bytes()
             assert isinstance(pdf_bytes, bytes)
             assert len(pdf_bytes) > 0
+
+    def test_find_font_variant(self, tmp_path):
+        """Test font variant detection for Bold/Italic styles."""
+        # Create mock font files
+        base_font = tmp_path / "TestFont-Regular.ttf"
+        bold_font = tmp_path / "TestFont-Bold.ttf"
+        italic_font = tmp_path / "TestFont-Italic.ttf"
+        bold_italic_font = tmp_path / "TestFont-BoldItalic.ttf"
+
+        # Create empty files
+        base_font.write_bytes(b"")
+        bold_font.write_bytes(b"")
+        italic_font.write_bytes(b"")
+        bold_italic_font.write_bytes(b"")
+
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            # Regular - should return base font
+            result = processor._find_font_variant(base_font, False, False)
+            assert result == base_font
+
+            # Bold - should find bold variant
+            result = processor._find_font_variant(base_font, True, False)
+            assert result == bold_font
+
+            # Italic - should find italic variant
+            result = processor._find_font_variant(base_font, False, True)
+            assert result == italic_font
+
+            # BoldItalic - should find bold italic variant
+            result = processor._find_font_variant(base_font, True, True)
+            assert result == bold_italic_font
+
+    def test_find_font_variant_fallback(self, tmp_path):
+        """Test font variant falls back to base when variant not found."""
+        # Create only base font
+        base_font = tmp_path / "TestFont-Regular.ttf"
+        base_font.write_bytes(b"")
+
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            # Should fall back to base font when bold not found
+            result = processor._find_font_variant(base_font, True, False)
+            assert result == base_font
+
+            # Should fall back when italic not found
+            result = processor._find_font_variant(base_font, False, True)
+            assert result == base_font
