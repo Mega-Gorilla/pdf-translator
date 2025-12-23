@@ -134,7 +134,7 @@ class TranslationPipeline:
             return {}
 
         try:
-        result = await asyncio.to_thread(self._analyzer.analyze_all, pdf_path)
+            result = await asyncio.to_thread(self._analyzer.analyze_all, pdf_path)
         except Exception as exc:
             raise LayoutAnalysisError("Layout analysis failed", stage="analyze", cause=exc) from exc
 
