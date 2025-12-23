@@ -13,6 +13,7 @@ from pdf_translator.core import (
     Font,
     Metadata,
     Page,
+    Paragraph,
     PDFDocument,
     PDFProcessor,
     TextObject,
@@ -457,3 +458,36 @@ class TestTextLayerEdit:
                 texts1 = {obj["text"] for obj in p1["text_objects"]}
                 texts2 = {obj["text"] for obj in p2["text_objects"]}
                 assert texts1 == texts2
+
+
+class TestPDFProcessorParagraphs:
+    """Tests for paragraph-based PDF operations."""
+
+    def test_remove_text_in_bbox(self):
+        """Ensure text objects are removed within a bounding box."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            doc = processor.extract_text_objects()
+            page = doc.pages[0]
+            bbox = BBox(0, 0, page.width, page.height)
+            removed = processor.remove_text_in_bbox(0, bbox, containment_threshold=0.5)
+            assert removed > 0
+
+    def test_apply_paragraphs_and_to_bytes(self):
+        """Apply paragraphs and ensure PDF bytes are returned."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            doc = processor.extract_text_objects()
+            page = doc.pages[0]
+            first_obj = page.text_objects[0]
+            paragraph = Paragraph(
+                id="para_p0_b0",
+                page_number=0,
+                text=first_obj.text,
+                block_bbox=first_obj.bbox,
+                line_count=1,
+                original_font_size=first_obj.font.size if first_obj.font else 12.0,
+                translated_text="Translated",
+            )
+            processor.apply_paragraphs([paragraph])
+            pdf_bytes = processor.to_bytes()
+            assert isinstance(pdf_bytes, bytes)
+            assert len(pdf_bytes) > 0

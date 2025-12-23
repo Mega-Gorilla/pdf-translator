@@ -480,6 +480,31 @@ class LayoutBlock:
 
 
 @dataclass
+class Paragraph:
+    """Paragraph extracted from pdftext blocks.
+
+    Represents a translation unit mapped to a block-level bounding box.
+    """
+
+    id: str
+    page_number: int
+    text: str
+    block_bbox: BBox
+    line_count: int
+    original_font_size: float = 12.0
+    category: Optional[ProjectCategory] = None
+    translated_text: Optional[str] = None
+    adjusted_font_size: Optional[float] = None
+
+    @property
+    def is_translatable(self) -> bool:
+        """Check if this paragraph should be translated."""
+        if self.category is None:
+            return True
+        return self.category in TRANSLATABLE_CATEGORIES
+
+
+@dataclass
 class Page:
     """A page in the PDF document.
 

@@ -13,6 +13,7 @@ from .models import (
     TRANSLATABLE_CATEGORIES,
     BBox,
     LayoutBlock,
+    Paragraph,
     ProjectCategory,
     RawLayoutCategory,
     TextObject,
@@ -233,3 +234,45 @@ def filter_translatable(
         for obj in text_objects
         if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
     ]
+
+
+def assign_categories(
+    paragraphs: list[Paragraph],
+    layout_blocks: dict[int, list[LayoutBlock]],
+    threshold: float = 0.5,
+) -> list[Paragraph]:
+    """Assign layout categories to paragraphs based on bbox overlap."""
+    for para in paragraphs:
+        page_blocks = layout_blocks.get(para.page_number, [])
+        best_match = _find_best_matching_block(
+            para.block_bbox,
+            page_blocks,
+            threshold,
+        )
+        if best_match is not None:
+            para.category = best_match.project_category
+    return paragraphs
+
+
+def _find_best_matching_block(
+    para_bbox: BBox,
+    blocks: list[LayoutBlock],
+    threshold: float,
+) -> LayoutBlock | None:
+    """Find best matching LayoutBlock with fail-safe category priority."""
+    candidates: list[tuple[LayoutBlock, float]] = []
+    for block in blocks:
+        overlap = calc_containment(para_bbox, block.bbox)
+        if overlap >= threshold:
+            candidates.append((block, overlap))
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            CATEGORY_PRIORITY.get(item[0].raw_category, DEFAULT_PRIORITY),
+            -item[1],
+        )
+    )
+    return candidates[0][0]

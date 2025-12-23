@@ -21,6 +21,7 @@ from .models import (
     Font,
     Metadata,
     Page,
+    Paragraph,
     PDFDocument,
     TextObject,
     Transform,
@@ -609,6 +610,72 @@ class PDFProcessor:
 
         return removed
 
+    def remove_text_in_bbox(
+        self,
+        page_num: int,
+        bbox: BBox,
+        containment_threshold: float = 0.5,
+    ) -> int:
+        """Remove text objects contained in a bounding box.
+
+        Args:
+            page_num: Page number (0-indexed).
+            bbox: Target bounding box (PDF coordinates).
+            containment_threshold: Ratio of text bbox area contained in bbox.
+
+        Returns:
+            Number of objects removed.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        page = pdf[page_num]
+        removed = 0
+        objects_to_remove = []
+
+        def containment_ratio(text_bbox: BBox, target_bbox: BBox) -> float:
+            x0 = max(text_bbox.x0, target_bbox.x0)
+            y0 = max(text_bbox.y0, target_bbox.y0)
+            x1 = min(text_bbox.x1, target_bbox.x1)
+            y1 = min(text_bbox.y1, target_bbox.y1)
+            if x0 >= x1 or y0 >= y1:
+                return 0.0
+            inter_area = (x1 - x0) * (y1 - y0)
+            text_area = text_bbox.width * text_bbox.height
+            if text_area <= 0:
+                return 0.0
+            return inter_area / text_area
+
+        textpage = page.get_textpage()
+        try:
+            for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
+                bounds = obj.get_bounds()
+                if bounds is None:
+                    continue
+
+                text = self._get_text_object_text_direct(obj, textpage)
+                text = text.strip() if text else ""
+                if not text:
+                    continue
+
+                left, bottom, right, top = bounds
+                text_bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
+                containment = containment_ratio(text_bbox, bbox)
+                if containment >= containment_threshold:
+                    objects_to_remove.append(obj)
+        finally:
+            textpage.close()
+
+        for obj in objects_to_remove:
+            page.remove_obj(obj)
+            removed += 1
+
+        if removed > 0:
+            page.gen_content()
+
+        return removed
+
     def remove_all_text(self, page_num: int) -> int:
         """Remove all text objects from a page.
 
@@ -781,6 +848,35 @@ class PDFProcessor:
 
         # Return a simple ID (not stable, as inserted objects have no index)
         return "inserted"
+
+    def apply_paragraphs(
+        self,
+        paragraphs: list[Paragraph],
+        font_path: Optional[Union[Path, str]] = None,
+    ) -> None:
+        """Apply translated paragraphs to the PDF."""
+        for para in paragraphs:
+            if not para.translated_text:
+                continue
+
+            self.remove_text_in_bbox(
+                page_num=para.page_number,
+                bbox=para.block_bbox,
+            )
+
+            font_size = (
+                para.adjusted_font_size
+                if para.adjusted_font_size is not None
+                else para.original_font_size
+            )
+            font = Font(name="Helvetica", size=font_size or 12.0)
+            self.insert_text_object(
+                page_num=para.page_number,
+                text=para.translated_text,
+                bbox=para.block_bbox,
+                font=font,
+                font_path=font_path,
+            )
 
     def _needs_cid_font(self, text: str) -> bool:
         """Check if text contains CJK characters requiring CID font.
@@ -964,3 +1060,12 @@ class PDFProcessor:
         pdf = self._ensure_open()
         with open(path, "wb") as f:
             pdf.save(f)
+
+    def to_bytes(self) -> bytes:
+        """Export the PDF as bytes."""
+        from io import BytesIO
+
+        buffer = BytesIO()
+        pdf = self._ensure_open()
+        pdf.save(buffer)
+        return buffer.getvalue()
