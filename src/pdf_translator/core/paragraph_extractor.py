@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -140,7 +141,7 @@ class ParagraphExtractor:
         font_name = self._estimate_font_name(block)
         text_color = self._estimate_text_color(block)
         rotation = self._estimate_rotation(block)
-        alignment = self._estimate_alignment(block)
+        alignment = self._estimate_alignment(block, rotation)
 
         return Paragraph(
             id=f"para_p{page_idx}_b{block_idx}",
@@ -320,6 +321,9 @@ class ParagraphExtractor:
 
         Returns:
             Predominant rotation angle in degrees.
+
+        Note:
+            pdftext returns rotation in radians, so we convert to degrees here.
         """
         rotation_weights: dict[float, int] = defaultdict(int)
 
@@ -329,25 +333,39 @@ class ParagraphExtractor:
                 if not text.strip():
                     continue
 
-                rotation = span.get("rotation", 0.0)
-                rotation_weights[rotation] += len(text)
+                # pdftext returns rotation in radians
+                rotation_radians = span.get("rotation", 0.0)
+                rotation_weights[rotation_radians] += len(text)
 
         if not rotation_weights:
             return 0.0
 
-        best_rotation, _ = max(rotation_weights.items(), key=lambda x: x[1])
-        return float(best_rotation)
+        best_rotation_radians, _ = max(rotation_weights.items(), key=lambda x: x[1])
+        # Convert radians to degrees
+        return math.degrees(best_rotation_radians)
 
     @staticmethod
-    def _estimate_alignment(block: dict[str, Any]) -> str:
+    def _estimate_alignment(block: dict[str, Any], rotation_degrees: float = 0.0) -> str:
         """Estimate text alignment from line positions.
 
         Args:
             block: Block dictionary from pdftext.
+            rotation_degrees: Text rotation in degrees.
 
         Returns:
             Alignment string: "left", "center", "right", or "justify".
+
+        Note:
+            For 90°/270° rotated text, alignment detection is less reliable
+            because the coordinate axes are swapped. In these cases, we default
+            to "left" alignment to match the original text start position.
         """
+        # For vertical text (90° or 270° rotation), default to left alignment
+        # This ensures text starts at the edge of the bbox rather than being centered
+        normalized_rotation = rotation_degrees % 360
+        if 85 <= normalized_rotation <= 95 or 265 <= normalized_rotation <= 275:
+            return "left"
+
         lines = block.get("lines", [])
         if not lines:
             return "left"

@@ -341,6 +341,7 @@ class TextLayoutEngine:
         bbox: BBox,
         font_handle: ctypes.c_void_p,
         initial_font_size: float,
+        rotation_degrees: float = 0.0,
     ) -> LayoutResult:
         """Fit text within a bounding box, adjusting font size if necessary.
 
@@ -349,6 +350,8 @@ class TextLayoutEngine:
             bbox: Bounding box to fit text into.
             font_handle: PDFium font handle.
             initial_font_size: Starting font size in points.
+            rotation_degrees: Text rotation in degrees (0, 90, 180, 270).
+                For 90° or 270° rotation, width/height are swapped for layout.
 
         Returns:
             LayoutResult with lines, final font size, and fit status.
@@ -362,8 +365,17 @@ class TextLayoutEngine:
             )
 
         font_size = initial_font_size
-        bbox_width = bbox.width
-        bbox_height = bbox.height
+
+        # For 90° or 270° rotation, swap width and height
+        # because text flows along the bbox height direction
+        normalized_rotation = rotation_degrees % 360
+        is_vertical = 85 <= normalized_rotation <= 95 or 265 <= normalized_rotation <= 275
+        if is_vertical:
+            bbox_width = bbox.height
+            bbox_height = bbox.width
+        else:
+            bbox_width = bbox.width
+            bbox_height = bbox.height
 
         while font_size >= self._min_font_size:
             # Wrap text at current font size

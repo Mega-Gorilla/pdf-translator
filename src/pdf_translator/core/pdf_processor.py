@@ -911,12 +911,15 @@ class PDFProcessor:
         Args:
             page_num: Page number (0-indexed).
             layout_result: Layout result from TextLayoutEngine.
+                Note: For rotated text (90°/270°), the layout should have been
+                calculated with swapped width/height by fit_text_in_bbox().
             bbox: Bounding box for positioning.
             font_handle: PDFium font handle.
             font_size: Font size to use.
             color: Text color (default: black).
             alignment: Text alignment ("left", "center", "right", "justify").
-            rotation: Rotation angle in radians.
+            rotation: Rotation angle in radians. Use math.radians() to convert
+                from degrees if needed (e.g., math.radians(270) for vertical text).
 
         Returns:
             True if all lines were inserted successfully.
@@ -932,6 +935,11 @@ class PDFProcessor:
         # Pre-calculate rotation matrix components
         cos_r = math.cos(rotation)
         sin_r = math.sin(rotation)
+
+        # Determine rotation type for coordinate calculation
+        rotation_degrees = math.degrees(rotation) % 360
+        is_270_rotation = 265 <= rotation_degrees <= 275
+        is_90_rotation = 85 <= rotation_degrees <= 95
 
         success = True
         for line in layout_result.lines:
@@ -956,28 +964,71 @@ class PDFProcessor:
                     text_obj, color.r, color.g, color.b, 255
                 )
 
-            # Calculate x position based on alignment (in local coordinates)
-            if alignment == "center":
-                local_x = (bbox.width - line.width) / 2
-            elif alignment == "right":
-                local_x = bbox.width - line.width
-            else:  # left or justify (justify treated as left for now)
-                local_x = 0.0
+            # Calculate position based on rotation
+            if is_270_rotation:
+                # 270° rotation: text flows bottom-to-top, lines stack right-to-left
+                # Origin is at (x1, y0) - bottom-right of bbox
+                # For 270° rotated text with swapped width/height in fit_text_in_bbox:
+                # - effective_width = bbox.height (text wrapping direction)
+                # - effective_height = bbox.width (line stacking direction)
+                # local_x: alignment offset along text direction (becomes y in PDF)
+                # local_y: line position offset (becomes -x in PDF, from right edge)
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
 
-            # Calculate local y offset from bbox top
-            local_y = line.y_position - bbox.y1
+                # local_y is the offset from the first line position
+                # line.y_position was calculated as bbox.y1 - ascent - (line_index * line_height)
+                # We need to convert this to offset from first line
+                local_y = line.y_position - bbox.y1  # negative value
 
-            # Apply rotation transform around bbox origin (x0, y1)
-            # Transform: rotate around origin, then translate to bbox position
-            # For rotated text, we rotate the local offset and add bbox origin
-            if abs(rotation) > 0.001:  # Only apply rotation if significant
-                rotated_x = local_x * cos_r - local_y * sin_r
-                rotated_y = local_x * sin_r + local_y * cos_r
-                x_pos = bbox.x0 + rotated_x
-                y_pos = bbox.y1 + rotated_y
+                # For 270° rotation:
+                # - PDF x = origin_x + local_y (moves left as local_y is negative)
+                # - PDF y = origin_y + local_x (moves up for text direction)
+                x_pos = bbox.x1 + local_y
+                y_pos = bbox.y0 + local_x
+
+            elif is_90_rotation:
+                # 90° rotation: text flows top-to-bottom, lines stack left-to-right
+                # Origin is at (x0, y1) - top-left of bbox
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+
+                local_y = line.y_position - bbox.y1  # negative value
+
+                # For 90° rotation:
+                # - PDF x = origin_x - local_y (moves right as local_y is negative)
+                # - PDF y = origin_y - local_x (moves down for text direction)
+                x_pos = bbox.x0 - local_y
+                y_pos = bbox.y1 - local_x
+
             else:
-                x_pos = bbox.x0 + local_x
-                y_pos = line.y_position
+                # Normal horizontal text (0° or 180°)
+                if alignment == "center":
+                    local_x = (bbox.width - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.width - line.width
+                else:
+                    local_x = 0.0
+
+                local_y = line.y_position - bbox.y1
+
+                if abs(rotation) > 0.001:
+                    # Apply rotation transform for non-90/270 angles
+                    rotated_x = local_x * cos_r - local_y * sin_r
+                    rotated_y = local_x * sin_r + local_y * cos_r
+                    x_pos = bbox.x0 + rotated_x
+                    y_pos = bbox.y1 + rotated_y
+                else:
+                    x_pos = bbox.x0 + local_x
+                    y_pos = line.y_position
 
             # Position and rotate the text using affine transform
             # [a b 0]   [cos  sin 0]
@@ -1078,14 +1129,18 @@ class PDFProcessor:
                 continue
 
             # Use TextLayoutEngine to calculate layout
+            # Pass rotation in degrees so layout engine can swap width/height for vertical text
             layout_result = self._layout_engine.fit_text_in_bbox(
                 text=text,
                 bbox=para.block_bbox,
                 font_handle=font_handle,
                 initial_font_size=initial_font_size,
+                rotation_degrees=para.rotation,
             )
 
             # Insert laid out text
+            # Convert rotation from degrees to radians for the transform
+            rotation_radians = math.radians(para.rotation)
             self.insert_laid_out_text(
                 page_num=para.page_number,
                 layout_result=layout_result,
@@ -1094,7 +1149,7 @@ class PDFProcessor:
                 font_size=layout_result.font_size,
                 color=para.text_color,
                 alignment=para.alignment,
-                rotation=para.rotation,
+                rotation=rotation_radians,
             )
 
             if debug_draw_bbox:

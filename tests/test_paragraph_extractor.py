@@ -223,8 +223,15 @@ def test_font_name_extraction():
 
 
 def test_rotation_extraction():
-    """Test rotation extraction from spans."""
+    """Test rotation extraction from spans.
+
+    Note: pdftext returns rotation in radians, which is converted to degrees.
+    """
+    import math
+
     extractor = ParagraphExtractor()
+    # pdftext returns rotation in radians (e.g., π/2 for 90°)
+    rotation_radians = math.pi / 2  # ≈ 1.5708
     pdftext_result = [
         {
             "bbox": [0, 0, 600, 800],
@@ -232,7 +239,7 @@ def test_rotation_extraction():
                 {
                     "bbox": [0, 0, 100, 20],
                     "lines": [
-                        {"spans": [{"text": "Rotated", "font": {"size": 12}, "rotation": 1.57}]}
+                        {"spans": [{"text": "Rotated", "font": {"size": 12}, "rotation": rotation_radians}]}
                     ],
                 }
             ],
@@ -240,7 +247,8 @@ def test_rotation_extraction():
     ]
 
     paragraphs = extractor.extract(pdftext_result)
-    assert paragraphs[0].rotation == 1.57
+    # Should be converted to degrees (90°)
+    assert abs(paragraphs[0].rotation - 90.0) < 0.1
 
 
 def test_alignment_left():
