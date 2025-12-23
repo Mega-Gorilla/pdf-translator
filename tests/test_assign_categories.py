@@ -6,7 +6,6 @@ from pdf_translator.core.models import (
     BBox,
     LayoutBlock,
     Paragraph,
-    ProjectCategory,
     RawLayoutCategory,
 )
 
@@ -28,13 +27,11 @@ def test_assign_categories_prefers_formula():
                 id="b1",
                 bbox=BBox(0, 0, 100, 100),
                 raw_category=RawLayoutCategory.TEXT,
-                project_category=ProjectCategory.TEXT,
             ),
             LayoutBlock(
                 id="b2",
                 bbox=BBox(0, 0, 100, 100),
                 raw_category=RawLayoutCategory.INLINE_FORMULA,
-                project_category=ProjectCategory.FORMULA,
             ),
         ]
     }
@@ -61,7 +58,6 @@ def test_assign_categories_no_match_keeps_none():
                 id="b1",
                 bbox=BBox(200, 200, 300, 300),
                 raw_category=RawLayoutCategory.TEXT,
-                project_category=ProjectCategory.TEXT,
             )
         ]
     }
@@ -87,7 +83,6 @@ def test_assign_categories_threshold_filtering():
                 id="b1",
                 bbox=BBox(90, 90, 110, 110),
                 raw_category=RawLayoutCategory.TEXT,
-                project_category=ProjectCategory.TEXT,
             )
         ]
     }

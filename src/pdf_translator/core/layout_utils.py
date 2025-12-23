@@ -10,11 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from .models import (
-    TRANSLATABLE_CATEGORIES,
+    DEFAULT_TRANSLATABLE_RAW_CATEGORIES,
     BBox,
     LayoutBlock,
     Paragraph,
-    ProjectCategory,
     RawLayoutCategory,
     TextObject,
 )
@@ -161,7 +160,7 @@ def match_text_with_layout(
     text_objects: list[TextObject],
     layout_blocks: list[LayoutBlock],
     containment_threshold: float = 0.5,
-) -> dict[str, ProjectCategory]:
+) -> dict[str, str]:
     """Match TextObjects with LayoutBlocks to determine categories.
 
     Algorithm:
@@ -180,9 +179,9 @@ def match_text_with_layout(
         containment_threshold: Minimum containment ratio (default: 0.5)
 
     Returns:
-        Mapping of TextObject.id → ProjectCategory
+        Mapping of TextObject.id → raw_category string
     """
-    result: dict[str, ProjectCategory] = {}
+    result: dict[str, str] = {}
 
     for text_obj in text_objects:
         # Step 1: Extract candidate blocks
@@ -202,8 +201,8 @@ def match_text_with_layout(
                 )
 
         if not candidates:
-            # Unmatched: default to OTHER (safe side)
-            result[text_obj.id] = ProjectCategory.OTHER
+            # Unmatched: default to "unknown" (safe side)
+            result[text_obj.id] = "unknown"
             continue
 
         # Step 2: Sort by priority (asc) → containment (desc) → area (asc)
@@ -211,20 +210,20 @@ def match_text_with_layout(
 
         # Select highest priority candidate
         best = candidates[0]["block"]
-        result[text_obj.id] = best.project_category
+        result[text_obj.id] = best.raw_category.value
 
     return result
 
 
 def filter_translatable(
     text_objects: list[TextObject],
-    categories: dict[str, ProjectCategory],
+    categories: dict[str, str],
 ) -> list[TextObject]:
     """Filter TextObjects to only those that should be translated.
 
     Args:
         text_objects: All TextObjects
-        categories: Mapping of TextObject.id → ProjectCategory
+        categories: Mapping of TextObject.id → raw_category string
 
     Returns:
         TextObjects that should be translated
@@ -232,7 +231,7 @@ def filter_translatable(
     return [
         obj
         for obj in text_objects
-        if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
+        if categories.get(obj.id) in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
     ]
 
 
