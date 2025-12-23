@@ -1090,6 +1090,7 @@ class PDFProcessor:
                         page_num=para.page_number,
                         bbox=para.block_bbox,
                         raw_category=para.category,
+                        confidence=para.category_confidence,
                     )
                 continue
 
@@ -1168,6 +1169,7 @@ class PDFProcessor:
                     page_num=para.page_number,
                     bbox=para.block_bbox,
                     raw_category=para.category,
+                    confidence=para.category_confidence,
                 )
 
     def _needs_cid_font(self, text: str) -> bool:
