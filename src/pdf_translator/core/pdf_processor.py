@@ -1340,13 +1340,13 @@ class PDFProcessor:
             return
 
         # Estimate label dimensions
-        char_width = font_size * 0.55
-        label_width = len(text) * char_width + 6
+        char_width = font_size * 0.48
+        label_width = len(text) * char_width + 4
         label_height = font_size + 4
 
         # Position: ABOVE bbox at top-left corner (outside the box)
         # Text baseline position
-        text_x = bbox.x0 + 3
+        text_x = bbox.x0 + 2
         text_y = bbox.y1 + 2  # Above the box
 
         # Background rectangle position (above the box)
