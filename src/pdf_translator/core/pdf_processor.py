@@ -1250,6 +1250,7 @@ class PDFProcessor:
         page_num: int,
         bbox: BBox,
         raw_category: Optional[str] = None,
+        confidence: Optional[float] = None,
         line_width: float = 1.5,
         label_font_size: float = 8.0,
     ) -> None:
@@ -1259,6 +1260,7 @@ class PDFProcessor:
             page_num: Page number (0-indexed).
             bbox: Bounding box to draw.
             raw_category: Raw category string for color selection and label.
+            confidence: Detection confidence (0.0-1.0) to display in label.
             line_width: Stroke width in points.
             label_font_size: Font size for category label.
         """
@@ -1293,8 +1295,14 @@ class PDFProcessor:
         # Insert rectangle into page
         pdfium.raw.FPDFPage_InsertObject(page_handle, rect)
 
-        # Draw category label inside bbox at top-left
-        label_text = raw_category if raw_category else "none"
+        # Draw category label with confidence above bbox
+        if raw_category:
+            if confidence is not None:
+                label_text = f"{raw_category} ({confidence:.2f})"
+            else:
+                label_text = raw_category
+        else:
+            label_text = "none"
         self._draw_debug_label(
             doc_handle=pdf.raw,
             page_handle=page_handle,
@@ -1412,6 +1420,7 @@ class PDFProcessor:
                 page_num=para.page_number,
                 bbox=para.block_bbox,
                 raw_category=para.category,
+                confidence=para.category_confidence,
                 line_width=line_width,
                 label_font_size=label_font_size,
             )

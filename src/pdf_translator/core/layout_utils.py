@@ -240,7 +240,10 @@ def assign_categories(
     layout_blocks: dict[int, list[LayoutBlock]],
     threshold: float = 0.5,
 ) -> list[Paragraph]:
-    """Assign layout categories to paragraphs based on bbox overlap."""
+    """Assign layout categories to paragraphs based on bbox overlap.
+
+    Sets both category and category_confidence from the matched LayoutBlock.
+    """
     for para in paragraphs:
         page_blocks = layout_blocks.get(para.page_number, [])
         best_match = _find_best_matching_block(
@@ -250,6 +253,7 @@ def assign_categories(
         )
         if best_match is not None:
             para.category = best_match.raw_category.value
+            para.category_confidence = best_match.confidence
     return paragraphs
 
 

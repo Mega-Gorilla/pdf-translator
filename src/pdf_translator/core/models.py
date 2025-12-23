@@ -427,6 +427,7 @@ class Paragraph:
     line_count: int
     original_font_size: float = 12.0
     category: Optional[str] = None  # レイアウト解析器のカテゴリー
+    category_confidence: Optional[float] = None  # レイアウト検出の信頼度 (0.0-1.0)
     translated_text: Optional[str] = None
     adjusted_font_size: Optional[float] = None
     is_bold: bool = False
