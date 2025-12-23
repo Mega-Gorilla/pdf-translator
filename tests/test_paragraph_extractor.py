@@ -341,3 +341,42 @@ def test_alignment_justify():
 
     paragraphs = extractor.extract(pdftext_result)
     assert paragraphs[0].alignment == "justify"
+
+
+def test_alignment_left_with_first_line_indent():
+    """Test left alignment detection when first line has indent (common in body text)."""
+    extractor = ParagraphExtractor()
+    # First line is indented (x=30), but subsequent lines start at x=10
+    # This is a common pattern in body text paragraphs
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [10, 0, 200, 80],
+                    "lines": [
+                        {
+                            "bbox": [30, 0, 180, 20],  # First line indented
+                            "spans": [{"text": "First line with indent", "font": {"size": 12}}],
+                        },
+                        {
+                            "bbox": [10, 20, 190, 40],  # Subsequent lines at left edge
+                            "spans": [{"text": "Second line at margin", "font": {"size": 12}}],
+                        },
+                        {
+                            "bbox": [10, 40, 170, 60],
+                            "spans": [{"text": "Third line at margin", "font": {"size": 12}}],
+                        },
+                        {
+                            "bbox": [10, 60, 185, 80],
+                            "spans": [{"text": "Fourth line at margin", "font": {"size": 12}}],
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    # Should be detected as left-aligned (middle lines have consistent left edge)
+    assert paragraphs[0].alignment == "left"

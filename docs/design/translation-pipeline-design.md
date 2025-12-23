@@ -1804,8 +1804,8 @@ class PipelineConfig:
 
     # フォント調整（TextLayoutEngine 用）
     min_font_size: float = 6.0
-    font_size_step: float = 0.5
-    line_height_factor: float = 1.2
+    # NOTE: font_size_step (0.5) と line_height_factor (1.2) は
+    # TextLayoutEngine のデフォルト値を使用（設定不要）
 
     # 翻訳リトライ
     max_retries: int = 3
@@ -1827,12 +1827,8 @@ class PipelineConfig:
 ```python
 config = PipelineConfig(target_lang="ja")
 
-# TextLayoutEngine に渡す
-layout_engine = TextLayoutEngine(
-    min_font_size=config.min_font_size,
-    font_size_step=config.font_size_step,
-    line_height_factor=config.line_height_factor,
-)
+# TextLayoutEngine は PDFProcessor 内部で生成される（デフォルト値使用）
+# min_font_size は apply_paragraphs() に渡される
 
 # ParagraphExtractor はパラメータ不要（pdftext がすべて処理）
 extractor = ParagraphExtractor()
