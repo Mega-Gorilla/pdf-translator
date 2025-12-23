@@ -1165,8 +1165,9 @@ class PDFProcessor:
             font_handle = None
             if font_path:
                 # Find appropriate font variant (Bold/Italic) if available
+                base_font_path = Path(font_path) if isinstance(font_path, str) else font_path
                 actual_font_path = self._find_font_variant(
-                    font_path, para.is_bold, para.is_italic
+                    base_font_path, para.is_bold, para.is_italic
                 )
                 is_cid = self._needs_cid_font(text)
                 font_handle = self.load_font(actual_font_path, is_cid=is_cid)
