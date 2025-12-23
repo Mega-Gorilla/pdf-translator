@@ -13,9 +13,9 @@ from typing import Any
 from pdf_translator.core.font_adjuster import FontSizeAdjuster
 from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
+from pdf_translator.core.models import LayoutBlock, Paragraph
 from pdf_translator.core.paragraph_extractor import ParagraphExtractor
 from pdf_translator.core.pdf_processor import PDFProcessor
-from pdf_translator.core.models import LayoutBlock, Paragraph
 from pdf_translator.pipeline.errors import (
     ExtractionError,
     FontAdjustmentError,
@@ -118,7 +118,9 @@ class TranslationPipeline:
         try:
             paragraphs = ParagraphExtractor.extract_from_pdf(pdf_path)
         except Exception as exc:
-            raise ExtractionError("Paragraph extraction failed", stage="extract", cause=exc) from exc
+            raise ExtractionError(
+                "Paragraph extraction failed", stage="extract", cause=exc
+            ) from exc
 
         with PDFProcessor(pdf_path) as processor:
             page_count = processor.page_count
@@ -200,7 +202,9 @@ class TranslationPipeline:
                 )
                 self._notify("font_adjust", idx, len(paragraphs))
         except Exception as exc:
-            raise FontAdjustmentError("Font adjustment failed", stage="font_adjust", cause=exc) from exc
+            raise FontAdjustmentError(
+                "Font adjustment failed", stage="font_adjust", cause=exc
+            ) from exc
 
     def _stage_apply(self, pdf_path: Path, paragraphs: list[Paragraph]) -> bytes:
         target_lang = self._config.target_lang.lower()
@@ -219,6 +223,7 @@ class TranslationPipeline:
             return processor.to_bytes()
 
     async def _translate_with_retry(self, texts: list[str]) -> list[str]:
+        last_error: TranslationError | None = None
         for attempt in range(self._config.max_retries + 1):
             try:
                 return await self._translator.translate_batch(
@@ -229,15 +234,16 @@ class TranslationPipeline:
             except ConfigurationError:
                 raise
             except TranslationError as exc:
+                last_error = exc
                 if attempt < self._config.max_retries:
                     delay = self._config.retry_delay * (2**attempt)
                     await asyncio.sleep(delay)
-                else:
-                    raise PipelineError(
-                        f"Translation failed after {self._config.max_retries} retries",
-                        stage="translate",
-                        cause=exc,
-                    ) from exc
+
+        raise PipelineError(
+            f"Translation failed after {self._config.max_retries} retries",
+            stage="translate",
+            cause=last_error,
+        )
 
     def _chunk_texts(self, texts: list[str]) -> list[list[str]]:
         batch_size = max(1, int(self._config.translation_batch_size))

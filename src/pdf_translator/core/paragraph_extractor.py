@@ -81,7 +81,7 @@ class ParagraphExtractor:
         Returns:
             List of Paragraphs.
         """
-        from pdftext.extraction import dictionary_output
+        from pdftext.extraction import dictionary_output  # type: ignore[import-untyped]
 
         result = dictionary_output(str(pdf_path), page_range=page_range)
         page_heights: dict[int, float] = {}
