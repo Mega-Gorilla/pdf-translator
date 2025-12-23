@@ -160,9 +160,9 @@ tests/
 ├──────────────────────────────────────────────────────────┤
 │ + bbox: BBox                                             │
 │ + raw_category: RawLayoutCategory                        │
-│ + project_category: ProjectCategory                      │
 │ + confidence: float                                      │
 │ + page_num: int                                          │
+│ + text_object_ids: list[str]                             │
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
@@ -172,11 +172,9 @@ tests/
 │ INLINE_FORMULA, DISPLAY_FORMULA, ALGORITHM, ...          │
 └──────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────┐
-│            ProjectCategory (Enum)                        │
-├──────────────────────────────────────────────────────────┤
-│ TEXT, TITLE, CAPTION, FORMULA, TABLE, IMAGE, ...         │
-└──────────────────────────────────────────────────────────┘
+> **実装簡略化**: 当初設計の `ProjectCategory` Enum は実装されず、
+> `raw_category.value` 文字列を直接使用する方式を採用。
+> 詳細は §4.3 参照。
 ```
 
 ---
@@ -266,11 +264,21 @@ class RawLayoutCategory(str, Enum):
 
 ### 4.3 ProjectCategory Enum (Project Layer)
 
-翻訳ロジックが依存する安定カテゴリ：
+> **⚠️ 実装簡略化**: 以下の `ProjectCategory` Enum は当初設計であり、
+> **実際の実装では採用されていない**。
+>
+> **採用方式**: `raw_category.value` 文字列を直接使用し、
+> `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` で翻訳対象を判定する。
+>
+> **理由**: 中間レイヤーを省くことで実装がシンプルになり、
+> PP-DocLayout のカテゴリ追加時の対応も容易になった。
+
+<details>
+<summary>（参考）当初設計の ProjectCategory Enum</summary>
 
 ```python
 class ProjectCategory(str, Enum):
-    """プロジェクト内部の安定カテゴリ"""
+    """プロジェクト内部の安定カテゴリ（未実装）"""
 
     # 翻訳対象
     TEXT = "text"           # 本文テキスト
@@ -291,7 +299,26 @@ class ProjectCategory(str, Enum):
     OTHER = "other"         # 上記以外
 ```
 
+</details>
+
+**実際の実装**:
+
+```python
+# models.py
+DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset({
+    "text", "vertical_text", "abstract", "aside_text",
+    "paragraph_title", "doc_title", "figure_title",
+})
+```
+
 ### 4.4 カテゴリマッピング
+
+> **⚠️ 実装簡略化**: 以下のマッピングは当初設計であり、**実際の実装では使用されていない**。
+> `raw_category.value` 文字列を直接使用し、`DEFAULT_TRANSLATABLE_RAW_CATEGORIES` で
+> 翻訳対象を判定する方式を採用した。
+
+<details>
+<summary>（参考）当初設計のマッピング</summary>
 
 ```python
 RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
@@ -329,36 +356,51 @@ RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
 }
 ```
 
+</details>
+
 ### 4.5 LayoutBlock データクラス
+
+**実際の実装**:
 
 ```python
 @dataclass
 class LayoutBlock:
     """レイアウト検出結果"""
 
+    id: str
     bbox: BBox
     raw_category: RawLayoutCategory   # モデル出力（Raw Layer）
-    project_category: ProjectCategory  # 正規化済み（Project Layer）
     confidence: float
     page_num: int
+    text_object_ids: list[str] = field(default_factory=list)
+
+    @property
+    def is_translatable(self) -> bool:
+        """翻訳対象かどうかを判定."""
+        return self.raw_category.value in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 ```
 
-### 4.6 翻訳対象分類 (Project Layer ベース)
+> **変更点**: `project_category` フィールドは削除され、
+> `raw_category.value` を直接使用して翻訳対象を判定する。
 
-| ProjectCategory | 翻訳対象 | 対応する RawLayoutCategory |
-|-----------------|:--------:|----------------------------|
-| `TEXT` | ✅ ON | text, abstract, aside_text |
-| `TITLE` | ✅ ON | paragraph_title, doc_title |
-| `CAPTION` | ✅ ON | figure_title |
-| `FOOTNOTE` | ❌ OFF | footnote |
-| `FORMULA` | ❌ OFF | inline_formula, display_formula, formula_number |
-| `CODE` | ❌ OFF | algorithm, code_block |
-| `TABLE` | ❌ OFF | table |
-| `IMAGE` | ❌ OFF | image |
-| `CHART` | ❌ OFF | chart |
-| `HEADER` | ❌ OFF | header, footer, number |
-| `REFERENCE` | ❌ OFF | reference, reference_content |
-| `OTHER` | ❌ OFF | seal, content, table_of_contents, unknown |
+### 4.6 翻訳対象分類 (raw_category ベース)
+
+**実際の実装** では `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` を使用:
+
+| raw_category | 翻訳対象 |
+|--------------|:--------:|
+| `text`, `vertical_text`, `abstract`, `aside_text` | ✅ ON |
+| `paragraph_title`, `doc_title` | ✅ ON |
+| `figure_title` | ✅ ON |
+| `footnote`, `vision_footnote` | ❌ OFF |
+| `inline_formula`, `display_formula`, `formula_number` | ❌ OFF |
+| `algorithm` | ❌ OFF |
+| `table` | ❌ OFF |
+| `image` | ❌ OFF |
+| `chart` | ❌ OFF |
+| `header`, `header_image`, `footer`, `footer_image`, `number` | ❌ OFF |
+| `reference`, `reference_content` | ❌ OFF |
+| `seal`, `content`, `unknown` | ❌ OFF |
 
 ---
 
@@ -607,12 +649,15 @@ def calc_containment(text_bbox: BBox, block_bbox: BBox) -> float:
 
 #### 5.4.4 マッチングアルゴリズム
 
+> **実装変更**: 戻り値は `dict[str, ProjectCategory]` ではなく `dict[str, str]`
+> （raw_category 文字列を直接返す）。
+
 ```python
 def match_text_with_layout(
     text_objects: list[TextObject],
     layout_blocks: list[LayoutBlock],
     containment_threshold: float = 0.5,
-) -> dict[str, ProjectCategory]:
+) -> dict[str, str]:
     """
     TextObject と LayoutBlock をマッチング
 
@@ -628,9 +673,9 @@ def match_text_with_layout(
         containment_threshold: 包含率閾値 (default: 0.5)
 
     Returns:
-        TextObject.id → ProjectCategory のマッピング
+        TextObject.id → raw_category 文字列のマッピング
     """
-    result = {}
+    result: dict[str, str] = {}
 
     for text_obj in text_objects:
         # Step 1: 候補ブロックを抽出
@@ -649,7 +694,7 @@ def match_text_with_layout(
 
         if not candidates:
             # 未マッチ時のデフォルト動作（安全側）
-            result[text_obj.id] = ProjectCategory.OTHER
+            result[text_obj.id] = "unknown"
             continue
 
         # Step 2: ソート
@@ -660,7 +705,7 @@ def match_text_with_layout(
 
         # 最優先の候補を採用
         best = candidates[0]["block"]
-        result[text_obj.id] = best.project_category
+        result[text_obj.id] = best.raw_category.value  # raw_category 文字列を使用
 
     return result
 ```
@@ -669,56 +714,44 @@ def match_text_with_layout(
 
 | ケース | TextObject | 候補ブロック | 結果 |
 |--------|-----------|-------------|------|
-| 数式テキスト | `∑_i x_i` | text(優先度6), inline_formula(優先度1) | **inline_formula** ✅ |
-| 通常テキスト | `Hello` | text(優先度6) のみ | **text** ✅ |
-| 表のセル | `123` | text(優先度6), table(優先度3) | **table** ✅ |
-| 未マッチ | (孤立) | なし | **OTHER** (安全側) |
+| 数式テキスト | `∑_i x_i` | text(優先度6), inline_formula(優先度1) | **"inline_formula"** ✅ |
+| 通常テキスト | `Hello` | text(優先度6) のみ | **"text"** ✅ |
+| 表のセル | `123` | text(優先度6), table(優先度3) | **"table"** ✅ |
+| 未マッチ | (孤立) | なし | **"unknown"** (安全側) |
 
-### 5.5 フィルタリング関数 (Project Layer ベース)
+### 5.5 フィルタリング関数 (raw_category ベース)
+
+> **実装変更**: `ProjectCategory` を使用せず、`raw_category` 文字列を直接使用。
 
 ```python
-# 翻訳対象カテゴリ (Project Layer)
-TRANSLATABLE_CATEGORIES = {
-    ProjectCategory.TEXT,
-    ProjectCategory.TITLE,
-    ProjectCategory.CAPTION,
-}
-
-# 翻訳除外カテゴリ (Project Layer)
-NON_TRANSLATABLE_CATEGORIES = {
-    ProjectCategory.FOOTNOTE,
-    ProjectCategory.FORMULA,
-    ProjectCategory.CODE,
-    ProjectCategory.TABLE,
-    ProjectCategory.IMAGE,
-    ProjectCategory.CHART,
-    ProjectCategory.HEADER,
-    ProjectCategory.REFERENCE,
-    ProjectCategory.OTHER,
-}
+# 翻訳対象カテゴリ (raw_category 文字列)
+DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset({
+    "text", "vertical_text", "abstract", "aside_text",
+    "paragraph_title", "doc_title", "figure_title",
+})
 
 def filter_translatable(
     text_objects: list[TextObject],
-    categories: dict[str, ProjectCategory],
+    categories: dict[str, str],
 ) -> list[TextObject]:
     """
     翻訳対象の TextObject をフィルタリング
 
     Args:
         text_objects: 全 TextObject リスト
-        categories: TextObject.id → ProjectCategory のマッピング
+        categories: TextObject.id → raw_category 文字列のマッピング
 
     Returns:
         翻訳対象の TextObject リスト
     """
     return [
         obj for obj in text_objects
-        if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
+        if categories.get(obj.id) in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
     ]
 ```
 
-**ポイント**: フィルタリングは `ProjectCategory` (Project Layer) を使用。
-モデル出力の `RawLayoutCategory` は内部で `ProjectCategory` に変換される。
+**ポイント**: フィルタリングは `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` を使用。
+`raw_category.value` 文字列を直接判定するため、中間レイヤーが不要。
 
 ---
 
