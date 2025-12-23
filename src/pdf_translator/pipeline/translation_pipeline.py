@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pdf_translator.core.font_adjuster import FontSizeAdjuster
 from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
 from pdf_translator.core.models import LayoutBlock, Paragraph
@@ -18,7 +17,6 @@ from pdf_translator.core.paragraph_extractor import ParagraphExtractor
 from pdf_translator.core.pdf_processor import PDFProcessor
 from pdf_translator.pipeline.errors import (
     ExtractionError,
-    FontAdjustmentError,
     LayoutAnalysisError,
     PipelineError,
 )
@@ -42,8 +40,8 @@ class PipelineConfig:
     # If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES
     translatable_categories: frozenset[str] | None = None
 
+    # Minimum font size for translated text (used by TextLayoutEngine)
     min_font_size: float = 6.0
-    font_size_decrement: float = 0.1
 
     max_retries: int = 3
     retry_delay: float = 1.0
@@ -107,7 +105,6 @@ class TranslationPipeline:
         layout_blocks = await self._stage_analyze(pdf_path)
         self._stage_categorize(paragraphs, layout_blocks)
         translatable = await self._stage_translate(paragraphs)
-        self._stage_font_adjust(translatable)
         pdf_bytes = self._stage_apply(pdf_path, paragraphs)
 
         if output_path is not None:
@@ -193,30 +190,6 @@ class TranslationPipeline:
 
         return translatable
 
-    def _stage_font_adjust(self, paragraphs: list[Paragraph]) -> None:
-        if not paragraphs:
-            return
-
-        try:
-            adjuster = FontSizeAdjuster(
-                min_font_size=self._config.min_font_size,
-                font_size_decrement=self._config.font_size_decrement,
-            )
-            for idx, para in enumerate(paragraphs, start=1):
-                if not para.translated_text:
-                    continue
-                para.adjusted_font_size = adjuster.calculate_font_size(
-                    para.translated_text,
-                    para.block_bbox,
-                    para.original_font_size,
-                    self._config.target_lang,
-                )
-                self._notify("font_adjust", idx, len(paragraphs))
-        except Exception as exc:
-            raise FontAdjustmentError(
-                "Font adjustment failed", stage="font_adjust", cause=exc
-            ) from exc
-
     def _stage_apply(self, pdf_path: Path, paragraphs: list[Paragraph]) -> bytes:
         target_lang = self._config.target_lang.lower()
         font_path = None
@@ -233,6 +206,7 @@ class TranslationPipeline:
                 paragraphs,
                 font_path=font_path,
                 debug_draw_bbox=self._config.debug_draw_bbox,
+                min_font_size=self._config.min_font_size,
             )
             self._notify("apply", 1, 1)
             return processor.to_bytes()

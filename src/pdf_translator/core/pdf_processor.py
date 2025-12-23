@@ -1005,6 +1005,7 @@ class PDFProcessor:
         paragraphs: list[Paragraph],
         font_path: Optional[Union[Path, str]] = None,
         debug_draw_bbox: bool = False,
+        min_font_size: Optional[float] = None,
     ) -> None:
         """Apply translated paragraphs to the PDF.
 
@@ -1015,8 +1016,13 @@ class PDFProcessor:
             paragraphs: List of paragraphs to apply.
             font_path: Path to TTF font file for custom fonts.
             debug_draw_bbox: If True, draw colored bbox outlines with category labels.
+            min_font_size: Minimum font size for text fitting. If None, uses engine default.
         """
         self._ensure_open()
+
+        # Update TextLayoutEngine min_font_size if specified
+        if min_font_size is not None:
+            self._layout_engine._min_font_size = min_font_size
 
         for para in paragraphs:
             if not para.translated_text:

@@ -24,7 +24,3 @@ class ExtractionError(PipelineError):
 
 class LayoutAnalysisError(PipelineError):
     """Layout analysis error."""
-
-
-class FontAdjustmentError(PipelineError):
-    """Font size adjustment error."""
