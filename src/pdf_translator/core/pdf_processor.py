@@ -1252,7 +1252,7 @@ class PDFProcessor:
         raw_category: Optional[str] = None,
         confidence: Optional[float] = None,
         line_width: float = 1.5,
-        label_font_size: float = 8.0,
+        label_font_size: float = 10.0,
     ) -> None:
         """Draw a colored bbox outline with category label for debugging.
 
@@ -1320,7 +1320,7 @@ class PDFProcessor:
         page_handle: Any,
         text: str,
         bbox: BBox,
-        font_size: float = 8.0,
+        font_size: float = 10.0,
         color: Optional[Color] = None,
     ) -> None:
         """Draw a debug label with background at top-left of bbox.
@@ -1403,7 +1403,7 @@ class PDFProcessor:
         self,
         paragraphs: list[Paragraph],
         line_width: float = 1.5,
-        label_font_size: float = 8.0,
+        label_font_size: float = 10.0,
     ) -> None:
         """Draw debug bbox overlays for all paragraphs without modifying text.
 
