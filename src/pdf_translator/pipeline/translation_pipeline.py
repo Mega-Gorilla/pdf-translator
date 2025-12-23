@@ -51,6 +51,9 @@ class PipelineConfig:
 
     cjk_font_path: Path | None = None
 
+    # Debug options
+    debug_draw_bbox: bool = False
+
 
 @dataclass
 class TranslationResult:
@@ -226,7 +229,11 @@ class TranslationPipeline:
                 )
 
         with PDFProcessor(pdf_path) as processor:
-            processor.apply_paragraphs(paragraphs, font_path=font_path)
+            processor.apply_paragraphs(
+                paragraphs,
+                font_path=font_path,
+                debug_draw_bbox=self._config.debug_draw_bbox,
+            )
             self._notify("apply", 1, 1)
             return processor.to_bytes()
 
