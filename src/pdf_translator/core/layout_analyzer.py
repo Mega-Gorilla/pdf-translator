@@ -22,7 +22,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from PIL import Image  # type: ignore[import-not-found]
+    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class LayoutAnalyzer:
             LayoutDetection model instance
         """
         if self._model is None:
-            from paddleocr import LayoutDetection  # type: ignore[import-not-found]
+            from paddleocr import LayoutDetection  # type: ignore[import-untyped]
 
             logger.info("Initializing %s model...", self._model_name)
             self._model = LayoutDetection(model_name=self._model_name)
