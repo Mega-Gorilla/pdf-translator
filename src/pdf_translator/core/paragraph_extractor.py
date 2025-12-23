@@ -408,8 +408,17 @@ class ParagraphExtractor:
         if not left_positions:
             return "left"
 
+        # Full variation
         left_std = max(left_positions) - min(left_positions)
         right_std = max(right_positions) - min(right_positions)
+
+        # For 4+ lines, exclude first line (first-line indent) and last line
+        # (often shorter) when calculating left edge variation
+        if len(left_positions) >= 4:
+            middle_left = left_positions[1:-1]
+            left_std_middle = max(middle_left) - min(middle_left)
+        else:
+            left_std_middle = left_std
 
         # Justified: both edges consistent
         if left_std < 5 and right_std < 5:
@@ -419,8 +428,13 @@ class ParagraphExtractor:
         if left_std < 5:
             return "left"
 
+        # For 4+ lines with first-line indent, check middle lines
+        if len(left_positions) >= 4 and left_std_middle < 5:
+            return "left"
+
         # Right aligned: consistent right edge
-        if right_std < 5:
+        # Only if left edge varies significantly (not just first-line indent)
+        if right_std < 5 and left_std > 20:
             return "right"
 
         # Check center alignment
