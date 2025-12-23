@@ -8,6 +8,7 @@ capabilities using the pypdfium2 library.
 from __future__ import annotations
 
 import ctypes
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -21,13 +22,55 @@ from .models import (
     Font,
     Metadata,
     Page,
+    Paragraph,
     PDFDocument,
     TextObject,
     Transform,
 )
+from .text_layout import LayoutResult, TextLayoutEngine
 
 # PDFium object type constant for text
 FPDF_PAGEOBJ_TEXT = 1
+
+# Debug bbox colors by raw_category (R, G, B)
+# 各カテゴリーが視覚的に区別しやすいよう、異なる色相を使用
+DEBUG_RAW_CATEGORY_COLORS: dict[str | None, tuple[int, int, int]] = {
+    # テキスト系 (翻訳対象) - 各カテゴリーで異なる色
+    "text": (34, 139, 34),            # Forest Green - 本文
+    "vertical_text": (0, 206, 209),   # Dark Turquoise - 縦書き
+    "abstract": (255, 165, 0),        # Orange - アブストラクト
+    "aside_text": (147, 112, 219),    # Medium Purple - サイドテキスト
+    # タイトル系 (翻訳対象)
+    "paragraph_title": (255, 0, 0),   # Red - セクション見出し
+    "doc_title": (220, 20, 60),       # Crimson - 文書タイトル
+    # キャプション (翻訳対象)
+    "figure_title": (255, 105, 180),  # Hot Pink - 図キャプション
+    # 数式系 - 青系統で区別
+    "inline_formula": (0, 0, 255),    # Blue - インライン数式
+    "display_formula": (0, 191, 255), # Deep Sky Blue - ディスプレイ数式
+    "formula_number": (100, 149, 237),# Cornflower Blue - 数式番号
+    "algorithm": (138, 43, 226),      # Blue Violet - アルゴリズム
+    # 図表系
+    "table": (0, 128, 128),           # Teal - 表
+    "image": (255, 0, 255),           # Magenta - 画像
+    "chart": (255, 215, 0),           # Gold - チャート
+    # ナビゲーション系 - 明確に区別できる色
+    "header": (169, 169, 169),        # Dark Gray - ヘッダー
+    "header_image": (112, 128, 144),  # Slate Gray - ヘッダー画像
+    "footer": (105, 105, 105),        # Dim Gray - フッター
+    "footer_image": (119, 136, 153),  # Light Slate Gray - フッター画像
+    "number": (47, 79, 79),           # Dark Slate Gray - ページ番号
+    # 参照系
+    "reference": (139, 69, 19),       # Saddle Brown - 参考文献
+    "reference_content": (210, 105, 30),# Chocolate - 参考文献内容
+    "footnote": (188, 143, 143),      # Rosy Brown - 脚注
+    "vision_footnote": (205, 92, 92), # Indian Red - 視覚的脚注
+    # その他
+    "seal": (128, 0, 0),              # Maroon - 印鑑
+    "content": (70, 130, 180),        # Steel Blue - コンテンツ
+    "unknown": (128, 128, 0),         # Olive - 不明
+    None: (100, 100, 100),            # Default Gray
+}
 
 # Control characters to normalize (common in PDF hyphenation)
 # \x02 (STX) is used by some PDFs for soft hyphens
@@ -168,6 +211,7 @@ class PDFProcessor:
         self._pdf: Optional[pdfium.PdfDocument] = None
         self._loaded_fonts: dict[str, Any] = {}  # font_path -> font_handle
         self._loaded_font_buffers: dict[str, ctypes.Array[Any]] = {}  # keep buffers alive
+        self._layout_engine = TextLayoutEngine()
 
         if isinstance(pdf_source, bytes):
             self._pdf = pdfium.PdfDocument(pdf_source)
@@ -609,6 +653,72 @@ class PDFProcessor:
 
         return removed
 
+    def remove_text_in_bbox(
+        self,
+        page_num: int,
+        bbox: BBox,
+        containment_threshold: float = 0.5,
+    ) -> int:
+        """Remove text objects contained in a bounding box.
+
+        Args:
+            page_num: Page number (0-indexed).
+            bbox: Target bounding box (PDF coordinates).
+            containment_threshold: Ratio of text bbox area contained in bbox.
+
+        Returns:
+            Number of objects removed.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        page = pdf[page_num]
+        removed = 0
+        objects_to_remove = []
+
+        def containment_ratio(text_bbox: BBox, target_bbox: BBox) -> float:
+            x0 = max(text_bbox.x0, target_bbox.x0)
+            y0 = max(text_bbox.y0, target_bbox.y0)
+            x1 = min(text_bbox.x1, target_bbox.x1)
+            y1 = min(text_bbox.y1, target_bbox.y1)
+            if x0 >= x1 or y0 >= y1:
+                return 0.0
+            inter_area = (x1 - x0) * (y1 - y0)
+            text_area = text_bbox.width * text_bbox.height
+            if text_area <= 0:
+                return 0.0
+            return inter_area / text_area
+
+        textpage = page.get_textpage()
+        try:
+            for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
+                bounds = obj.get_bounds()
+                if bounds is None:
+                    continue
+
+                text = self._get_text_object_text_direct(obj, textpage)
+                text = text.strip() if text else ""
+                if not text:
+                    continue
+
+                left, bottom, right, top = bounds
+                text_bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
+                containment = containment_ratio(text_bbox, bbox)
+                if containment >= containment_threshold:
+                    objects_to_remove.append(obj)
+        finally:
+            textpage.close()
+
+        for obj in objects_to_remove:
+            page.remove_obj(obj)
+            removed += 1
+
+        if removed > 0:
+            page.gen_content()
+
+        return removed
+
     def remove_all_text(self, page_num: int) -> int:
         """Remove all text objects from a page.
 
@@ -619,6 +729,60 @@ class PDFProcessor:
             Number of objects removed
         """
         return self.remove_text_objects(page_num, None)
+
+    def _find_font_variant(
+        self,
+        base_font_path: Path,
+        is_bold: bool,
+        is_italic: bool,
+    ) -> Path:
+        """Find appropriate font variant based on style flags.
+
+        Attempts to find Bold/Italic variants of a font using common naming
+        conventions. Falls back to the base font if no variant is found.
+
+        Args:
+            base_font_path: Path to the base font file.
+            is_bold: Whether to find a bold variant.
+            is_italic: Whether to find an italic variant.
+
+        Returns:
+            Path to the appropriate font variant, or base path if not found.
+        """
+        if not is_bold and not is_italic:
+            return base_font_path
+
+        base_name = base_font_path.stem
+        parent_dir = base_font_path.parent
+        extension = base_font_path.suffix
+
+        # Remove common style suffixes to get the font family base name
+        for style in ["-Regular", "-Text", "-Normal", "-Book", "Regular", "Text"]:
+            if base_name.endswith(style):
+                base_name = base_name[: -len(style)]
+                break
+
+        # Determine target suffixes based on style
+        if is_bold and is_italic:
+            target_suffixes = [
+                "-BoldItalic",
+                "-Bold Italic",
+                "BoldItalic",
+                "-SemiBoldItalic",
+            ]
+        elif is_bold:
+            target_suffixes = ["-Bold", "Bold", "-SemiBold", "-Medium"]
+        else:  # italic only
+            target_suffixes = ["-Italic", "Italic", "-Oblique", "-TextItalic"]
+
+        # Try to find variant
+        for suffix in target_suffixes:
+            variant_path = parent_dir / f"{base_name}{suffix}{extension}"
+            if variant_path.exists():
+                return variant_path
+
+        # Return original if no variant found
+        return base_font_path
 
     def load_font(
         self, font_path: Union[Path, str], is_cid: bool = False
@@ -781,6 +945,291 @@ class PDFProcessor:
 
         # Return a simple ID (not stable, as inserted objects have no index)
         return "inserted"
+
+    def insert_laid_out_text(
+        self,
+        page_num: int,
+        layout_result: LayoutResult,
+        bbox: BBox,
+        font_handle: Any,
+        font_size: float,
+        color: Optional[Color] = None,
+        alignment: str = "left",
+        rotation: float = 0.0,
+        pdftext_rotation_degrees: float = 0.0,
+    ) -> bool:
+        """Insert laid out text (multiple lines) into a page.
+
+        This method inserts each line as a separate text object, positioned
+        according to the layout result.
+
+        Args:
+            page_num: Page number (0-indexed).
+            layout_result: Layout result from TextLayoutEngine.
+                Note: For rotated text (90°/270°), the layout should have been
+                calculated with swapped width/height by fit_text_in_bbox().
+            bbox: Bounding box for positioning.
+            font_handle: PDFium font handle.
+            font_size: Font size to use.
+            color: Text color (default: black).
+            alignment: Text alignment ("left", "center", "right", "justify").
+            rotation: Rotation angle in radians for the PDF transform matrix.
+                This is the negated pdftext rotation (e.g., math.radians(-270)
+                for pdftext 270° visual rotation).
+            pdftext_rotation_degrees: Original pdftext visual rotation in degrees.
+                Used for coordinate calculation to determine text flow direction.
+                pdftext 270° = text reads bottom-to-top (sidebar text).
+                pdftext 90° = text reads top-to-bottom.
+
+        Returns:
+            True if all lines were inserted successfully.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        page = pdf[page_num]
+        doc_handle = pdf.raw
+        page_handle = page.raw
+
+        # Pre-calculate rotation matrix components
+        cos_r = math.cos(rotation)
+        sin_r = math.sin(rotation)
+
+        # Determine rotation type for coordinate calculation using pdftext visual rotation
+        # (not the PDF transform rotation which is negated)
+        visual_rotation = pdftext_rotation_degrees % 360
+        is_270_rotation = 265 <= visual_rotation <= 275
+        is_90_rotation = 85 <= visual_rotation <= 95
+
+        success = True
+        for line in layout_result.lines:
+            # Create text object for this line
+            text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+                doc_handle, font_handle, ctypes.c_float(font_size)
+            )
+
+            if not text_obj:
+                success = False
+                continue
+
+            # Set text content
+            text_ws = to_widestring(line.text)
+            if not pdfium.raw.FPDFText_SetText(text_obj, text_ws):
+                success = False
+                continue
+
+            # Set color if specified
+            if color:
+                pdfium.raw.FPDFPageObj_SetFillColor(
+                    text_obj, color.r, color.g, color.b, 255
+                )
+
+            # Calculate position based on rotation
+            if is_270_rotation:
+                # 270° rotation: text flows bottom-to-top, lines stack right-to-left
+                # Origin is at (x1, y0) - bottom-right of bbox
+                # For 270° rotated text with swapped width/height in fit_text_in_bbox:
+                # - effective_width = bbox.height (text wrapping direction)
+                # - effective_height = bbox.width (line stacking direction)
+                # local_x: alignment offset along text direction (becomes y in PDF)
+                # local_y: line position offset (becomes -x in PDF, from right edge)
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+
+                # local_y is the offset from the first line position
+                # line.y_position was calculated as bbox.y1 - ascent - (line_index * line_height)
+                # We need to convert this to offset from first line
+                local_y = line.y_position - bbox.y1  # negative value
+
+                # For 270° rotation:
+                # - PDF x = origin_x + local_y (moves left as local_y is negative)
+                # - PDF y = origin_y + local_x (moves up for text direction)
+                x_pos = bbox.x1 + local_y
+                y_pos = bbox.y0 + local_x
+
+            elif is_90_rotation:
+                # 90° rotation: text flows top-to-bottom, lines stack left-to-right
+                # Origin is at (x0, y1) - top-left of bbox
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+
+                local_y = line.y_position - bbox.y1  # negative value
+
+                # For 90° rotation:
+                # - PDF x = origin_x - local_y (moves right as local_y is negative)
+                # - PDF y = origin_y - local_x (moves down for text direction)
+                x_pos = bbox.x0 - local_y
+                y_pos = bbox.y1 - local_x
+
+            else:
+                # Normal horizontal text (0° or 180°)
+                if alignment == "center":
+                    local_x = (bbox.width - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.width - line.width
+                else:
+                    local_x = 0.0
+
+                local_y = line.y_position - bbox.y1
+
+                if abs(rotation) > 0.001:
+                    # Apply rotation transform for non-90/270 angles
+                    rotated_x = local_x * cos_r - local_y * sin_r
+                    rotated_y = local_x * sin_r + local_y * cos_r
+                    x_pos = bbox.x0 + rotated_x
+                    y_pos = bbox.y1 + rotated_y
+                else:
+                    x_pos = bbox.x0 + local_x
+                    y_pos = line.y_position
+
+            # Position and rotate the text using affine transform
+            # [a b 0]   [cos  sin 0]
+            # [c d 0] = [-sin cos 0]
+            # [e f 1]   [x    y   1]
+            pdfium.raw.FPDFPageObj_Transform(
+                text_obj,
+                ctypes.c_double(cos_r),
+                ctypes.c_double(sin_r),
+                ctypes.c_double(-sin_r),
+                ctypes.c_double(cos_r),
+                ctypes.c_double(x_pos),
+                ctypes.c_double(y_pos),
+            )
+
+            # Insert into page
+            pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
+
+        # Generate content for all inserted objects
+        page.gen_content()
+        return success
+
+    def apply_paragraphs(
+        self,
+        paragraphs: list[Paragraph],
+        font_path: Optional[Union[Path, str]] = None,
+        debug_draw_bbox: bool = False,
+        min_font_size: Optional[float] = None,
+    ) -> None:
+        """Apply translated paragraphs to the PDF.
+
+        Uses TextLayoutEngine to properly fit text within bounding boxes,
+        with automatic line wrapping and font size adjustment.
+
+        Args:
+            paragraphs: List of paragraphs to apply.
+            font_path: Path to TTF font file for custom fonts.
+            debug_draw_bbox: If True, draw colored bbox outlines with category labels.
+            min_font_size: Minimum font size for text fitting. If None, uses engine default.
+        """
+        self._ensure_open()
+
+        # Update TextLayoutEngine min_font_size if specified
+        if min_font_size is not None:
+            self._layout_engine._min_font_size = min_font_size
+
+        for para in paragraphs:
+            if not para.translated_text:
+                # Even if no translation, draw debug bbox if enabled
+                if debug_draw_bbox:
+                    self._draw_debug_bbox(
+                        page_num=para.page_number,
+                        bbox=para.block_bbox,
+                        raw_category=para.category,
+                        confidence=para.category_confidence,
+                    )
+                continue
+
+            self.remove_text_in_bbox(
+                page_num=para.page_number,
+                bbox=para.block_bbox,
+            )
+
+            # Determine initial font size
+            initial_font_size = (
+                para.adjusted_font_size
+                if para.adjusted_font_size is not None
+                else para.original_font_size
+            ) or 12.0
+
+            # Load font (use bold/italic variants if paragraph has those styles)
+            text = para.translated_text
+            font_handle = None
+            if font_path:
+                # Find appropriate font variant (Bold/Italic) if available
+                base_font_path = Path(font_path) if isinstance(font_path, str) else font_path
+                actual_font_path = self._find_font_variant(
+                    base_font_path, para.is_bold, para.is_italic
+                )
+                is_cid = self._needs_cid_font(text)
+                font_handle = self.load_font(actual_font_path, is_cid=is_cid)
+            else:
+                # Select standard font variant based on bold/italic flags
+                if para.is_bold and para.is_italic:
+                    font_name = "Helvetica-BoldOblique"
+                elif para.is_bold:
+                    font_name = "Helvetica-Bold"
+                elif para.is_italic:
+                    font_name = "Helvetica-Oblique"
+                else:
+                    font_name = "Helvetica"
+                font_handle = self.load_standard_font(font_name)
+
+            if not font_handle:
+                # Fallback to old method if font loading fails
+                font = Font(name="Helvetica", size=initial_font_size)
+                self.insert_text_object(
+                    page_num=para.page_number,
+                    text=text,
+                    bbox=para.block_bbox,
+                    font=font,
+                    font_path=font_path,
+                )
+                continue
+
+            # Use TextLayoutEngine to calculate layout
+            # Pass rotation in degrees so layout engine can swap width/height for vertical text
+            layout_result = self._layout_engine.fit_text_in_bbox(
+                text=text,
+                bbox=para.block_bbox,
+                font_handle=font_handle,
+                initial_font_size=initial_font_size,
+                rotation_degrees=para.rotation,
+            )
+
+            # Insert laid out text
+            # Convert rotation from degrees to radians for the transform
+            # Note: pdftext rotation is the visual rotation angle (to read text normally),
+            # but PDF transform matrix needs the opposite direction.
+            # pdftext 270° means text reads bottom-to-top, requiring PDF matrix of -270° = 90°
+            rotation_radians = math.radians(-para.rotation)
+            self.insert_laid_out_text(
+                page_num=para.page_number,
+                layout_result=layout_result,
+                bbox=para.block_bbox,
+                font_handle=font_handle,
+                font_size=layout_result.font_size,
+                color=para.text_color,
+                alignment=para.alignment,
+                rotation=rotation_radians,
+                pdftext_rotation_degrees=para.rotation,
+            )
+
+            if debug_draw_bbox:
+                self._draw_debug_bbox(
+                    page_num=para.page_number,
+                    bbox=para.block_bbox,
+                    raw_category=para.category,
+                    confidence=para.category_confidence,
+                )
 
     def _needs_cid_font(self, text: str) -> bool:
         """Check if text contains CJK characters requiring CID font.
@@ -964,3 +1413,192 @@ class PDFProcessor:
         pdf = self._ensure_open()
         with open(path, "wb") as f:
             pdf.save(f)
+
+    def to_bytes(self) -> bytes:
+        """Export the PDF as bytes."""
+        from io import BytesIO
+
+        buffer = BytesIO()
+        pdf = self._ensure_open()
+        pdf.save(buffer)
+        return buffer.getvalue()
+
+    def _draw_debug_bbox(
+        self,
+        page_num: int,
+        bbox: BBox,
+        raw_category: Optional[str] = None,
+        confidence: Optional[float] = None,
+        line_width: float = 1.5,
+        label_font_size: float = 10.0,
+    ) -> None:
+        """Draw a colored bbox outline with category label for debugging.
+
+        Args:
+            page_num: Page number (0-indexed).
+            bbox: Bounding box to draw.
+            raw_category: Raw category string for color selection and label.
+            confidence: Detection confidence (0.0-1.0) to display in label.
+            line_width: Stroke width in points.
+            label_font_size: Font size for category label.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            return
+
+        page = pdf[page_num]
+        page_handle = page.raw
+
+        # Get color for raw_category
+        color = DEBUG_RAW_CATEGORY_COLORS.get(
+            raw_category, DEBUG_RAW_CATEGORY_COLORS[None]
+        )
+        r, g, b = color
+
+        # Draw rectangle outline
+        rect = pdfium.raw.FPDFPageObj_CreateNewRect(
+            ctypes.c_float(bbox.x0),
+            ctypes.c_float(bbox.y0),
+            ctypes.c_float(bbox.width),
+            ctypes.c_float(bbox.height),
+        )
+
+        # Set stroke color and width
+        pdfium.raw.FPDFPageObj_SetStrokeColor(rect, r, g, b, 200)
+        pdfium.raw.FPDFPageObj_SetStrokeWidth(rect, ctypes.c_float(line_width))
+
+        # Draw mode: stroke only (fill_mode=0, stroke=1)
+        pdfium.raw.FPDFPath_SetDrawMode(rect, 0, ctypes.c_int(1))
+
+        # Insert rectangle into page
+        pdfium.raw.FPDFPage_InsertObject(page_handle, rect)
+
+        # Draw category label with confidence above bbox
+        if raw_category:
+            if confidence is not None:
+                label_text = f"{raw_category} ({confidence:.2f})"
+            else:
+                label_text = raw_category
+        else:
+            label_text = "none"
+        self._draw_debug_label(
+            doc_handle=pdf.raw,
+            page_handle=page_handle,
+            text=label_text,
+            bbox=bbox,
+            font_size=label_font_size,
+            color=Color(r=r, g=g, b=b),
+        )
+
+        page.gen_content()
+
+    def _draw_debug_label(
+        self,
+        doc_handle: Any,
+        page_handle: Any,
+        text: str,
+        bbox: BBox,
+        font_size: float = 10.0,
+        color: Optional[Color] = None,
+    ) -> None:
+        """Draw a debug label with background at top-left of bbox.
+
+        Args:
+            doc_handle: PDFium document handle.
+            page_handle: PDFium page handle.
+            text: Label text.
+            bbox: Bounding box to label.
+            font_size: Font size in points.
+            color: Text color (also used for background).
+        """
+
+        # Load Helvetica-Bold font for label
+        font_handle = self.load_standard_font("Helvetica-Bold")
+        if not font_handle:
+            return
+
+        # Estimate label dimensions
+        char_width = font_size * 0.48
+        label_width = len(text) * char_width + 4
+        label_height = font_size + 4
+
+        # Position: ABOVE bbox at top-left corner (outside the box)
+        # Text baseline position
+        text_x = bbox.x0 + 2
+        text_y = bbox.y1 + 2  # Above the box
+
+        # Background rectangle position (above the box)
+        bg_x = bbox.x0
+        bg_y = bbox.y1 + 1
+
+        # Draw background rectangle with category color
+        if color:
+            bg_rect = pdfium.raw.FPDFPageObj_CreateNewRect(
+                ctypes.c_float(bg_x),
+                ctypes.c_float(bg_y),
+                ctypes.c_float(label_width),
+                ctypes.c_float(label_height),
+            )
+            # Solid background using the category color
+            pdfium.raw.FPDFPageObj_SetFillColor(
+                bg_rect, color.r, color.g, color.b, 220
+            )
+            # Fill mode: FPDF_FILLMODE_WINDING = 2
+            pdfium.raw.FPDFPath_SetDrawMode(bg_rect, 2, ctypes.c_int(0))
+            pdfium.raw.FPDFPage_InsertObject(page_handle, bg_rect)
+
+        # Create text object
+        text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+            doc_handle, font_handle, ctypes.c_float(font_size)
+        )
+        if not text_obj:
+            return
+
+        # Set text content
+        text_ws = to_widestring(text)
+        success = pdfium.raw.FPDFText_SetText(text_obj, text_ws)
+        if not success:
+            return
+
+        # Set text color to white for contrast on colored background
+        pdfium.raw.FPDFPageObj_SetFillColor(text_obj, 255, 255, 255, 255)
+
+        # Position text at baseline
+        pdfium.raw.FPDFPageObj_Transform(
+            text_obj,
+            ctypes.c_double(1.0),
+            ctypes.c_double(0.0),
+            ctypes.c_double(0.0),
+            ctypes.c_double(1.0),
+            ctypes.c_double(text_x),
+            ctypes.c_double(text_y),
+        )
+
+        # Insert text into page
+        pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
+
+    def draw_debug_overlay(
+        self,
+        paragraphs: list[Paragraph],
+        line_width: float = 1.5,
+        label_font_size: float = 10.0,
+    ) -> None:
+        """Draw debug bbox overlays for all paragraphs without modifying text.
+
+        This method draws colored bbox outlines and category labels on top of
+        the existing PDF content, useful for verifying layout analysis results.
+
+        Args:
+            paragraphs: List of paragraphs to visualize.
+            line_width: Stroke width for bbox outlines.
+            label_font_size: Font size for category labels.
+        """
+        for para in paragraphs:
+            self._draw_debug_bbox(
+                page_num=para.page_number,
+                bbox=para.block_bbox,
+                raw_category=para.category,
+                confidence=para.category_confidence,
+                line_width=line_width,
+                label_font_size=label_font_size,
+            )

@@ -71,7 +71,7 @@ processor.insert_text_object(
 ```
 
 **注意事項**:
-- TTC（TrueType Collection）フォーマットは pypdfium2 で読み込み可能（検証済み）
+- **⚠️ TTC フォントは非推奨**: TTC（TrueType Collection）フォーマットは pypdfium2 で読み込み可能だが、CJK 文字のグリフが正しく描画されない問題が確認されている。**TTF フォントの使用を推奨**。
 - CJK 文字を含むテキストは自動的に CID フォントとして処理される（`_needs_cid_font()`）
 - システムフォントのパスは環境依存のため、本番実装では Issue #18 で対応
 
@@ -346,9 +346,10 @@ PDF Input
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ FontSizeAdjuster.calculate_font_size() [NEW] │
-│ → 調整済みフォントサイズ                     │
-│ ※ 段落の block_bbox に収まるよう調整         │
+│ TextLayoutEngine.fit_text_in_bbox()    [NEW] │
+│ → レイアウト結果（行分割、フォントサイズ）     │
+│ ※ 段落の block_bbox に収まるよう自動調整      │
+│ ※ 自動改行、禁則処理対応                      │
 └─────────────────────────────────────────┘
     │
     ▼
@@ -423,7 +424,8 @@ class Paragraph:
         block_bbox: pdftext ブロックの BBox（PDF 座標系に変換済み）
         line_count: 元の行数（デバッグ/統計用）
         original_font_size: 元のフォントサイズ（推定値）
-        category: PP-DocLayout によるカテゴリ（"text", "formula", "table" 等）
+        category: PP-DocLayout によるカテゴリ（"text", "formula", "table" 等、raw_category 文字列）
+        category_confidence: レイアウト検出の信頼度 (0.0-1.0)
     """
     id: str
     page_number: int
@@ -432,25 +434,31 @@ class Paragraph:
     line_count: int
     original_font_size: float = 12.0  # デフォルト値
 
-    # PP-DocLayout によるカテゴリ分類（ProjectCategory を使用）
-    category: Optional[ProjectCategory] = None  # None = 未分類
+    # PP-DocLayout によるカテゴリ分類（raw_category 文字列を直接使用）
+    category: Optional[str] = None  # None = 未分類
+    category_confidence: Optional[float] = None
 
     # 翻訳後に設定されるフィールド
     translated_text: Optional[str] = None
     adjusted_font_size: Optional[float] = None
 
-    @property
-    def is_translatable(self) -> bool:
-        """翻訳対象かどうかを判定."""
+    def is_translatable(
+        self,
+        translatable_categories: frozenset[str] | None = None,
+    ) -> bool:
+        """翻訳対象かどうかを判定.
+
+        Args:
+            translatable_categories: 翻訳対象カテゴリのセット。
+                None の場合は DEFAULT_TRANSLATABLE_RAW_CATEGORIES を使用。
+        """
         # category が None（レイアウト解析無効）の場合は翻訳対象
         if self.category is None:
             return True
-        # TRANSLATABLE_CATEGORIES と同じロジック（models.py 参照）
-        return self.category in (
-            ProjectCategory.TEXT,
-            ProjectCategory.TITLE,
-            ProjectCategory.CAPTION,
-        )
+        # DEFAULT_TRANSLATABLE_RAW_CATEGORIES と照合
+        if translatable_categories is None:
+            translatable_categories = DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        return self.category in translatable_categories
 ```
 
 **変更点（従来設計との比較）**:
@@ -460,7 +468,8 @@ class Paragraph:
 | `text_object_ids: list[str]` | 削除（pdftext はブロック単位で管理） |
 | `anchor_bbox` (最初の行) | `block_bbox` (ブロック全体) |
 | `anchor_font`, `anchor_transform` | 削除（シンプル化） |
-| なし | `category: ProjectCategory` 追加（PP-DocLayout 連携） |
+| なし | `category: str` 追加（raw_category 文字列を直接使用） |
+| なし | `category_confidence: float` 追加（検出信頼度） |
 
 #### 4.1.2 Paragraph 生成フロー
 
@@ -946,7 +955,8 @@ def assign_categories(
         page_blocks = layout_blocks.get(para.page_number, [])
         best_match = _find_best_matching_block(para.block_bbox, page_blocks, threshold)
         if best_match:
-            para.category = best_match.project_category  # ProjectCategory を使用
+            para.category = best_match.raw_category.value  # raw_category 文字列を使用
+            para.category_confidence = best_match.confidence
     return paragraphs
 
 
@@ -1010,30 +1020,36 @@ PP-DocLayoutV2 が検出するカテゴリは `RawLayoutCategory` として定�
 既存の `CATEGORY_PRIORITY` を使用して fail-safe なマッチングを実現。
 翻訳除外カテゴリ（formula=1, table=3, image=4）が優先される。
 
-**RawLayoutCategory → ProjectCategory マッピング**:
+**翻訳対象判定（raw_category ベース）**:
 
-| RawLayoutCategory | ProjectCategory | 翻訳対象 |
-|-------------------|-----------------|---------|
-| `text`, `vertical_text`, `abstract`, `aside_text` | TEXT | ✅ Yes |
-| `paragraph_title`, `doc_title` | TITLE | ✅ Yes |
-| `figure_title` | CAPTION | ✅ Yes |
-| `footnote`, `vision_footnote` | FOOTNOTE | ❌ No |
-| `inline_formula`, `display_formula`, `formula_number` | FORMULA | ❌ No |
-| `algorithm` | CODE | ❌ No |
-| `table` | TABLE | ❌ No |
-| `image` | IMAGE | ❌ No |
-| `chart` | CHART | ❌ No |
-| `header`, `header_image`, `footer`, `footer_image`, `number` | HEADER | ❌ No |
-| `reference`, `reference_content` | REFERENCE | ❌ No |
-| `seal`, `content`, `unknown` | OTHER | ❌ No |
+> **実装方針の簡略化**: 当初設計では `RawLayoutCategory` → `ProjectCategory` のマッピングを
+> 行う予定だったが、実装では `raw_category` 文字列を直接使用する簡略化を採用した。
 
-**翻訳対象カテゴリ** (`TRANSLATABLE_CATEGORIES`):
-- `ProjectCategory.TEXT`
-- `ProjectCategory.TITLE`
-- `ProjectCategory.CAPTION`
+| raw_category | 翻訳対象 |
+|--------------|---------|
+| `text`, `vertical_text`, `abstract`, `aside_text` | ✅ Yes |
+| `paragraph_title`, `doc_title` | ✅ Yes |
+| `figure_title` | ✅ Yes |
+| `footnote`, `vision_footnote` | ❌ No |
+| `inline_formula`, `display_formula`, `formula_number` | ❌ No |
+| `algorithm` | ❌ No |
+| `table` | ❌ No |
+| `image` | ❌ No |
+| `chart` | ❌ No |
+| `header`, `header_image`, `footer`, `footer_image`, `number` | ❌ No |
+| `reference`, `reference_content` | ❌ No |
+| `seal`, `content`, `unknown` | ❌ No |
 
-> **NOTE**: `Paragraph.is_translatable` は `ProjectCategory` を使用する。
-> 既存の `LayoutBlock.is_translatable` と同じロジック。
+**翻訳対象カテゴリ** (`DEFAULT_TRANSLATABLE_RAW_CATEGORIES`):
+```python
+DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset({
+    "text", "vertical_text", "abstract", "aside_text",
+    "paragraph_title", "doc_title", "figure_title",
+})
+```
+
+> **NOTE**: `Paragraph.is_translatable()` と `LayoutBlock.is_translatable` は
+> 同じ `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` を参照する。
 
 #### 5.2.4 座標系の注意点
 
@@ -1067,107 +1083,147 @@ else:
     # category = None のまま → is_translatable = True
 ```
 
-### 5.3 FontSizeAdjuster
+### 5.3 TextLayoutEngine
 
-**ファイル**: `src/pdf_translator/core/font_adjuster.py`
+**ファイル**: `src/pdf_translator/core/text_layout.py`
+
+> **実装変更**: 当初設計の `FontSizeAdjuster` は、より高機能な `TextLayoutEngine` に
+> 置き換えられた。PDFium のフォントメトリクスを使用した正確なレイアウト計算が可能。
 
 #### 5.3.1 目的
 
-翻訳後テキストが元の BBox に収まるようフォントサイズを調整する。
+翻訳後テキストが元の BBox に収まるよう、以下の機能を提供する：
+- 正確なテキスト幅計算（PDFium `FPDFFont_GetGlyphWidth` 使用）
+- 自動改行（単語境界・文字境界対応）
+- フォントサイズ自動調整
+- 日本語禁則処理（kinsoku）
 
 #### 5.3.2 API 設計
 
 ```python
-class FontSizeAdjuster:
+class TextLayoutEngine:
     def __init__(
         self,
         min_font_size: float = 6.0,
-        font_size_decrement: float = 0.1,
+        font_size_step: float = 0.5,
+        line_height_factor: float = 1.2,
     ) -> None:
-        """FontSizeAdjuster を初期化.
+        """TextLayoutEngine を初期化.
 
         Args:
             min_font_size: 最小フォントサイズ（pt）
-            font_size_decrement: 縮小ステップ（pt）
+            font_size_step: 縮小ステップ（pt）
+            line_height_factor: 行高さ係数（1.0 = tight, 1.5 = loose）
         """
         ...
 
-    def calculate_font_size(
+    def fit_text_in_bbox(
         self,
         text: str,
         bbox: BBox,
-        original_font_size: float,
-        target_lang: str,
-    ) -> float:
-        """テキストが bbox に収まるフォントサイズを計算.
+        font_handle: ctypes.c_void_p,
+        initial_font_size: float,
+        rotation_degrees: float = 0.0,
+    ) -> LayoutResult:
+        """テキストを bbox に収める.
 
         Args:
-            text: 翻訳後テキスト
-            bbox: 元の TextObject の BBox
-            original_font_size: 元のフォントサイズ
-            target_lang: 翻訳先言語（文字幅推定に使用）
+            text: レイアウトするテキスト
+            bbox: 収める BBox
+            font_handle: PDFium フォントハンドル (FPDF_FONT)
+            initial_font_size: 初期フォントサイズ（pt）
+            rotation_degrees: 回転角度（0, 90, 180, 270）
 
         Returns:
-            調整後のフォントサイズ（min_font_size 以上）
+            LayoutResult（行リスト、最終フォントサイズ、収まったかのフラグ）
         """
+        ...
+
+    def calculate_text_width(
+        self,
+        text: str,
+        font_handle: ctypes.c_void_p,
+        font_size: float,
+    ) -> float:
+        """テキスト幅を計算（PDFium フォントメトリクス使用）."""
+        ...
+
+    def wrap_text(
+        self,
+        text: str,
+        max_width: float,
+        font_handle: ctypes.c_void_p,
+        font_size: float,
+    ) -> list[str]:
+        """テキストを自動改行."""
         ...
 ```
 
-#### 5.3.3 前提条件
-
-**重要**: 現在の `PDFProcessor.insert_text_object()` は**自動改行しない**。
-したがって、初期実装では「bbox 幅に収まるまで縮小」を中心に設計する。
-
-- 高さ/行数計算は、実際の改行処理が入ってから対応
-- 現段階では単一行として扱い、幅に収まるかを判定
-
-#### 5.3.4 定数
+#### 5.3.3 LayoutResult データクラス
 
 ```python
-FONT_SIZE_DECREMENT = 0.1   # 縮小ステップ（pt）
-MIN_FONT_SIZE = 6.0         # 最小フォントサイズ（pt）
+@dataclass
+class LayoutLine:
+    """レイアウト済みの1行."""
+    text: str
+    width: float
+    y_position: float
+
+@dataclass
+class LayoutResult:
+    """レイアウト計算結果."""
+    lines: list[LayoutLine]
+    font_size: float
+    total_height: float
+    fits_in_bbox: bool
 ```
 
-#### 5.3.5 アルゴリズム（幅ベース・初期実装）
+#### 5.3.4 アルゴリズム
 
 ```
-入力: text, bbox, original_font_size, target_lang
-出力: adjusted_font_size
+入力: text, bbox, font_handle, initial_font_size, rotation
+出力: LayoutResult
 
-1. font_size = original_font_size
-2. While font_size >= MIN_FONT_SIZE:
-   a. char_width = estimate_char_width(font_size, target_lang)
-   b. text_width = len(text) * char_width
-   c. If text_width <= bbox.width:
-      return font_size
-   f. font_size -= FONT_SIZE_DECREMENT
-3. return MIN_FONT_SIZE  # 収まらない場合は最小サイズ
+1. font_size = initial_font_size
+2. 90° または 270° 回転時は bbox の width/height を交換
+3. While font_size >= min_font_size:
+   a. wrapped_lines = wrap_text(text, bbox_width, font_handle, font_size)
+   b. line_height = get_line_height(font_handle, font_size)
+   c. total_height = line_height * len(wrapped_lines)
+   d. If total_height <= bbox_height:
+      - 各行の y_position を計算
+      - return LayoutResult(lines, font_size, total_height, fits=True)
+   e. font_size -= font_size_step
+4. return LayoutResult(lines, min_font_size, total_height, fits=False)
 ```
 
-**将来拡張**: 改行対応が入った場合は以下のアルゴリズムに切り替え:
-```
-1. font_size = original_font_size
-2. While font_size >= MIN_FONT_SIZE:
-   a. char_width = estimate_char_width(font_size, target_lang)
-   b. chars_per_line = bbox.width / char_width
-   c. lines_available = bbox.height / (font_size * LINE_HEIGHT_FACTOR)
-   d. capacity = chars_per_line * lines_available
-   e. If len(text) <= capacity:
-      return font_size
-   f. font_size -= FONT_SIZE_DECREMENT
-3. return MIN_FONT_SIZE
-```
+#### 5.3.5 禁則処理（kinsoku）
 
-#### 5.3.6 文字幅推定
+日本語テキストの改行位置を適切に制御:
 
 ```python
-def _estimate_char_width(self, font_size: float, target_lang: str) -> float:
-    if target_lang in ("ja", "zh", "ko"):
-        # CJK: ほぼ正方形
-        return font_size * 0.9
-    else:
-        # Latin: 平均的に狭い
-        return font_size * 0.55
+# 行頭禁止文字（句読点、閉じ括弧、小書き仮名など）
+KINSOKU_NOT_AT_LINE_START = {"。", "、", "）", "」", "ぁ", "っ", "ー", ...}
+
+# 行末禁止文字（開き括弧）
+KINSOKU_NOT_AT_LINE_END = {"（", "「", "『", ...}
+```
+
+#### 5.3.6 CJK 文字判定
+
+```python
+def _is_cjk_char(self, char: str) -> bool:
+    """CJK 文字かどうかを判定."""
+    code = ord(char)
+    return (
+        0x4E00 <= code <= 0x9FFF    # CJK Unified Ideographs
+        or 0x3040 <= code <= 0x309F  # Hiragana
+        or 0x30A0 <= code <= 0x30FF  # Katakana
+        or 0x3400 <= code <= 0x4DBF  # CJK Extension A
+        or 0xAC00 <= code <= 0xD7AF  # Hangul
+        or 0x3000 <= code <= 0x303F  # CJK Punctuation
+        or 0xFF00 <= code <= 0xFFEF  # Fullwidth Forms
+    )
 ```
 
 ### 5.4 TranslationPipeline
@@ -1470,17 +1526,19 @@ pdftext 統合により、実装フェーズが簡略化される。
 - ~~段落境界検出~~ → pdftext
 - ~~ハイフネーション処理~~ → 翻訳サービスが自動処理（§5.1.4 参照）
 
-### Phase 3: FontSizeAdjuster（フォント調整）
+### Phase 3: TextLayoutEngine（テキストレイアウト）
 
 **成果物**:
-- `src/pdf_translator/core/font_adjuster.py`
-- `tests/test_font_adjuster.py`
+- `src/pdf_translator/core/text_layout.py`
+- `tests/test_text_layout.py`
 
 **タスク**:
-1. FontSizeAdjuster クラス実装
-2. 文字幅推定実装
-3. フォントサイズ縮小アルゴリズム実装
-4. ユニットテスト作成
+1. TextLayoutEngine クラス実装
+2. PDFium フォントメトリクスを使用した正確なテキスト幅計算
+3. 自動改行アルゴリズム（単語境界・文字境界対応）
+4. フォントサイズ自動調整
+5. 日本語禁則処理（kinsoku）
+6. ユニットテスト作成
 
 ### Phase 4: PDFProcessor 拡張
 
@@ -1609,15 +1667,19 @@ class TestAssignCategories:
     def test_multiple_pages(self): ...
 ```
 
-### 7.3 FontSizeAdjuster テスト
+### 7.3 TextLayoutEngine テスト
 
 ```python
-class TestFontSizeAdjuster:
+class TestTextLayoutEngine:
     def test_text_fits_original_size(self): ...
     def test_text_requires_reduction(self): ...
     def test_minimum_font_size_limit(self): ...
-    def test_cjk_character_width(self): ...
-    def test_latin_character_width(self): ...
+    def test_text_wrapping_word_boundary(self): ...
+    def test_text_wrapping_cjk_character(self): ...
+    def test_kinsoku_line_start(self): ...  # 行頭禁則
+    def test_kinsoku_line_end(self): ...    # 行末禁則
+    def test_rotation_90_degrees(self): ... # 回転テキスト
+    def test_calculate_text_width_accuracy(self): ...
     def test_long_paragraph_sizing(self): ...  # 段落全体が収まるサイズ計算
 ```
 
@@ -1740,9 +1802,10 @@ class PipelineConfig:
     use_layout_analysis: bool = True
     layout_containment_threshold: float = 0.5
 
-    # フォント調整（FontSizeAdjuster 用）
+    # フォント調整（TextLayoutEngine 用）
     min_font_size: float = 6.0
-    font_size_decrement: float = 0.1
+    # NOTE: font_size_step (0.5) と line_height_factor (1.2) は
+    # TextLayoutEngine のデフォルト値を使用（設定不要）
 
     # 翻訳リトライ
     max_retries: int = 3
@@ -1764,11 +1827,8 @@ class PipelineConfig:
 ```python
 config = PipelineConfig(target_lang="ja")
 
-# FontSizeAdjuster に渡す
-adjuster = FontSizeAdjuster(
-    min_font_size=config.min_font_size,
-    font_size_decrement=config.font_size_decrement,
-)
+# TextLayoutEngine は PDFProcessor 内部で生成される（デフォルト値使用）
+# min_font_size は apply_paragraphs() に渡される
 
 # ParagraphExtractor はパラメータ不要（pdftext がすべて処理）
 extractor = ParagraphExtractor()
@@ -1784,7 +1844,7 @@ extractor = ParagraphExtractor()
 |---------|------|------|
 | `src/pdf_translator/core/models.py` | 変更 | `Paragraph` dataclass 追加（`category` フィールド含む） |
 | `src/pdf_translator/core/paragraph_extractor.py` | **新規** | pdftext ブロック → Paragraph 変換 |
-| `src/pdf_translator/core/font_adjuster.py` | 新規 | フォントサイズ調整 |
+| `src/pdf_translator/core/text_layout.py` | 新規 | テキストレイアウト（自動改行・フォントサイズ調整） |
 | `src/pdf_translator/core/pdf_processor.py` | 変更 | `to_bytes()`, `apply_paragraphs()`, `remove_text_in_bbox()` 追加 |
 | `src/pdf_translator/core/layout_utils.py` | 変更 | `assign_categories()` 追加（PP-DocLayout カテゴリ付与） |
 | `src/pdf_translator/pipeline/__init__.py` | 新規 | 公開 API エクスポート |
@@ -1798,7 +1858,7 @@ extractor = ParagraphExtractor()
 |---------|------|------|
 | `tests/test_paragraph_extractor.py` | **新規** | ParagraphExtractor テスト |
 | `tests/test_assign_categories.py` | **新規** | カテゴリ付与テスト |
-| `tests/test_font_adjuster.py` | 新規 | FontSizeAdjuster テスト |
+| `tests/test_text_layout.py` | 新規 | TextLayoutEngine テスト |
 | `tests/test_translation_pipeline.py` | 新規 | パイプライン統合テスト |
 
 ### 10.3 設定ファイル
@@ -1824,10 +1884,10 @@ extractor = ParagraphExtractor()
 3. **PP-DocLayout カテゴリ付与** (§5.2): 中間データに category 情報を保持
 
 **PP-DocLayout 連携**:
-- `Paragraph.category`: `ProjectCategory`（TEXT, TITLE, CAPTION, FORMULA, TABLE 等）
-- `Paragraph.is_translatable`: `TRANSLATABLE_CATEGORIES` と同じロジック
+- `Paragraph.category`: `str`（raw_category 文字列を直接使用: "text", "formula", "table" 等）
+- `Paragraph.is_translatable()`: `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` を参照
 - `assign_categories()`: pdftext bbox と LayoutBlock bbox の重複判定
-- 既存の `LayoutBlock.project_category` / `LayoutBlock.is_translatable` と一貫性あり
+- `LayoutBlock.is_translatable` と同じ判定ロジックを使用
 
 **検証結果サマリー（翻訳サービス）**:
 - Google Translate: ハイフネーション自動処理 ✅

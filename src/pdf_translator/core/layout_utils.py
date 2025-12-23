@@ -10,10 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from .models import (
-    TRANSLATABLE_CATEGORIES,
+    DEFAULT_TRANSLATABLE_RAW_CATEGORIES,
     BBox,
     LayoutBlock,
-    ProjectCategory,
+    Paragraph,
     RawLayoutCategory,
     TextObject,
 )
@@ -160,7 +160,7 @@ def match_text_with_layout(
     text_objects: list[TextObject],
     layout_blocks: list[LayoutBlock],
     containment_threshold: float = 0.5,
-) -> dict[str, ProjectCategory]:
+) -> dict[str, str]:
     """Match TextObjects with LayoutBlocks to determine categories.
 
     Algorithm:
@@ -179,9 +179,9 @@ def match_text_with_layout(
         containment_threshold: Minimum containment ratio (default: 0.5)
 
     Returns:
-        Mapping of TextObject.id → ProjectCategory
+        Mapping of TextObject.id → raw_category string
     """
-    result: dict[str, ProjectCategory] = {}
+    result: dict[str, str] = {}
 
     for text_obj in text_objects:
         # Step 1: Extract candidate blocks
@@ -201,8 +201,8 @@ def match_text_with_layout(
                 )
 
         if not candidates:
-            # Unmatched: default to OTHER (safe side)
-            result[text_obj.id] = ProjectCategory.OTHER
+            # Unmatched: default to "unknown" (safe side)
+            result[text_obj.id] = "unknown"
             continue
 
         # Step 2: Sort by priority (asc) → containment (desc) → area (asc)
@@ -210,20 +210,20 @@ def match_text_with_layout(
 
         # Select highest priority candidate
         best = candidates[0]["block"]
-        result[text_obj.id] = best.project_category
+        result[text_obj.id] = best.raw_category.value
 
     return result
 
 
 def filter_translatable(
     text_objects: list[TextObject],
-    categories: dict[str, ProjectCategory],
+    categories: dict[str, str],
 ) -> list[TextObject]:
     """Filter TextObjects to only those that should be translated.
 
     Args:
         text_objects: All TextObjects
-        categories: Mapping of TextObject.id → ProjectCategory
+        categories: Mapping of TextObject.id → raw_category string
 
     Returns:
         TextObjects that should be translated
@@ -231,5 +231,51 @@ def filter_translatable(
     return [
         obj
         for obj in text_objects
-        if categories.get(obj.id) in TRANSLATABLE_CATEGORIES
+        if categories.get(obj.id) in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
     ]
+
+
+def assign_categories(
+    paragraphs: list[Paragraph],
+    layout_blocks: dict[int, list[LayoutBlock]],
+    threshold: float = 0.5,
+) -> list[Paragraph]:
+    """Assign layout categories to paragraphs based on bbox overlap.
+
+    Sets both category and category_confidence from the matched LayoutBlock.
+    """
+    for para in paragraphs:
+        page_blocks = layout_blocks.get(para.page_number, [])
+        best_match = _find_best_matching_block(
+            para.block_bbox,
+            page_blocks,
+            threshold,
+        )
+        if best_match is not None:
+            para.category = best_match.raw_category.value
+            para.category_confidence = best_match.confidence
+    return paragraphs
+
+
+def _find_best_matching_block(
+    para_bbox: BBox,
+    blocks: list[LayoutBlock],
+    threshold: float,
+) -> LayoutBlock | None:
+    """Find best matching LayoutBlock with fail-safe category priority."""
+    candidates: list[tuple[LayoutBlock, float]] = []
+    for block in blocks:
+        overlap = calc_containment(para_bbox, block.bbox)
+        if overlap >= threshold:
+            candidates.append((block, overlap))
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            CATEGORY_PRIORITY.get(item[0].raw_category, DEFAULT_PRIORITY),
+            -item[1],
+        )
+    )
+    return candidates[0][0]

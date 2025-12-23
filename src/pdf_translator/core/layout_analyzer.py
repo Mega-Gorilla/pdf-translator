@@ -17,14 +17,12 @@ import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
 from .layout_utils import convert_image_to_pdf_coords
 from .models import (
-    RAW_TO_PROJECT_MAPPING,
     LayoutBlock,
-    ProjectCategory,
     RawLayoutCategory,
 )
 
 if TYPE_CHECKING:
-    from PIL import Image  # type: ignore[import-not-found]
+    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +67,7 @@ class LayoutAnalyzer:
             LayoutDetection model instance
         """
         if self._model is None:
-            from paddleocr import LayoutDetection  # type: ignore[import-not-found]
+            from paddleocr import LayoutDetection  # type: ignore[import-untyped]
 
             logger.info("Initializing %s model...", self._model_name)
             self._model = LayoutDetection(model_name=self._model_name)
@@ -163,16 +161,10 @@ class LayoutAnalyzer:
                     logger.warning("Unknown category: %s", label)
                     raw_category = RawLayoutCategory.UNKNOWN
 
-                # Map to project category
-                project_category = RAW_TO_PROJECT_MAPPING.get(
-                    raw_category, ProjectCategory.OTHER
-                )
-
                 block = LayoutBlock(
                     id=str(uuid.uuid4()),
                     bbox=pdf_bbox,
                     raw_category=raw_category,
-                    project_category=project_category,
                     confidence=score,
                     page_num=page_num,
                 )

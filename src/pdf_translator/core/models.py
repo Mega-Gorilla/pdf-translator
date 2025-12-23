@@ -65,68 +65,17 @@ class RawLayoutCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ProjectCategory(str, Enum):
-    """プロジェクト内部の安定カテゴリ.
-
-    翻訳ロジックが依存する安定したカテゴリ。
-    モデルバージョンが変わっても、このカテゴリ体系は維持される。
-    """
-
-    # 翻訳対象
-    TEXT = "text"  # 本文テキスト
-    TITLE = "title"  # 見出し・タイトル
-    CAPTION = "caption"  # キャプション（図表共通）
-
-    # 翻訳除外
-    FOOTNOTE = "footnote"  # 脚注
-    FORMULA = "formula"  # 数式（inline/display 統合）
-    CODE = "code"  # コード・アルゴリズム
-    TABLE = "table"  # 表
-    IMAGE = "image"  # 画像
-    CHART = "chart"  # チャート
-    HEADER = "header"  # ヘッダー・フッター
-    REFERENCE = "reference"  # 参考文献
-
-    # その他
-    OTHER = "other"  # 上記以外
-
-
-# Raw → Project カテゴリマッピング
-RAW_TO_PROJECT_MAPPING: dict[RawLayoutCategory, ProjectCategory] = {
-    # 翻訳対象
-    RawLayoutCategory.TEXT: ProjectCategory.TEXT,
-    RawLayoutCategory.VERTICAL_TEXT: ProjectCategory.TEXT,  # 縦書きも翻訳対象
-    RawLayoutCategory.ABSTRACT: ProjectCategory.TEXT,
-    RawLayoutCategory.ASIDE_TEXT: ProjectCategory.TEXT,
-    RawLayoutCategory.PARAGRAPH_TITLE: ProjectCategory.TITLE,
-    RawLayoutCategory.DOC_TITLE: ProjectCategory.TITLE,
-    RawLayoutCategory.FIGURE_TITLE: ProjectCategory.CAPTION,
-    RawLayoutCategory.FOOTNOTE: ProjectCategory.FOOTNOTE,
-    RawLayoutCategory.VISION_FOOTNOTE: ProjectCategory.FOOTNOTE,  # 視覚的脚注
-    # 翻訳除外
-    RawLayoutCategory.INLINE_FORMULA: ProjectCategory.FORMULA,
-    RawLayoutCategory.DISPLAY_FORMULA: ProjectCategory.FORMULA,
-    RawLayoutCategory.FORMULA_NUMBER: ProjectCategory.FORMULA,
-    RawLayoutCategory.ALGORITHM: ProjectCategory.CODE,
-    RawLayoutCategory.TABLE: ProjectCategory.TABLE,
-    RawLayoutCategory.IMAGE: ProjectCategory.IMAGE,
-    RawLayoutCategory.CHART: ProjectCategory.CHART,
-    RawLayoutCategory.HEADER: ProjectCategory.HEADER,
-    RawLayoutCategory.HEADER_IMAGE: ProjectCategory.HEADER,  # ヘッダー画像
-    RawLayoutCategory.FOOTER: ProjectCategory.HEADER,
-    RawLayoutCategory.FOOTER_IMAGE: ProjectCategory.HEADER,  # フッター画像
-    RawLayoutCategory.NUMBER: ProjectCategory.HEADER,
-    RawLayoutCategory.REFERENCE: ProjectCategory.REFERENCE,
-    RawLayoutCategory.REFERENCE_CONTENT: ProjectCategory.REFERENCE,
-    # その他
-    RawLayoutCategory.SEAL: ProjectCategory.OTHER,
-    RawLayoutCategory.CONTENT: ProjectCategory.OTHER,
-    RawLayoutCategory.UNKNOWN: ProjectCategory.OTHER,
-}
-
-# 翻訳対象カテゴリのセット
-TRANSLATABLE_CATEGORIES: frozenset[ProjectCategory] = frozenset(
-    {ProjectCategory.TEXT, ProjectCategory.TITLE, ProjectCategory.CAPTION}
+# デフォルトの翻訳対象カテゴリ (raw_category値)
+DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "text",
+        "vertical_text",
+        "abstract",
+        "aside_text",
+        "paragraph_title",
+        "doc_title",
+        "figure_title",  # 図のキャプション
+    }
 )
 
 
@@ -393,7 +342,6 @@ class LayoutBlock:
         id: Unique identifier
         bbox: Bounding box in PDF coordinates
         raw_category: PP-DocLayoutV2 の生カテゴリ（モデル出力そのまま）
-        project_category: プロジェクト内部の正規化カテゴリ
         confidence: Detection confidence (0-1)
         page_num: Page number (0-indexed)
         text_object_ids: IDs of TextObjects contained in this block
@@ -402,7 +350,6 @@ class LayoutBlock:
     id: str
     bbox: BBox
     raw_category: RawLayoutCategory
-    project_category: ProjectCategory
     confidence: float = 0.0
     page_num: int = 0
     text_object_ids: list[str] = field(default_factory=list)
@@ -417,8 +364,11 @@ class LayoutBlock:
 
     @property
     def is_translatable(self) -> bool:
-        """Check if this block should be translated."""
-        return self.project_category in TRANSLATABLE_CATEGORIES
+        """Check if this block should be translated.
+
+        Uses raw_category with DEFAULT_TRANSLATABLE_RAW_CATEGORIES.
+        """
+        return self.raw_category.value in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -426,7 +376,6 @@ class LayoutBlock:
             "id": self.id,
             "bbox": self.bbox.to_dict(),
             "raw_category": self.raw_category.value,
-            "project_category": self.project_category.value,
             "confidence": self.confidence,
             "page_num": self.page_num,
             "text_object_ids": self.text_object_ids,
@@ -436,7 +385,7 @@ class LayoutBlock:
     def from_dict(cls, data: dict[str, Any]) -> LayoutBlock:
         """Create from dictionary.
 
-        Supports both new format (raw_category/project_category) and
+        Supports both new format (raw_category) and
         legacy format (type) for backward compatibility.
         """
         # Handle raw_category
@@ -454,29 +403,58 @@ class LayoutBlock:
         else:
             raw_category = RawLayoutCategory.UNKNOWN
 
-        # Handle project_category
-        if "project_category" in data:
-            try:
-                project_category = ProjectCategory(data["project_category"])
-            except ValueError:
-                project_category = RAW_TO_PROJECT_MAPPING.get(
-                    raw_category, ProjectCategory.OTHER
-                )
-        else:
-            # Derive from raw_category
-            project_category = RAW_TO_PROJECT_MAPPING.get(
-                raw_category, ProjectCategory.OTHER
-            )
-
         return cls(
             id=data["id"],
             bbox=BBox.from_dict(data["bbox"]),
             raw_category=raw_category,
-            project_category=project_category,
             confidence=float(data.get("confidence", 0.0)),
             page_num=int(data.get("page_num", 0)),
             text_object_ids=data.get("text_object_ids", []),
         )
+
+
+@dataclass
+class Paragraph:
+    """Paragraph extracted from pdftext blocks.
+
+    Represents a translation unit mapped to a block-level bounding box.
+    """
+
+    id: str
+    page_number: int
+    text: str
+    block_bbox: BBox
+    line_count: int
+    original_font_size: float = 12.0
+    category: Optional[str] = None  # レイアウト解析器のカテゴリー
+    category_confidence: Optional[float] = None  # レイアウト検出の信頼度 (0.0-1.0)
+    translated_text: Optional[str] = None
+    adjusted_font_size: Optional[float] = None
+    is_bold: bool = False
+    is_italic: bool = False
+    font_name: Optional[str] = None
+    text_color: Optional[Color] = None
+    rotation: float = 0.0
+    alignment: str = "left"  # "left", "center", "right", "justify"
+
+    def is_translatable(
+        self,
+        translatable_categories: frozenset[str] | None = None,
+    ) -> bool:
+        """Check if this paragraph should be translated.
+
+        Args:
+            translatable_categories: Set of category names to translate.
+                If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES.
+
+        Returns:
+            True if paragraph should be translated.
+        """
+        if self.category is None:
+            return True
+        if translatable_categories is None:
+            translatable_categories = DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        return self.category in translatable_categories
 
 
 @dataclass

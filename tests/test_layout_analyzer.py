@@ -2,7 +2,7 @@
 """Tests for layout analysis module.
 
 This module tests:
-- RawLayoutCategory and ProjectCategory enums
+- RawLayoutCategory enum
 - LayoutBlock data class
 - BBox utility functions
 - Coordinate conversion
@@ -26,11 +26,9 @@ from pdf_translator.core.layout_utils import (
     match_text_with_layout,
 )
 from pdf_translator.core.models import (
-    RAW_TO_PROJECT_MAPPING,
-    TRANSLATABLE_CATEGORIES,
+    DEFAULT_TRANSLATABLE_RAW_CATEGORIES,
     BBox,
     LayoutBlock,
-    ProjectCategory,
     RawLayoutCategory,
     TextObject,
 )
@@ -91,42 +89,38 @@ class TestRawLayoutCategory:
         # Direct comparison with str works via __eq__
         assert RawLayoutCategory.TEXT == "text"
 
-    def test_all_categories_have_mapping(self) -> None:
-        """Verify all raw categories map to project categories."""
-        for raw_cat in RawLayoutCategory:
-            assert raw_cat in RAW_TO_PROJECT_MAPPING
-
     def test_matches_official_label_list(self) -> None:
         """Verify RawLayoutCategory matches PP-DocLayoutV2 official label_list.
 
-        Source: https://huggingface.co/PaddlePaddle/PP-DocLayoutV2/raw/main/config.json
+        Official label_list from:
+        https://huggingface.co/PaddlePaddle/PP-DocLayoutV2/raw/main/config.json
         """
         official_label_list = {
-            "abstract",
-            "algorithm",
-            "aside_text",
-            "chart",
-            "content",
-            "display_formula",
+            "text",
+            "paragraph_title",
             "doc_title",
-            "figure_title",
-            "footer",
-            "footer_image",
-            "footnote",
+            "abstract",
+            "aside_text",
+            "inline_formula",
+            "display_formula",
             "formula_number",
+            "algorithm",
+            "table",
+            "image",
+            "figure_title",
+            "chart",
             "header",
             "header_image",
-            "image",
-            "inline_formula",
+            "footer",
+            "footer_image",
             "number",
-            "paragraph_title",
             "reference",
             "reference_content",
-            "seal",
-            "table",
-            "text",
-            "vertical_text",
+            "footnote",
             "vision_footnote",
+            "seal",
+            "content",
+            "vertical_text",
         }
         # UNKNOWN is our fallback, not in official list
         our_categories = {
@@ -135,74 +129,31 @@ class TestRawLayoutCategory:
         assert our_categories == official_label_list
 
 
-class TestProjectCategory:
-    """Tests for ProjectCategory enum."""
+class TestTranslatableCategories:
+    """Tests for DEFAULT_TRANSLATABLE_RAW_CATEGORIES."""
 
-    def test_all_categories_defined(self) -> None:
-        """Verify all 12 project categories are defined."""
-        expected_categories = {
-            "text",
-            "title",
-            "caption",
-            "footnote",
-            "formula",
-            "code",
-            "table",
-            "image",
-            "chart",
-            "header",
-            "reference",
-            "other",
-        }
-        actual_values = {cat.value for cat in ProjectCategory}
-        assert actual_values == expected_categories
-
-    def test_translatable_categories(self) -> None:
+    def test_translatable_categories_defined(self) -> None:
         """Verify translatable categories are correct."""
-        expected = {ProjectCategory.TEXT, ProjectCategory.TITLE, ProjectCategory.CAPTION}
-        assert TRANSLATABLE_CATEGORIES == expected
+        expected = {
+            "text",
+            "vertical_text",
+            "abstract",
+            "aside_text",
+            "paragraph_title",
+            "doc_title",
+            "figure_title",
+        }
+        assert DEFAULT_TRANSLATABLE_RAW_CATEGORIES == expected
 
+    def test_text_is_translatable(self) -> None:
+        """Text categories should be translatable."""
+        assert "text" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        assert "paragraph_title" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
-class TestCategoryMapping:
-    """Tests for RAW_TO_PROJECT_MAPPING."""
-
-    def test_text_categories_map_correctly(self) -> None:
-        """Verify text-like categories map to TEXT/TITLE/CAPTION."""
-        assert RAW_TO_PROJECT_MAPPING[RawLayoutCategory.TEXT] == ProjectCategory.TEXT
-        assert RAW_TO_PROJECT_MAPPING[RawLayoutCategory.ABSTRACT] == ProjectCategory.TEXT
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.PARAGRAPH_TITLE]
-            == ProjectCategory.TITLE
-        )
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.DOC_TITLE] == ProjectCategory.TITLE
-        )
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.FIGURE_TITLE]
-            == ProjectCategory.CAPTION
-        )
-
-    def test_formula_categories_map_correctly(self) -> None:
-        """Verify formula categories map to FORMULA."""
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.INLINE_FORMULA]
-            == ProjectCategory.FORMULA
-        )
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.DISPLAY_FORMULA]
-            == ProjectCategory.FORMULA
-        )
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.FORMULA_NUMBER]
-            == ProjectCategory.FORMULA
-        )
-
-    def test_footnote_maps_correctly(self) -> None:
-        """Verify FOOTNOTE maps to FOOTNOTE (not TEXT)."""
-        assert (
-            RAW_TO_PROJECT_MAPPING[RawLayoutCategory.FOOTNOTE]
-            == ProjectCategory.FOOTNOTE
-        )
+    def test_formula_is_not_translatable(self) -> None:
+        """Formula categories should not be translatable."""
+        assert "inline_formula" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        assert "display_formula" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
 
 # =============================================================================
@@ -219,12 +170,10 @@ class TestLayoutBlock:
             id="test-1",
             bbox=BBox(x0=0, y0=0, x1=100, y1=50),
             raw_category=RawLayoutCategory.TEXT,
-            project_category=ProjectCategory.TEXT,
             confidence=0.95,
             page_num=0,
         )
         assert block.raw_category == RawLayoutCategory.TEXT
-        assert block.project_category == ProjectCategory.TEXT
         assert block.confidence == 0.95
         assert block.page_num == 0
 
@@ -234,7 +183,6 @@ class TestLayoutBlock:
             id="test-1",
             bbox=BBox(x0=0, y0=0, x1=100, y1=50),
             raw_category=RawLayoutCategory.INLINE_FORMULA,
-            project_category=ProjectCategory.FORMULA,
         )
         assert block.type == "inline_formula"
 
@@ -244,7 +192,6 @@ class TestLayoutBlock:
             id="text-1",
             bbox=BBox(x0=0, y0=0, x1=100, y1=50),
             raw_category=RawLayoutCategory.TEXT,
-            project_category=ProjectCategory.TEXT,
         )
         assert text_block.is_translatable is True
 
@@ -252,7 +199,6 @@ class TestLayoutBlock:
             id="formula-1",
             bbox=BBox(x0=0, y0=0, x1=100, y1=50),
             raw_category=RawLayoutCategory.INLINE_FORMULA,
-            project_category=ProjectCategory.FORMULA,
         )
         assert formula_block.is_translatable is False
 
@@ -262,13 +208,12 @@ class TestLayoutBlock:
             id="test-1",
             bbox=BBox(x0=10, y0=20, x1=110, y1=70),
             raw_category=RawLayoutCategory.TEXT,
-            project_category=ProjectCategory.TEXT,
             confidence=0.9,
             page_num=2,
         )
         d = block.to_dict()
         assert d["raw_category"] == "text"
-        assert d["project_category"] == "text"
+        assert "project_category" not in d  # Removed
         assert d["page_num"] == 2
 
     def test_from_dict_new_format(self) -> None:
@@ -277,13 +222,11 @@ class TestLayoutBlock:
             "id": "test-1",
             "bbox": {"x0": 10, "y0": 20, "x1": 110, "y1": 70},
             "raw_category": "inline_formula",
-            "project_category": "formula",
             "confidence": 0.85,
             "page_num": 1,
         }
         block = LayoutBlock.from_dict(data)
         assert block.raw_category == RawLayoutCategory.INLINE_FORMULA
-        assert block.project_category == ProjectCategory.FORMULA
         assert block.page_num == 1
 
     def test_from_dict_legacy_format(self) -> None:
@@ -296,7 +239,6 @@ class TestLayoutBlock:
         }
         block = LayoutBlock.from_dict(data)
         assert block.raw_category == RawLayoutCategory.TEXT
-        assert block.project_category == ProjectCategory.TEXT
 
     def test_from_dict_unknown_category(self) -> None:
         """Test handling of unknown category in dict."""
@@ -307,7 +249,6 @@ class TestLayoutBlock:
         }
         block = LayoutBlock.from_dict(data)
         assert block.raw_category == RawLayoutCategory.UNKNOWN
-        assert block.project_category == ProjectCategory.OTHER
 
 
 # =============================================================================
@@ -328,59 +269,78 @@ class TestBBoxUtils:
         bbox = BBox(x0=5, y0=5, x1=5, y1=5)
         assert bbox_area(bbox) == 0.0
 
-    def test_bbox_intersection_overlap(self) -> None:
-        """Test intersection of overlapping boxes."""
-        bbox1 = BBox(x0=0, y0=0, x1=10, y1=10)
-        bbox2 = BBox(x0=5, y0=5, x1=15, y1=15)
-        result = bbox_intersection(bbox1, bbox2)
-        assert result is not None
-        assert result.x0 == 5
-        assert result.y0 == 5
-        assert result.x1 == 10
-        assert result.y1 == 10
+    def test_bbox_intersection_full_overlap(self) -> None:
+        """Test intersection of fully overlapping bboxes."""
+        bbox1 = BBox(x0=0, y0=0, x1=100, y1=100)
+        bbox2 = BBox(x0=25, y0=25, x1=75, y1=75)
+
+        intersection = bbox_intersection(bbox1, bbox2)
+        assert intersection is not None
+        assert intersection.x0 == 25
+        assert intersection.y0 == 25
+        assert intersection.x1 == 75
+        assert intersection.y1 == 75
+
+    def test_bbox_intersection_partial_overlap(self) -> None:
+        """Test intersection of partially overlapping bboxes."""
+        bbox1 = BBox(x0=0, y0=0, x1=50, y1=50)
+        bbox2 = BBox(x0=25, y0=25, x1=75, y1=75)
+
+        intersection = bbox_intersection(bbox1, bbox2)
+        assert intersection is not None
+        assert intersection.x0 == 25
+        assert intersection.y0 == 25
+        assert intersection.x1 == 50
+        assert intersection.y1 == 50
 
     def test_bbox_intersection_no_overlap(self) -> None:
-        """Test intersection of non-overlapping boxes."""
-        bbox1 = BBox(x0=0, y0=0, x1=10, y1=10)
-        bbox2 = BBox(x0=20, y0=20, x1=30, y1=30)
-        result = bbox_intersection(bbox1, bbox2)
-        assert result is None
+        """Test intersection of non-overlapping bboxes."""
+        bbox1 = BBox(x0=0, y0=0, x1=50, y1=50)
+        bbox2 = BBox(x0=100, y0=100, x1=150, y1=150)
 
-    def test_bbox_intersection_contained(self) -> None:
-        """Test intersection when one box contains another."""
-        outer = BBox(x0=0, y0=0, x1=100, y1=100)
-        inner = BBox(x0=20, y0=20, x1=40, y1=40)
-        result = bbox_intersection(outer, inner)
-        assert result is not None
-        assert result.x0 == inner.x0
-        assert result.y0 == inner.y0
-        assert result.x1 == inner.x1
-        assert result.y1 == inner.y1
+        intersection = bbox_intersection(bbox1, bbox2)
+        assert intersection is None
+
+    def test_bbox_intersection_edge_touch(self) -> None:
+        """Test intersection when bboxes touch at edge (no overlap)."""
+        bbox1 = BBox(x0=0, y0=0, x1=50, y1=50)
+        bbox2 = BBox(x0=50, y0=0, x1=100, y1=50)
+
+        intersection = bbox_intersection(bbox1, bbox2)
+        assert intersection is None
 
     def test_calc_containment_full(self) -> None:
-        """Test containment when text is fully contained."""
-        text_bbox = BBox(x0=20, y0=20, x1=40, y1=40)
+        """Test full containment (100%)."""
+        text_bbox = BBox(x0=25, y0=25, x1=75, y1=75)
         block_bbox = BBox(x0=0, y0=0, x1=100, y1=100)
-        assert calc_containment(text_bbox, block_bbox) == 1.0
+
+        containment = calc_containment(text_bbox, block_bbox)
+        assert containment == 1.0
 
     def test_calc_containment_partial(self) -> None:
-        """Test containment when text is partially contained."""
-        text_bbox = BBox(x0=0, y0=0, x1=10, y1=10)  # area = 100
-        block_bbox = BBox(x0=5, y0=5, x1=15, y1=15)  # overlaps (5,5)-(10,10) = 25
+        """Test partial containment."""
+        text_bbox = BBox(x0=0, y0=0, x1=100, y1=100)
+        block_bbox = BBox(x0=50, y0=50, x1=150, y1=150)
+
         containment = calc_containment(text_bbox, block_bbox)
+        # Intersection: 50x50 = 2500, Text area: 100x100 = 10000
         assert containment == pytest.approx(0.25)
 
-    def test_calc_containment_none(self) -> None:
-        """Test containment when no overlap."""
-        text_bbox = BBox(x0=0, y0=0, x1=10, y1=10)
-        block_bbox = BBox(x0=50, y0=50, x1=60, y1=60)
-        assert calc_containment(text_bbox, block_bbox) == 0.0
+    def test_calc_containment_no_overlap(self) -> None:
+        """Test no overlap (0%)."""
+        text_bbox = BBox(x0=0, y0=0, x1=50, y1=50)
+        block_bbox = BBox(x0=100, y0=100, x1=200, y1=200)
+
+        containment = calc_containment(text_bbox, block_bbox)
+        assert containment == 0.0
 
     def test_calc_containment_zero_area_text(self) -> None:
-        """Test containment when text has zero area."""
-        text_bbox = BBox(x0=5, y0=5, x1=5, y1=5)
+        """Test with zero-area text bbox."""
+        text_bbox = BBox(x0=25, y0=25, x1=25, y1=25)
         block_bbox = BBox(x0=0, y0=0, x1=100, y1=100)
-        assert calc_containment(text_bbox, block_bbox) == 0.0
+
+        containment = calc_containment(text_bbox, block_bbox)
+        assert containment == 0.0
 
 
 # =============================================================================
@@ -389,59 +349,40 @@ class TestBBoxUtils:
 
 
 class TestCoordinateConversion:
-    """Tests for image to PDF coordinate conversion."""
+    """Tests for image-to-PDF coordinate conversion."""
 
-    def test_basic_conversion(self) -> None:
-        """Test basic coordinate conversion with Y-axis inversion."""
-        # Image: 1000x800 pixels, PDF: 500x400 points
-        # Image bbox: (100, 100, 200, 200) - near top-left
-        # Expected PDF: scaled and Y-inverted
-
+    def test_convert_image_to_pdf_coords_basic(self) -> None:
+        """Test basic coordinate conversion."""
+        # 600x800 pixel image -> 595x842 point PDF
+        image_bbox = (100.0, 200.0, 300.0, 400.0)
         result = convert_image_to_pdf_coords(
-            image_bbox=(100, 100, 200, 200),
-            page_width=500,
-            page_height=400,
-            image_width=1000,
+            image_bbox,
+            page_width=595.0,
+            page_height=842.0,
+            image_width=600,
             image_height=800,
         )
 
-        # X: 100 * 0.5 = 50, 200 * 0.5 = 100
-        assert result.x0 == pytest.approx(50.0)
-        assert result.x1 == pytest.approx(100.0)
+        # X scales: 595/600 ≈ 0.992
+        # Y inverts and scales: 842/800 = 1.0525
+        assert isinstance(result, BBox)
 
-        # Y: inverted
-        # y0_pdf = 400 - (200 * 0.5) = 300
-        # y1_pdf = 400 - (100 * 0.5) = 350
-        assert result.y0 == pytest.approx(300.0)
-        assert result.y1 == pytest.approx(350.0)
-
-    def test_full_page_conversion(self) -> None:
-        """Test converting full page bbox."""
+    def test_y_axis_inversion(self) -> None:
+        """Test that Y-axis is properly inverted."""
+        # Top of image (y=0) -> Top of PDF (y=page_height)
+        # Bottom of image (y=800) -> Bottom of PDF (y=0)
+        image_bbox = (0.0, 0.0, 100.0, 100.0)  # Top-left corner in image
         result = convert_image_to_pdf_coords(
-            image_bbox=(0, 0, 1000, 800),
-            page_width=500,
-            page_height=400,
-            image_width=1000,
+            image_bbox,
+            page_width=800.0,
+            page_height=800.0,
+            image_width=800,
             image_height=800,
         )
-        assert result.x0 == pytest.approx(0.0)
-        assert result.y0 == pytest.approx(0.0)
-        assert result.x1 == pytest.approx(500.0)
-        assert result.y1 == pytest.approx(400.0)
 
-    def test_bottom_region_conversion(self) -> None:
-        """Test converting region at bottom of image (top in PDF)."""
-        # Image bbox near bottom: (0, 700, 100, 800)
-        result = convert_image_to_pdf_coords(
-            image_bbox=(0, 700, 100, 800),
-            page_width=500,
-            page_height=400,
-            image_width=1000,
-            image_height=800,
-        )
-        # Y near PDF origin (bottom)
-        assert result.y0 == pytest.approx(0.0)  # 400 - 800*0.5 = 0
-        assert result.y1 == pytest.approx(50.0)  # 400 - 700*0.5 = 50
+        # In PDF coords, top of page is y=800
+        assert result.y1 == pytest.approx(800.0)
+        assert result.y0 == pytest.approx(700.0)
 
 
 # =============================================================================
@@ -450,25 +391,24 @@ class TestCoordinateConversion:
 
 
 class TestMatchTextWithLayout:
-    """Tests for text-layout matching algorithm."""
+    """Tests for match_text_with_layout function."""
 
-    def create_text_object(self, id: str, bbox: BBox) -> TextObject:
+    @staticmethod
+    def create_text_object(id: str, bbox: BBox) -> TextObject:
         """Helper to create TextObject."""
         return TextObject(id=id, bbox=bbox, text="dummy")
 
+    @staticmethod
     def create_layout_block(
-        self,
         id: str,
         bbox: BBox,
         raw_category: RawLayoutCategory,
     ) -> LayoutBlock:
         """Helper to create LayoutBlock."""
-        project_category = RAW_TO_PROJECT_MAPPING[raw_category]
         return LayoutBlock(
             id=id,
             bbox=bbox,
             raw_category=raw_category,
-            project_category=project_category,
         )
 
     def test_single_match(self) -> None:
@@ -481,7 +421,7 @@ class TestMatchTextWithLayout:
         )
 
         result = match_text_with_layout([text_obj], [block])
-        assert result["t1"] == ProjectCategory.TEXT
+        assert result["t1"] == "text"
 
     def test_priority_matching_formula_wins(self) -> None:
         """Test that formula (high priority) beats text (low priority)."""
@@ -501,10 +441,10 @@ class TestMatchTextWithLayout:
 
         result = match_text_with_layout([text_obj], [text_block, formula_block])
         # Formula should win due to higher priority (lower number)
-        assert result["t1"] == ProjectCategory.FORMULA
+        assert result["t1"] == "inline_formula"
 
-    def test_no_match_returns_other(self) -> None:
-        """Test unmatched text defaults to OTHER."""
+    def test_no_match_returns_unknown(self) -> None:
+        """Test unmatched text defaults to unknown."""
         text_obj = self.create_text_object("t1", BBox(x0=500, y0=500, x1=510, y1=510))
         block = self.create_layout_block(
             "b1",
@@ -513,7 +453,7 @@ class TestMatchTextWithLayout:
         )
 
         result = match_text_with_layout([text_obj], [block])
-        assert result["t1"] == ProjectCategory.OTHER
+        assert result["t1"] == "unknown"
 
     def test_containment_threshold(self) -> None:
         """Test containment threshold filtering."""
@@ -527,11 +467,11 @@ class TestMatchTextWithLayout:
 
         # Default threshold 0.5 - should not match
         result = match_text_with_layout([text_obj], [block], containment_threshold=0.5)
-        assert result["t1"] == ProjectCategory.OTHER
+        assert result["t1"] == "unknown"
 
         # Lower threshold 0.2 - should match
         result = match_text_with_layout([text_obj], [block], containment_threshold=0.2)
-        assert result["t1"] == ProjectCategory.TEXT
+        assert result["t1"] == "text"
 
     def test_table_cell_scenario(self) -> None:
         """Test that table text is correctly categorized."""
@@ -550,7 +490,7 @@ class TestMatchTextWithLayout:
 
         result = match_text_with_layout([text_obj], [text_block, table_block])
         # Table has priority 3, Text has priority 6 → Table wins
-        assert result["t1"] == ProjectCategory.TABLE
+        assert result["t1"] == "table"
 
 
 class TestCategoryPriority:
@@ -591,7 +531,7 @@ class TestFilterTranslatable:
     def test_filter_keeps_translatable(self) -> None:
         """Test that translatable categories are kept."""
         text_obj = TextObject(id="t1", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="Hello")
-        categories = {"t1": ProjectCategory.TEXT}
+        categories = {"t1": "text"}
 
         result = filter_translatable([text_obj], categories)
         assert len(result) == 1
@@ -600,7 +540,7 @@ class TestFilterTranslatable:
     def test_filter_removes_non_translatable(self) -> None:
         """Test that non-translatable categories are removed."""
         text_obj = TextObject(id="t1", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="x^2")
-        categories = {"t1": ProjectCategory.FORMULA}
+        categories = {"t1": "inline_formula"}
 
         result = filter_translatable([text_obj], categories)
         assert len(result) == 0
@@ -613,9 +553,9 @@ class TestFilterTranslatable:
             TextObject(id="t3", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="Title"),
         ]
         categories = {
-            "t1": ProjectCategory.TEXT,
-            "t2": ProjectCategory.FORMULA,
-            "t3": ProjectCategory.TITLE,
+            "t1": "text",
+            "t2": "inline_formula",
+            "t3": "paragraph_title",
         }
 
         result = filter_translatable(objs, categories)
@@ -646,5 +586,4 @@ class TestLayoutAnalyzerIntegration:
         assert len(blocks) > 0
         for block in blocks:
             assert isinstance(block.raw_category, RawLayoutCategory)
-            assert isinstance(block.project_category, ProjectCategory)
             assert block.confidence > 0
