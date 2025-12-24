@@ -97,7 +97,22 @@ Apache Software Foundation ポリシーにより MIT は "Category A" として�
 |------|------|
 | 保存場所 | 一時ディレクトリ (デフォルト) + ユーザー指定可能 |
 | 有効期間 | セッション限り |
-| キー | フォントパス + 文字セットハッシュ |
+| キー | フォントフルパス + サイズ + mtime + 文字セットハッシュ |
+
+**キャッシュキーの設計**:
+同名フォントが異なるディレクトリに存在するケースに対応するため、
+`font_path.stem` ではなく以下の情報を組み合わせてキーを生成:
+
+```python
+# フォントの一意性を保証するキー
+font_identity = f"{font_path.resolve()}:{font_path.stat().st_size}:{font_path.stat().st_mtime}"
+cache_key = hashlib.sha256(f"{font_identity}:{sorted_chars}".encode()).hexdigest()[:16]
+```
+
+**クリーンアップ方針**:
+- 一時ディレクトリ使用時: OS の一時ファイルクリーンアップに委ねる
+- `FontSubsetter` インスタンス破棄時に `cleanup()` メソッドで明示的削除可能
+- ユーザー指定ディレクトリ使用時: ユーザー責任で管理
 
 ### 4. パイプライン統合位置
 
@@ -129,6 +144,26 @@ font = TTFont(font_path, fontNumber=font_number)
 `PipelineConfig.cjk_font_number` でユーザーが指定可能。
 デフォルトは 0。
 
+**fontNumber の特定方法**:
+
+TTC ファイル内のフォント一覧は以下のコマンドで確認可能:
+
+```bash
+# fonttools の ttx コマンドで確認
+python -c "from fontTools.ttLib import TTCollection; tc = TTCollection('/path/to/font.ttc'); print([f['name'].getDebugName(4) for f in tc.fonts])"
+```
+
+NotoSansCJK-Regular.ttc の例:
+| fontNumber | フォント名 |
+|------------|-----------|
+| 0 | Noto Sans CJK JP (日本語) |
+| 1 | Noto Sans CJK KR (韓国語) |
+| 2 | Noto Sans CJK SC (簡体中国語) |
+| 3 | Noto Sans CJK TC (繁体中国語) |
+| 4 | Noto Sans CJK HK (香港) |
+
+日本語翻訳の場合はデフォルト (0) で問題なし。
+
 ### 7. side-by-side モード
 
 **決定: 追加対応不要**
@@ -151,6 +186,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -257,19 +293,40 @@ class FontSubsetter:
         chars: set[str],
         font_number: int,
     ) -> str:
-        """Generate cache key for subset."""
-        chars_hash = hashlib.sha256(
-            "".join(sorted(chars)).encode()
-        ).hexdigest()[:16]
-        return f"{font_path.stem}_{font_number}_{chars_hash}"
+        """Generate cache key for subset.
+
+        Uses full path, size, and mtime to avoid collisions
+        with same-named fonts in different directories.
+        """
+        stat = font_path.stat()
+        font_identity = f"{font_path.resolve()}:{stat.st_size}:{stat.st_mtime}"
+        chars_str = "".join(sorted(chars))
+        full_key = f"{font_identity}:{font_number}:{chars_str}"
+        return hashlib.sha256(full_key.encode()).hexdigest()[:16]
 
     def _get_subset_path(self, cache_key: str) -> Path:
-        """Get path for subset file."""
+        """Get path for subset file.
+
+        Uses NamedTemporaryFile for safety instead of mktemp.
+        """
         if self._config.cache_dir:
             self._config.cache_dir.mkdir(parents=True, exist_ok=True)
             return self._config.cache_dir / f"{cache_key}.ttf"
         else:
-            return Path(tempfile.mktemp(suffix=f"_{cache_key}.ttf"))
+            # Use NamedTemporaryFile to avoid race conditions
+            import tempfile as tmp
+            fd, path = tmp.mkstemp(suffix=f"_{cache_key}.ttf")
+            os.close(fd)  # Close fd, we'll write via fontTools
+            return Path(path)
+
+    def cleanup(self) -> None:
+        """Clean up cached subset files."""
+        for path in self._cache.values():
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._cache.clear()
 ```
 
 ### Phase 2: PipelineConfig の拡張
@@ -344,6 +401,42 @@ dependencies = [
 - キャッシュ動作
 - 空テキストリストの処理
 - 無効なフォントパスの処理
+- cleanup() メソッドの動作
+
+**フォント fixture 方針**:
+
+| 環境 | フォント | 対応 |
+|------|---------|------|
+| ローカル (Linux) | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | 存在すれば使用 |
+| ローカル (macOS) | `/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc` | 存在すれば使用 |
+| CI (GitHub Actions) | システムフォントなし | **skip** |
+
+```python
+import pytest
+from pathlib import Path
+
+# System font paths for testing
+NOTO_CJK_LINUX = Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+HIRAGINO_MACOS = Path("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
+
+def get_test_font() -> Path | None:
+    """Get available CJK font for testing."""
+    for path in [NOTO_CJK_LINUX, HIRAGINO_MACOS]:
+        if path.exists():
+            return path
+    return None
+
+# Skip decorator for font-dependent tests
+requires_cjk_font = pytest.mark.skipif(
+    get_test_font() is None,
+    reason="No CJK font available for testing"
+)
+```
+
+**CI での対応**:
+- フォント依存テストは `@requires_cjk_font` で skip
+- フォント非依存のロジックテスト（空リスト処理、無効パス等）は常に実行
+- 将来的にはテスト用の小さな TTF フォントを `tests/fixtures/` に追加検討
 
 ---
 
