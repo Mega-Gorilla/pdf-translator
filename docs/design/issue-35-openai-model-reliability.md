@@ -69,9 +69,9 @@ OpenAI コミュニティフォーラムで同様の問題が複数報告され�
 | ファイル | 変更内容 |
 |---------|---------|
 | `src/pdf_translator/translators/base.py` | `ArrayLengthMismatchError` 追加 |
-| `src/pdf_translator/translators/openai.py` | デフォルトモデル変更 + 環境変数サポート |
-| `src/pdf_translator/pipeline/translation_pipeline.py` | バッチ分割フォールバック実装 |
-| `tests/test_openai_translator.py` | 新規テスト追加 |
+| `src/pdf_translator/translators/openai.py` | デフォルトモデル変更 + 環境変数サポート + エラーガイダンス |
+| `src/pdf_translator/pipeline/translation_pipeline.py` | バッチ分割フォールバック実装 + `strict_mode` 追加 |
+| `tests/test_openai_translator.py` | 新規テスト追加（モック使用） |
 
 ---
 
@@ -108,6 +108,26 @@ class ArrayLengthMismatchError(TranslationError):
 class OpenAITranslator:
     DEFAULT_MODEL = "gpt-5-nano"  # Changed from "gpt-4o-mini"
 ```
+
+#### モデル利用不可時のエラーガイダンス
+
+GPT-5-nano にアクセス権がない場合、OpenAI API は `model_not_found` または `invalid_model` エラーを返す。
+この場合、`ConfigurationError` を発生させ、ユーザーに明確なガイダンスを提供する：
+
+```python
+# openai.py の _handle_openai_error 内
+if "model" in str(error).lower() and ("not found" in str(error).lower() or "invalid" in str(error).lower()):
+    raise ConfigurationError(
+        f"Model '{self._model}' is not available. "
+        f"Set OPENAI_MODEL environment variable to use a different model "
+        f"(e.g., 'gpt-4o-mini', 'gpt-4o')."
+    ) from error
+```
+
+**設計判断**: モデル利用不可時に自動フォールバックは行わない。理由：
+1. ユーザーが意図しないコストのモデルに切り替わる可能性がある
+2. 環境変数 `OPENAI_MODEL` で明示的に設定する方が制御しやすい
+3. エラーメッセージで具体的な対処法を提示する
 
 #### 2.2 環境変数サポートの追加
 
@@ -187,7 +207,23 @@ async def _translate_with_retry(self, texts: list[str]) -> list[str]:
     )
 ```
 
-#### 3.3 `_translate_with_split` の追加
+#### 3.3 `PipelineConfig` への `strict_mode` 追加
+
+```python
+@dataclass
+class PipelineConfig:
+    # ... existing fields ...
+
+    # Translation failure handling
+    strict_mode: bool = False  # デフォルトは緩和モード
+```
+
+| モード | 動作 | 用途 |
+|--------|------|------|
+| `strict_mode=False`（デフォルト） | 翻訳失敗時に警告ログ出力 + 元テキストを返す | プロダクション環境（部分的な成功を許容） |
+| `strict_mode=True` | 翻訳失敗時にエラーを再送出 | CI/テスト環境（完全性を要求） |
+
+#### 3.4 `_translate_with_split` の追加
 
 ```python
 async def _translate_with_split(self, texts: list[str]) -> list[str]:
@@ -208,9 +244,20 @@ async def _translate_with_split(self, texts: list[str]) -> list[str]:
                 self._config.target_lang,
             )
             return [result]
-        except TranslationError:
-            # 個別翻訳も失敗した場合は元のテキストを返す（ログ出力）
-            return [texts[0]]
+        except TranslationError as exc:
+            # 個別翻訳も失敗した場合の処理
+            if self._config.strict_mode:
+                # 厳密モード: エラーを再送出
+                raise
+            else:
+                # 緩和モード（デフォルト）: 警告ログ出力 + 元テキストを返す
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Translation failed for text (len={len(texts[0])}), "
+                    f"returning original: {exc}"
+                )
+                return [texts[0]]
 
     # バッチを半分に分割
     mid = len(texts) // 2
@@ -247,18 +294,51 @@ translator = OpenAITranslator(api_key=key)  # gpt-5 が使用される
 
 ## テスト計画
 
-### ユニットテスト
+### ユニットテスト（ネットワーク非依存）
 
-| テストケース | 説明 |
-|-------------|------|
-| `test_default_model_is_gpt5_nano` | デフォルトモデルが gpt-5-nano |
-| `test_model_from_env_variable` | 環境変数からモデル読み込み |
-| `test_model_constructor_overrides_env` | コンストラクタが環境変数より優先 |
-| `test_array_length_mismatch_triggers_split` | 配列長不一致でバッチ分割 |
-| `test_split_to_individual_translation` | バッチサイズ1で個別翻訳 |
-| `test_split_recursive` | 再帰的なバッチ分割 |
+すべてのユニットテストは `unittest.mock` を使用してネットワーク呼び出しをモック化し、
+CI環境でAPI キーなしでも実行可能にする。
 
-### 統合テスト
+| テストケース | 説明 | モック対象 |
+|-------------|------|-----------|
+| `test_default_model_is_gpt5_nano` | デフォルトモデルが gpt-5-nano | なし（属性確認のみ） |
+| `test_model_from_env_variable` | 環境変数からモデル読み込み | `os.environ` |
+| `test_model_constructor_overrides_env` | コンストラクタが環境変数より優先 | `os.environ` |
+| `test_array_length_mismatch_triggers_split` | 配列長不一致でバッチ分割 | `translate_batch` |
+| `test_split_to_individual_translation` | バッチサイズ1で個別翻訳 | `translate` |
+| `test_split_recursive` | 再帰的なバッチ分割 | `translate_batch` |
+| `test_strict_mode_raises_on_failure` | 厳密モードでエラー再送出 | `translate` |
+| `test_lenient_mode_returns_original` | 緩和モードで元テキスト返却 | `translate` |
+| `test_model_not_found_error_guidance` | モデル不明時のエラーガイダンス | OpenAI client |
+
+#### モック実装例
+
+```python
+import pytest
+from unittest.mock import AsyncMock, patch
+
+@pytest.fixture
+def mock_openai_client():
+    """Mock OpenAI client for testing without API calls."""
+    with patch("openai.AsyncOpenAI") as mock_class:
+        mock_client = AsyncMock()
+        mock_class.return_value = mock_client
+        yield mock_client
+
+async def test_array_length_mismatch_triggers_split(mock_openai_client):
+    """Test that ArrayLengthMismatchError triggers batch splitting."""
+    # First call returns wrong number of translations
+    mock_openai_client.beta.chat.completions.parse.side_effect = [
+        # First batch fails
+        create_mock_response(translations=["a", "b"]),  # 2 instead of 3
+        # Split batches succeed
+        create_mock_response(translations=["a"]),
+        create_mock_response(translations=["b", "c"]),
+    ]
+    # ... test implementation
+```
+
+### 統合テスト（API キー必要）
 
 - [ ] GPT-5-nano での翻訳テスト（sample_llama.pdf）
 - [ ] sample_autogen_paper.pdf の完全翻訳テスト
