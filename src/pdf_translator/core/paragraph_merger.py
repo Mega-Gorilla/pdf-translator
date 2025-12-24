@@ -47,7 +47,7 @@ class MergeConfig:
     x_overlap_threshold: float = 0.7
     font_size_tolerance: float = 1.0
     translatable_categories: frozenset[str] | None = None
-    width_tolerance: float = 0.8
+    width_tolerance: float = 0.95
 
 
 def _detect_columns(

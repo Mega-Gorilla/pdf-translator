@@ -55,7 +55,7 @@ class PipelineConfig:
     merge_gap_tolerance: float = 1.5  # Gap <= font_size * tolerance
     merge_x_overlap_threshold: float = 0.7  # X overlap >= 70%
     merge_font_size_tolerance: float = 1.0  # Font size difference <= 1pt
-    merge_width_tolerance: float = 0.8  # Width ratio >= 80%
+    merge_width_tolerance: float = 0.95  # Width ratio >= 95%
 
     # Debug options
     debug_draw_bbox: bool = False
