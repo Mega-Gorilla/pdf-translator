@@ -38,21 +38,16 @@ class MergeConfig:
         font_size_tolerance: Maximum font size difference in points.
         translatable_categories: Set of category strings that are eligible
             for merging. If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES.
-        column_gap_threshold_ratio: Minimum horizontal gap between columns
-            as a ratio of page width (0.0 to 1.0). Paragraphs separated by
-            more than this gap are considered to be in different columns.
     """
 
     gap_tolerance: float = 1.5
     x_overlap_threshold: float = 0.7
     font_size_tolerance: float = 1.0
     translatable_categories: frozenset[str] | None = None
-    column_gap_threshold_ratio: float = 0.02
 
 
 def _detect_columns(
     paragraphs: Sequence[Paragraph],
-    gap_threshold: float,
     wide_element_ratio: float = 0.5,
     column_overlap_threshold: float = 0.5,
 ) -> list[list[Paragraph]]:
@@ -69,7 +64,6 @@ def _detect_columns(
 
     Args:
         paragraphs: List of paragraphs on a single page.
-        gap_threshold: Minimum horizontal gap (in points) - used as fallback.
         wide_element_ratio: Elements wider than page_width * ratio are
             considered "wide" and handled separately.
         column_overlap_threshold: Minimum X overlap ratio (0.0 to 1.0)
@@ -230,12 +224,8 @@ def merge_adjacent_paragraphs(
         if not page_paragraphs:
             continue
 
-        # Estimate page width from paragraph positions
-        page_width = max(p.block_bbox.x1 for p in page_paragraphs)
-        gap_threshold = page_width * config.column_gap_threshold_ratio
-
-        # Detect columns based on X positions
-        columns = _detect_columns(page_paragraphs, gap_threshold)
+        # Detect columns based on X-axis overlap
+        columns = _detect_columns(page_paragraphs)
 
         # Process each column independently
         merged_page: list[Paragraph] = []

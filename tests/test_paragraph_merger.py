@@ -566,7 +566,7 @@ class TestDetectColumns:
         para2 = make_paragraph(id="p2", x0=50, x1=300, y0=50, y1=98)
         para3 = make_paragraph(id="p3", x0=50, x1=300, y0=0, y1=48)
 
-        columns = _detect_columns([para1, para2, para3], gap_threshold=20)
+        columns = _detect_columns([para1, para2, para3])
 
         assert len(columns) == 1
         assert len(columns[0]) == 3
@@ -581,7 +581,7 @@ class TestDetectColumns:
         right1 = make_paragraph(id="r1", x0=350, x1=600, y0=100, y1=150)
         right2 = make_paragraph(id="r2", x0=350, x1=600, y0=50, y1=98)
 
-        columns = _detect_columns([left1, left2, right1, right2], gap_threshold=20)
+        columns = _detect_columns([left1, left2, right1, right2])
 
         assert len(columns) == 2
         assert len(columns[0]) == 2  # Left column
@@ -599,13 +599,13 @@ class TestDetectColumns:
         middle = make_paragraph(id="middle", x0=250, x1=400)
         right = make_paragraph(id="right", x0=450, x1=600)
 
-        columns = _detect_columns([left, middle, right], gap_threshold=20)
+        columns = _detect_columns([left, middle, right])
 
         assert len(columns) == 3
 
     def test_empty_list(self) -> None:
         """Empty input returns empty output."""
-        columns = _detect_columns([], gap_threshold=20)
+        columns = _detect_columns([])
 
         assert columns == []
 
@@ -616,7 +616,7 @@ class TestDetectColumns:
         # Narrower paragraph within the same X range
         narrow = make_paragraph(id="narrow", x0=100, x1=250)
 
-        columns = _detect_columns([wide, narrow], gap_threshold=20)
+        columns = _detect_columns([wide, narrow])
 
         assert len(columns) == 1
         assert len(columns[0]) == 2
@@ -628,7 +628,7 @@ class TestDetectColumns:
         para2 = make_paragraph(id="p2", x0=60, x1=140)  # width=80, overlap=80
 
         # High overlap -> same column
-        columns = _detect_columns([para1, para2], gap_threshold=20)
+        columns = _detect_columns([para1, para2])
         assert len(columns) == 1
         assert len(columns[0]) == 2
 
@@ -637,7 +637,7 @@ class TestDetectColumns:
         para1 = make_paragraph(id="p1", x0=50, x1=100)
         para2 = make_paragraph(id="p2", x0=120, x1=170)  # No overlap
 
-        columns = _detect_columns([para1, para2], gap_threshold=20)
+        columns = _detect_columns([para1, para2])
         assert len(columns) == 2
 
 
@@ -722,7 +722,7 @@ class TestMultiColumnMerge:
             id="r2", text="right bottom", x0=350, x1=600, y0=50, y1=98
         )
 
-        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        config = MergeConfig()
         result = merge_adjacent_paragraphs([left1, left2, right1, right2], config)
 
         # Should have 2 merged paragraphs (one per column)
@@ -749,7 +749,7 @@ class TestMultiColumnMerge:
             id="right", text="Right text", x0=350, x1=600, y0=50, y1=98
         )
 
-        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        config = MergeConfig()
         result = merge_adjacent_paragraphs([left, right], config)
 
         # Should remain as 2 separate paragraphs
@@ -782,7 +782,7 @@ class TestMultiColumnMerge:
             id="right", text="Right column", x0=350, x1=600, y0=100, y1=150
         )
 
-        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        config = MergeConfig()
         result = merge_adjacent_paragraphs([header, left, right], config)
 
         # Should have 3 paragraphs (header separate, columns separate)
@@ -816,9 +816,9 @@ class TestMultiColumnMerge:
         # Without column detection, l2 would try to merge with r2 (and fail on gap)
         # or worse, the merge chain would be broken
 
-        # page_width = 540, threshold = 540 * 0.03 = 16.2
-        # column gap = 320 - 290 = 30 > 16.2, so columns are separate
-        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        # Left column x: 70-290, Right column x: 320-540
+        # No X-axis overlap, so columns are detected as separate
+        config = MergeConfig()
         result = merge_adjacent_paragraphs([left1, left2, right1, right2], config)
 
         # Should have 2 paragraphs (one merged per column)
@@ -843,7 +843,7 @@ class TestMultiColumnMerge:
             id="s1", text="Sidebar note", x0=450, x1=550, y0=100, y1=150
         )
 
-        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        config = MergeConfig()
         result = merge_adjacent_paragraphs([main1, main2, sidebar], config)
 
         # Main content should merge, sidebar stays separate
