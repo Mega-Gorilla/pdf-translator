@@ -8,6 +8,8 @@ from pdf_translator.core.paragraph_merger import (
     MergeConfig,
     _calc_x_overlap,
     _can_merge,
+    _detect_columns,
+    _merge_column,
     _merge_two_paragraphs,
     merge_adjacent_paragraphs,
 )
@@ -548,3 +550,304 @@ class TestMergeAdjacentParagraphs:
 
         assert len(result) == 1
         assert result[0].text == "Top paragraph middle bottom"
+
+
+# =============================================================================
+# Tests for _detect_columns()
+# =============================================================================
+
+
+class TestDetectColumns:
+    """Tests for _detect_columns() function."""
+
+    def test_single_column(self) -> None:
+        """All paragraphs in a single column."""
+        para1 = make_paragraph(id="p1", x0=50, x1=300, y0=100, y1=150)
+        para2 = make_paragraph(id="p2", x0=50, x1=300, y0=50, y1=98)
+        para3 = make_paragraph(id="p3", x0=50, x1=300, y0=0, y1=48)
+
+        columns = _detect_columns([para1, para2, para3], gap_threshold=20)
+
+        assert len(columns) == 1
+        assert len(columns[0]) == 3
+
+    def test_two_columns(self) -> None:
+        """Paragraphs in two separate columns."""
+        # Left column (x: 50-300)
+        left1 = make_paragraph(id="l1", x0=50, x1=300, y0=100, y1=150)
+        left2 = make_paragraph(id="l2", x0=50, x1=300, y0=50, y1=98)
+
+        # Right column (x: 350-600)
+        right1 = make_paragraph(id="r1", x0=350, x1=600, y0=100, y1=150)
+        right2 = make_paragraph(id="r2", x0=350, x1=600, y0=50, y1=98)
+
+        columns = _detect_columns([left1, left2, right1, right2], gap_threshold=20)
+
+        assert len(columns) == 2
+        assert len(columns[0]) == 2  # Left column
+        assert len(columns[1]) == 2  # Right column
+
+        # Check column contents
+        left_ids = {p.id for p in columns[0]}
+        right_ids = {p.id for p in columns[1]}
+        assert left_ids == {"l1", "l2"}
+        assert right_ids == {"r1", "r2"}
+
+    def test_three_columns(self) -> None:
+        """Paragraphs in three columns."""
+        left = make_paragraph(id="left", x0=50, x1=200)
+        middle = make_paragraph(id="middle", x0=250, x1=400)
+        right = make_paragraph(id="right", x0=450, x1=600)
+
+        columns = _detect_columns([left, middle, right], gap_threshold=20)
+
+        assert len(columns) == 3
+
+    def test_empty_list(self) -> None:
+        """Empty input returns empty output."""
+        columns = _detect_columns([], gap_threshold=20)
+
+        assert columns == []
+
+    def test_overlapping_x_ranges(self) -> None:
+        """Paragraphs with overlapping X ranges go to same column."""
+        # Wide paragraph
+        wide = make_paragraph(id="wide", x0=50, x1=300)
+        # Narrower paragraph within the same X range
+        narrow = make_paragraph(id="narrow", x0=100, x1=250)
+
+        columns = _detect_columns([wide, narrow], gap_threshold=20)
+
+        assert len(columns) == 1
+        assert len(columns[0]) == 2
+
+    def test_x_overlap_threshold(self) -> None:
+        """Paragraphs with significant X overlap go to same column."""
+        # 80% overlap (para2 mostly within para1's X range)
+        para1 = make_paragraph(id="p1", x0=50, x1=150)  # width=100
+        para2 = make_paragraph(id="p2", x0=60, x1=140)  # width=80, overlap=80
+
+        # High overlap -> same column
+        columns = _detect_columns([para1, para2], gap_threshold=20)
+        assert len(columns) == 1
+        assert len(columns[0]) == 2
+
+    def test_no_x_overlap_separate_columns(self) -> None:
+        """Paragraphs with no X overlap go to different columns."""
+        para1 = make_paragraph(id="p1", x0=50, x1=100)
+        para2 = make_paragraph(id="p2", x0=120, x1=170)  # No overlap
+
+        columns = _detect_columns([para1, para2], gap_threshold=20)
+        assert len(columns) == 2
+
+
+# =============================================================================
+# Tests for _merge_column()
+# =============================================================================
+
+
+class TestMergeColumn:
+    """Tests for _merge_column() function."""
+
+    def test_merge_two_in_column(self) -> None:
+        """Two adjacent paragraphs in same column should merge."""
+        para1 = make_paragraph(id="p1", text="First", y0=50, y1=100)
+        para2 = make_paragraph(id="p2", text="second", y0=0, y1=48)
+        config = MergeConfig()
+
+        result = _merge_column([para1, para2], config)
+
+        assert len(result) == 1
+        assert result[0].text == "First second"
+
+    def test_merge_three_in_column(self) -> None:
+        """Three adjacent paragraphs in same column should merge."""
+        para1 = make_paragraph(id="p1", text="First", y0=100, y1=150)
+        para2 = make_paragraph(id="p2", text="second", y0=50, y1=98)
+        para3 = make_paragraph(id="p3", text="third", y0=0, y1=48)
+        config = MergeConfig()
+
+        result = _merge_column([para1, para2, para3], config)
+
+        assert len(result) == 1
+        assert result[0].text == "First second third"
+
+    def test_no_merge_different_categories(self) -> None:
+        """Different categories should not merge within column."""
+        para1 = make_paragraph(id="p1", text="Text", category="text", y0=50, y1=100)
+        para2 = make_paragraph(id="p2", text="Title", category="paragraph_title", y0=0, y1=48)
+        config = MergeConfig()
+
+        result = _merge_column([para1, para2], config)
+
+        assert len(result) == 2
+
+    def test_empty_column(self) -> None:
+        """Empty column returns empty list."""
+        config = MergeConfig()
+
+        result = _merge_column([], config)
+
+        assert result == []
+
+
+# =============================================================================
+# Tests for multi-column merge scenarios
+# =============================================================================
+
+
+class TestMultiColumnMerge:
+    """Tests for merge_adjacent_paragraphs with multi-column layouts."""
+
+    def test_two_column_independent_merge(self) -> None:
+        """Each column should merge independently.
+
+        This simulates a typical academic paper layout where left and right
+        columns have vertically adjacent paragraphs that should merge within
+        their respective columns but not across columns.
+        """
+        # Left column paragraphs (x: 50-300)
+        left1 = make_paragraph(
+            id="l1", text="Left top", x0=50, x1=300, y0=100, y1=150
+        )
+        left2 = make_paragraph(
+            id="l2", text="left bottom", x0=50, x1=300, y0=50, y1=98
+        )
+
+        # Right column paragraphs (x: 350-600)
+        right1 = make_paragraph(
+            id="r1", text="Right top", x0=350, x1=600, y0=100, y1=150
+        )
+        right2 = make_paragraph(
+            id="r2", text="right bottom", x0=350, x1=600, y0=50, y1=98
+        )
+
+        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        result = merge_adjacent_paragraphs([left1, left2, right1, right2], config)
+
+        # Should have 2 merged paragraphs (one per column)
+        assert len(result) == 2
+
+        # Check merged texts
+        texts = {p.text for p in result}
+        assert "Left top left bottom" in texts
+        assert "Right top right bottom" in texts
+
+    def test_two_column_no_cross_merge(self) -> None:
+        """Paragraphs in different columns should NOT merge.
+
+        Even if a paragraph from the right column appears "adjacent" by Y
+        coordinate to a paragraph in the left column, they should not merge.
+        """
+        # Left column paragraph
+        left = make_paragraph(
+            id="left", text="Left text", x0=50, x1=300, y0=100, y1=150
+        )
+
+        # Right column paragraph - appears "adjacent" by Y but different column
+        right = make_paragraph(
+            id="right", text="Right text", x0=350, x1=600, y0=50, y1=98
+        )
+
+        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        result = merge_adjacent_paragraphs([left, right], config)
+
+        # Should remain as 2 separate paragraphs
+        assert len(result) == 2
+        assert result[0].text == "Left text"
+        assert result[1].text == "Right text"
+
+    def test_full_width_header_with_two_columns(self) -> None:
+        """Full-width header should not merge with column content.
+
+        A common layout pattern where a title spans the full page width
+        above a two-column body.
+        """
+        # Full-width header (x: 50-600)
+        header = make_paragraph(
+            id="header",
+            text="Paper Title",
+            category="paragraph_title",
+            x0=50, x1=600,
+            y0=200, y1=250,
+        )
+
+        # Left column (x: 50-300)
+        left = make_paragraph(
+            id="left", text="Left column", x0=50, x1=300, y0=100, y1=150
+        )
+
+        # Right column (x: 350-600)
+        right = make_paragraph(
+            id="right", text="Right column", x0=350, x1=600, y0=100, y1=150
+        )
+
+        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        result = merge_adjacent_paragraphs([header, left, right], config)
+
+        # Should have 3 paragraphs (header separate, columns separate)
+        assert len(result) == 3
+
+    def test_realistic_paper_layout(self) -> None:
+        """Realistic academic paper layout with interleaved Y positions.
+
+        This tests the exact scenario that was failing before column detection:
+        paragraphs from different columns have Y positions that interleave when
+        sorted globally.
+        """
+        # Left column paragraphs (x: 70-290)
+        left1 = make_paragraph(
+            id="l1", text="Left para 1", x0=70, x1=290, y0=242, y1=431
+        )
+        left2 = make_paragraph(
+            id="l2", text="left para 2", x0=70, x1=290, y0=106, y1=241
+        )
+
+        # Right column paragraphs (x: 320-540) - gap of 30 points
+        # Their Y values interleave with left column
+        right1 = make_paragraph(
+            id="r1", text="Right para 1", x0=320, x1=540, y0=255, y1=336
+        )
+        right2 = make_paragraph(
+            id="r2", text="right para 2", x0=320, x1=540, y0=200, y1=254
+        )
+
+        # When sorted by y1 descending: l1(431), r1(336), r2(254), l2(241)
+        # Without column detection, l2 would try to merge with r2 (and fail on gap)
+        # or worse, the merge chain would be broken
+
+        # page_width = 540, threshold = 540 * 0.03 = 16.2
+        # column gap = 320 - 290 = 30 > 16.2, so columns are separate
+        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        result = merge_adjacent_paragraphs([left1, left2, right1, right2], config)
+
+        # Should have 2 paragraphs (one merged per column)
+        assert len(result) == 2
+
+        texts = {p.text for p in result}
+        assert "Left para 1 left para 2" in texts
+        assert "Right para 1 right para 2" in texts
+
+    def test_sidebar_layout(self) -> None:
+        """Sidebar with main content should be treated as separate columns."""
+        # Main content (wider, left side)
+        main1 = make_paragraph(
+            id="m1", text="Main top", x0=50, x1=400, y0=100, y1=150
+        )
+        main2 = make_paragraph(
+            id="m2", text="main bottom", x0=50, x1=400, y0=50, y1=98
+        )
+
+        # Sidebar (narrower, right side)
+        sidebar = make_paragraph(
+            id="s1", text="Sidebar note", x0=450, x1=550, y0=100, y1=150
+        )
+
+        config = MergeConfig(column_gap_threshold_ratio=0.03)
+        result = merge_adjacent_paragraphs([main1, main2, sidebar], config)
+
+        # Main content should merge, sidebar stays separate
+        assert len(result) == 2
+
+        merged_main = next(p for p in result if "Main" in p.text)
+        assert merged_main.text == "Main top main bottom"

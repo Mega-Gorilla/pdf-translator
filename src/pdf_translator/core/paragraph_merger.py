@@ -38,12 +38,153 @@ class MergeConfig:
         font_size_tolerance: Maximum font size difference in points.
         translatable_categories: Set of category strings that are eligible
             for merging. If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES.
+        column_gap_threshold_ratio: Minimum horizontal gap between columns
+            as a ratio of page width (0.0 to 1.0). Paragraphs separated by
+            more than this gap are considered to be in different columns.
     """
 
     gap_tolerance: float = 1.5
     x_overlap_threshold: float = 0.7
     font_size_tolerance: float = 1.0
     translatable_categories: frozenset[str] | None = None
+    column_gap_threshold_ratio: float = 0.02
+
+
+def _detect_columns(
+    paragraphs: Sequence[Paragraph],
+    gap_threshold: float,
+    wide_element_ratio: float = 0.5,
+    column_overlap_threshold: float = 0.5,
+) -> list[list[Paragraph]]:
+    """Detect columns based on X-axis overlap.
+
+    This function clusters paragraphs into columns by analyzing X-axis
+    overlap between them. Two paragraphs belong to the same column if
+    they have significant X overlap (>= column_overlap_threshold).
+
+    This handles multi-column layouts with:
+    - Full-width elements (titles) that span multiple columns
+    - Centered elements (like "Meta AI") that sit between columns
+    - Narrow column paragraphs that should not merge across columns
+
+    Args:
+        paragraphs: List of paragraphs on a single page.
+        gap_threshold: Minimum horizontal gap (in points) - used as fallback.
+        wide_element_ratio: Elements wider than page_width * ratio are
+            considered "wide" and handled separately.
+        column_overlap_threshold: Minimum X overlap ratio (0.0 to 1.0)
+            to consider paragraphs as belonging to the same column.
+
+    Returns:
+        List of column groups, where each group is a list of paragraphs
+        belonging to the same column. Columns are ordered left to right.
+    """
+    if not paragraphs:
+        return []
+
+    # Estimate page width
+    page_width = max(p.block_bbox.x1 for p in paragraphs)
+    wide_threshold = page_width * wide_element_ratio
+
+    # Separate wide elements from narrow elements
+    narrow_paras: list[Paragraph] = []
+    wide_paras: list[Paragraph] = []
+
+    for para in paragraphs:
+        if para.block_bbox.width > wide_threshold:
+            wide_paras.append(para)
+        else:
+            narrow_paras.append(para)
+
+    # If all elements are wide or no narrow elements, treat as single column
+    if not narrow_paras:
+        return [list(paragraphs)]
+
+    # Detect columns using X overlap clustering
+    sorted_by_x = sorted(
+        narrow_paras,
+        key=lambda p: (p.block_bbox.x0 + p.block_bbox.x1) / 2,
+    )
+
+    columns: list[list[Paragraph]] = [[sorted_by_x[0]]]
+
+    for para in sorted_by_x[1:]:
+        last_col = columns[-1]
+
+        # Check if para has significant X overlap with any paragraph in column
+        max_overlap = 0.0
+        for col_para in last_col:
+            overlap = _calc_x_overlap(para.block_bbox, col_para.block_bbox)
+            max_overlap = max(max_overlap, overlap)
+
+        if max_overlap >= column_overlap_threshold:
+            # Significant overlap - same column
+            last_col.append(para)
+        else:
+            # No significant overlap - new column
+            columns.append([para])
+
+    # Assign wide elements to the most overlapping column
+    for wide_para in wide_paras:
+        best_col_idx = 0
+        best_overlap = 0.0
+
+        for i, col in enumerate(columns):
+            col_x0 = min(p.block_bbox.x0 for p in col)
+            col_x1 = max(p.block_bbox.x1 for p in col)
+
+            # Calculate X overlap
+            overlap_x0 = max(wide_para.block_bbox.x0, col_x0)
+            overlap_x1 = min(wide_para.block_bbox.x1, col_x1)
+            overlap = max(0.0, overlap_x1 - overlap_x0)
+
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_col_idx = i
+
+        columns[best_col_idx].append(wide_para)
+
+    return columns
+
+
+def _merge_column(
+    paragraphs: list[Paragraph],
+    config: MergeConfig,
+) -> list[Paragraph]:
+    """Merge adjacent paragraphs within a single column.
+
+    Paragraphs are processed top-to-bottom (by y1 descending in PDF
+    coordinates) and merged if they meet the merge criteria.
+
+    Args:
+        paragraphs: Paragraphs in a single column.
+        config: Merge configuration.
+
+    Returns:
+        List of merged paragraphs.
+    """
+    if not paragraphs:
+        return []
+
+    # Sort by y1 descending (top to bottom in PDF coordinates)
+    sorted_paras = sorted(
+        paragraphs, key=lambda p: p.block_bbox.y1, reverse=True
+    )
+
+    # Initialize with first paragraph
+    merged: list[Paragraph] = [sorted_paras[0]]
+
+    # Process remaining paragraphs
+    for current in sorted_paras[1:]:
+        last = merged[-1]
+
+        if _can_merge(last, current, config):
+            # Replace last with merged paragraph
+            merged[-1] = _merge_two_paragraphs(last, current)
+        else:
+            merged.append(current)
+
+    return merged
 
 
 def merge_adjacent_paragraphs(
@@ -52,9 +193,13 @@ def merge_adjacent_paragraphs(
 ) -> list[Paragraph]:
     """Merge adjacent paragraphs with the same category.
 
-    This function processes paragraphs page by page, merging those that
-    meet the merge criteria. Paragraphs are processed top-to-bottom
-    (by y1 descending in PDF coordinates).
+    This function processes paragraphs page by page, with column detection
+    for multi-column layouts. Within each column, paragraphs are merged
+    top-to-bottom if they meet the merge criteria.
+
+    The column detection ensures that paragraphs in different columns
+    (e.g., left and right columns in academic papers) are not incorrectly
+    merged even if they appear vertically adjacent.
 
     Args:
         paragraphs: List of paragraphs to process.
@@ -82,26 +227,24 @@ def merge_adjacent_paragraphs(
     for page_num in sorted(pages.keys()):
         page_paragraphs = pages[page_num]
 
-        # Sort by y1 descending (top to bottom in PDF coordinates)
-        sorted_paras = sorted(
-            page_paragraphs, key=lambda p: p.block_bbox.y1, reverse=True
-        )
-
-        if not sorted_paras:
+        if not page_paragraphs:
             continue
 
-        # Initialize with first paragraph
-        merged_page: list[Paragraph] = [sorted_paras[0]]
+        # Estimate page width from paragraph positions
+        page_width = max(p.block_bbox.x1 for p in page_paragraphs)
+        gap_threshold = page_width * config.column_gap_threshold_ratio
 
-        # Process remaining paragraphs
-        for current in sorted_paras[1:]:
-            last = merged_page[-1]
+        # Detect columns based on X positions
+        columns = _detect_columns(page_paragraphs, gap_threshold)
 
-            if _can_merge(last, current, config):
-                # Replace last with merged paragraph
-                merged_page[-1] = _merge_two_paragraphs(last, current)
-            else:
-                merged_page.append(current)
+        # Process each column independently
+        merged_page: list[Paragraph] = []
+        for column in columns:
+            merged_column = _merge_column(column, config)
+            merged_page.extend(merged_column)
+
+        # Sort by y1 descending for consistent output order
+        merged_page.sort(key=lambda p: p.block_bbox.y1, reverse=True)
 
         result.extend(merged_page)
 

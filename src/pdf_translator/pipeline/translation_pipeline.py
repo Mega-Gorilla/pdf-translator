@@ -55,6 +55,7 @@ class PipelineConfig:
     merge_gap_tolerance: float = 1.5  # Gap <= font_size * tolerance
     merge_x_overlap_threshold: float = 0.7  # X overlap >= 70%
     merge_font_size_tolerance: float = 1.0  # Font size difference <= 1pt
+    merge_column_gap_threshold_ratio: float = 0.02  # Column gap >= 2% of page width
 
     # Debug options
     debug_draw_bbox: bool = False
@@ -186,6 +187,7 @@ class TranslationPipeline:
             x_overlap_threshold=self._config.merge_x_overlap_threshold,
             font_size_tolerance=self._config.merge_font_size_tolerance,
             translatable_categories=self._config.translatable_categories,
+            column_gap_threshold_ratio=self._config.merge_column_gap_threshold_ratio,
         )
 
         original_count = len(paragraphs)
