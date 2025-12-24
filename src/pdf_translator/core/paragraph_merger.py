@@ -43,7 +43,7 @@ class MergeConfig:
             Paragraphs with significantly different widths won't merge.
     """
 
-    gap_tolerance: float = 1.5
+    gap_tolerance: float = 0.5
     x_overlap_threshold: float = 0.7
     font_size_tolerance: float = 1.0
     translatable_categories: frozenset[str] | None = None
