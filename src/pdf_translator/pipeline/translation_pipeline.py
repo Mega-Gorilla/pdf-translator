@@ -16,6 +16,11 @@ from pdf_translator.core.models import LayoutBlock, Paragraph
 from pdf_translator.core.paragraph_extractor import ParagraphExtractor
 from pdf_translator.core.paragraph_merger import MergeConfig, merge_adjacent_paragraphs
 from pdf_translator.core.pdf_processor import PDFProcessor
+from pdf_translator.core.side_by_side import (
+    SideBySideConfig,
+    SideBySideGenerator,
+    SideBySideOrder,
+)
 from pdf_translator.pipeline.errors import (
     ExtractionError,
     LayoutAnalysisError,
@@ -60,6 +65,11 @@ class PipelineConfig:
     # Debug options
     debug_draw_bbox: bool = False
 
+    # Side-by-side output options
+    side_by_side: bool = False  # Generate side-by-side comparison PDF
+    side_by_side_order: SideBySideOrder = SideBySideOrder.TRANSLATED_ORIGINAL
+    side_by_side_gap: float = 0.0  # Gap between pages in points
+
 
 @dataclass
 class TranslationResult:
@@ -67,6 +77,7 @@ class TranslationResult:
 
     pdf_bytes: bytes
     stats: dict[str, Any] | None = None
+    side_by_side_pdf_bytes: bytes | None = None  # Only set if side_by_side is enabled
 
 
 class TranslationPipeline:
@@ -117,9 +128,19 @@ class TranslationPipeline:
         translatable = await self._stage_translate(paragraphs)
         pdf_bytes = self._stage_apply(pdf_path, paragraphs)
 
+        # Generate side-by-side PDF if enabled
+        side_by_side_bytes: bytes | None = None
+        if self._config.side_by_side:
+            side_by_side_bytes = self._stage_side_by_side(pdf_path, pdf_bytes)
+
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(pdf_bytes)
+
+            # Save side-by-side PDF with "_side_by_side" suffix
+            if side_by_side_bytes is not None:
+                sbs_output_path = output_path.with_stem(output_path.stem + "_side_by_side")
+                sbs_output_path.write_bytes(side_by_side_bytes)
 
         stats = {
             "original_paragraphs": original_count,
@@ -128,7 +149,11 @@ class TranslationPipeline:
             "translated_paragraphs": len(translatable),
             "skipped_paragraphs": len(paragraphs) - len(translatable),
         }
-        return TranslationResult(pdf_bytes=pdf_bytes, stats=stats)
+        return TranslationResult(
+            pdf_bytes=pdf_bytes,
+            stats=stats,
+            side_by_side_pdf_bytes=side_by_side_bytes,
+        )
 
     async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
         try:
@@ -243,6 +268,34 @@ class TranslationPipeline:
             )
             self._notify("apply", 1, 1)
             return processor.to_bytes()
+
+    def _stage_side_by_side(
+        self,
+        original_pdf_path: Path,
+        translated_pdf_bytes: bytes,
+    ) -> bytes:
+        """Generate side-by-side comparison PDF.
+
+        Args:
+            original_pdf_path: Path to the original PDF.
+            translated_pdf_bytes: Bytes of the translated PDF.
+
+        Returns:
+            bytes: The side-by-side PDF bytes.
+        """
+        config = SideBySideConfig(
+            order=self._config.side_by_side_order,
+            gap=self._config.side_by_side_gap,
+        )
+        generator = SideBySideGenerator(config)
+
+        original_bytes = original_pdf_path.read_bytes()
+        result = generator.generate(
+            translated_pdf=translated_pdf_bytes,
+            original_pdf=original_bytes,
+        )
+        self._notify("side_by_side", 1, 1)
+        return result
 
     async def _translate_with_retry(self, texts: list[str]) -> list[str]:
         last_error: TranslationError | None = None
