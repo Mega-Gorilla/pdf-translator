@@ -10,6 +10,7 @@ from pdf_translator.core.font_subsetter import (
     FontSubsetter,
     SubsetConfig,
     _find_font_variant,
+    has_truetype_outlines,
 )
 
 # =============================================================================
@@ -25,6 +26,41 @@ requires_noto_font = pytest.mark.skipif(
     not NOTO_SANS_CJK_REGULAR.exists(),
     reason="NotoSansCJK-Regular.ttc not found",
 )
+
+
+# Bundled Koruri font (TrueType)
+BUNDLED_KORURI = Path(__file__).parent.parent / "src" / "pdf_translator" / "resources" / "fonts" / "Koruri-Regular.ttf"
+
+requires_bundled_koruri = pytest.mark.skipif(
+    not BUNDLED_KORURI.exists(),
+    reason="Bundled Koruri font not found",
+)
+
+
+# =============================================================================
+# Tests for has_truetype_outlines()
+# =============================================================================
+
+
+class TestHasTrueTypeOutlines:
+    """Tests for has_truetype_outlines() function."""
+
+    @requires_noto_font
+    def test_noto_sans_cjk_is_cff(self) -> None:
+        """NotoSansCJK uses CFF outlines (not TrueType)."""
+        result = has_truetype_outlines(NOTO_SANS_CJK_REGULAR, font_number=0)
+        assert result is False
+
+    @requires_bundled_koruri
+    def test_koruri_is_truetype(self) -> None:
+        """Bundled Koruri uses TrueType outlines."""
+        result = has_truetype_outlines(BUNDLED_KORURI)
+        assert result is True
+
+    def test_nonexistent_font_returns_false(self) -> None:
+        """Non-existent font returns False."""
+        result = has_truetype_outlines(Path("/nonexistent/font.ttf"))
+        assert result is False
 
 
 # =============================================================================
@@ -296,6 +332,88 @@ class TestCIDFontCompatibility:
         font_data = subset_path.read_bytes()
 
         # Try to load into pypdfium2
+        pdf = pdfium.PdfDocument.new()
+        font_arr = to_byte_array(font_data)
+
+        font_handle = pdfium.raw.FPDFText_LoadFont(
+            pdf.raw,
+            font_arr,
+            ctypes.c_uint(len(font_data)),
+            ctypes.c_int(pdfium.raw.FPDF_FONT_TRUETYPE),
+            ctypes.c_int(1),  # is_cid = True
+        )
+
+        assert font_handle is not None
+
+        pdf.close()
+        subsetter.cleanup()
+
+
+# =============================================================================
+# Tests for Bundled Koruri Font
+# =============================================================================
+
+
+class TestBundledKoruriFont:
+    """Tests for bundled Koruri font subsetting."""
+
+    @requires_bundled_koruri
+    def test_koruri_subset_creates_file(self) -> None:
+        """Koruri subset creates a valid font file."""
+        subsetter = FontSubsetter()
+        texts = ["こんにちは世界"]
+
+        result = subsetter.subset_for_texts(
+            font_path=BUNDLED_KORURI,
+            texts=texts,
+        )
+
+        assert result is not None
+        assert result.exists()
+        assert result.suffix == ".ttf"
+
+        subsetter.cleanup()
+
+    @requires_bundled_koruri
+    def test_koruri_subset_size_reduction(self) -> None:
+        """Koruri subset is much smaller than original."""
+        subsetter = FontSubsetter()
+        texts = ["テスト"]
+
+        original_size = BUNDLED_KORURI.stat().st_size
+        result = subsetter.subset_for_texts(
+            font_path=BUNDLED_KORURI,
+            texts=texts,
+        )
+
+        assert result is not None
+        subset_size = result.stat().st_size
+
+        # Subset should be < 5% of original (~1.8MB -> ~100KB or less)
+        assert subset_size < original_size * 0.05
+
+        subsetter.cleanup()
+
+    @requires_bundled_koruri
+    def test_koruri_subset_loadable_in_pypdfium2(self) -> None:
+        """Koruri subset can be loaded into pypdfium2 as CID font."""
+        import ctypes
+
+        import pypdfium2 as pdfium
+
+        from pdf_translator.core.pdf_processor import to_byte_array
+
+        subsetter = FontSubsetter()
+        texts = ["PDF互換性テスト"]
+
+        subset_path = subsetter.subset_for_texts(
+            font_path=BUNDLED_KORURI,
+            texts=texts,
+        )
+        assert subset_path is not None
+
+        font_data = subset_path.read_bytes()
+
         pdf = pdfium.PdfDocument.new()
         font_arr = to_byte_array(font_data)
 

@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pdf_translator.core.font_subsetter import FontSubsetter, SubsetConfig
+from pdf_translator.core.font_subsetter import (
+    CFF_OPTIMIZATION_WARNING,
+    FontSubsetter,
+    SubsetConfig,
+    has_truetype_outlines,
+)
 from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
 from pdf_translator.core.models import LayoutBlock, Paragraph
@@ -31,6 +36,11 @@ from pdf_translator.pipeline.progress import ProgressCallback
 from pdf_translator.translators.base import ConfigurationError, TranslationError, TranslatorBackend
 
 logger = logging.getLogger(__name__)
+
+# Bundled Koruri font (Apache 2.0 licensed TrueType font with good PDF compatibility)
+_BUNDLED_FONT_DIR = Path(__file__).parent.parent / "resources" / "fonts"
+BUNDLED_KORURI_REGULAR = _BUNDLED_FONT_DIR / "Koruri-Regular.ttf"
+BUNDLED_KORURI_BOLD = _BUNDLED_FONT_DIR / "Koruri-Bold.ttf"
 
 
 @dataclass
@@ -260,15 +270,24 @@ class TranslationPipeline:
         if target_lang in {"ja", "zh", "ko"}:
             if self._config.cjk_font_path is not None:
                 font_path = self._config.cjk_font_path
+            elif BUNDLED_KORURI_REGULAR.exists():
+                # Use bundled Koruri font as default (TrueType, good compatibility)
+                font_path = BUNDLED_KORURI_REGULAR
+                logger.info("Using bundled Koruri font for CJK text rendering.")
             else:
                 logger.warning(
-                    "Target language is CJK but no cjk_font_path is set; output may be garbled."
+                    "Target language is CJK but no cjk_font_path is set "
+                    "and bundled font not found; output may be garbled."
                 )
 
         # Create font subsets if optimization is enabled
         font_subsets: dict[tuple[bool, bool], Path] = {}
         subsetter: FontSubsetter | None = None
         if self._config.optimize_fonts and font_path is not None:
+            # Check for CFF font compatibility issues
+            if not has_truetype_outlines(font_path, self._config.cjk_font_number):
+                logger.warning(CFF_OPTIMIZATION_WARNING, font_path.name)
+
             translated_texts = [p.translated_text for p in paragraphs if p.translated_text]
             if translated_texts:
                 subset_config = SubsetConfig(cache_dir=self._config.font_subset_cache_dir)

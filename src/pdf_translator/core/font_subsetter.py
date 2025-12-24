@@ -22,6 +22,50 @@ SAFETY_MARGIN_CHARS = "。、！？「」『』（）…―　0123456789"
 # Font weight patterns for variant detection
 WEIGHT_PATTERN = re.compile(r"-(Regular|Bold|Light|Medium|Thin|Black)")
 
+# CFF font compatibility warning message
+CFF_FONT_WARNING = (
+    "Font '%s' uses CFF outlines which may not render correctly in some PDF viewers. "
+    "Consider using a TrueType font (e.g., Koruri, https://koruri.github.io/) for better compatibility."
+)
+
+# Warning when CFF font is used with optimization enabled
+CFF_OPTIMIZATION_WARNING = (
+    "Font '%s' uses CFF outlines and font optimization is enabled. "
+    "Subset CFF fonts may not display correctly in some PDF viewers. "
+    "Consider either: 1) Using a TrueType font (e.g., bundled Koruri), or "
+    "2) Disabling font optimization (optimize_fonts=False)."
+)
+
+
+def has_truetype_outlines(font_path: Path, font_number: int = 0) -> bool:
+    """Check if a font has TrueType outlines (glyf table).
+
+    CFF fonts (used by NotoSansCJK, etc.) may not render correctly in some
+    PDF viewers when subset. TrueType fonts (with glyf table) have better
+    compatibility.
+
+    Args:
+        font_path: Path to the font file (TTF or TTC).
+        font_number: Font index for TTC files (default: 0).
+
+    Returns:
+        True if font has TrueType outlines (glyf), False if CFF or error.
+    """
+    try:
+        from fontTools.ttLib import TTFont
+
+        if font_path.suffix.lower() == ".ttc":
+            font = TTFont(font_path, fontNumber=font_number)
+        else:
+            font = TTFont(font_path)
+
+        has_glyf = "glyf" in font
+        font.close()
+        return has_glyf
+    except Exception:
+        logger.warning("Failed to check font type for %s", font_path.name)
+        return False
+
 
 @dataclass
 class SubsetConfig:
@@ -112,8 +156,8 @@ class FontSubsetter:
         Returns:
             Path to the subset font file, or None if subsetting failed.
         """
-        from fontTools.subset import Options, Subsetter  # type: ignore[import-untyped]
-        from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
+        from fontTools.subset import Options, Subsetter
+        from fontTools.ttLib import TTFont
 
         # Collect unique characters
         chars: set[str] = set()
@@ -161,6 +205,10 @@ class FontSubsetter:
                 font = TTFont(actual_font_path, fontNumber=font_number)
             else:
                 font = TTFont(actual_font_path)
+
+            # Check for CFF outlines (may have PDF viewer compatibility issues)
+            if "CFF " in font and "glyf" not in font:
+                logger.warning(CFF_FONT_WARNING, actual_font_path.name)
 
             # Create subset
             options = Options()
