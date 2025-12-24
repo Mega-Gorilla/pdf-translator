@@ -234,35 +234,48 @@ Italic skew transform は以下の両方に統合する:
 
 **行列合成**:
 
-PDF の affine transform `[a, b, c, d, e, f]` は以下の行列を表す:
+PDF の affine transform `[a, b, c, d, e, f]` は以下の変換を表す:
 ```
-| a  b  0 |
-| c  d  0 |
-| e  f  1 |
+x' = a*x + c*y + e
+y' = b*x + d*y + f
 ```
 
-現在の `insert_laid_out_text()` の回転変換:
+行列表現 (行ベクトル × 行列):
+```
+[x' y' 1] = [x y 1] × | a  b  0 |
+                      | c  d  0 |
+                      | e  f  1 |
+```
+
+現在の `insert_laid_out_text()` の回転変換 (a=cos, b=sin, c=-sin, d=cos):
 ```
 | cos(r)   sin(r)  0 |
 | -sin(r)  cos(r)  0 |
 | x        y       1 |
 ```
 
-Italic skew 変換 (s = tan(12°) ≈ 0.21):
+Italic skew 変換 (x方向シアー: x' = x + s*y, y' = y):
 ```
-| 1  s  0 |
-| 0  1  0 |
+| 1  0  0 |
+| s  1  0 |    ← c=s で x方向シアー
 | 0  0  1 |
 ```
+係数: a=1, b=0, **c=s**, d=1
 
 **合成順序**: Skew を先に適用し、その後回転 (オブジェクト座標系での斜体)
 
-`Rotation × Skew` の結果:
+行列乗算 `Skew × Rotation` (S × R) の結果:
 ```
-| cos(r)   s*cos(r) + sin(r)   0 |
-| -sin(r)  -s*sin(r) + cos(r)  0 |
-| x        y                   1 |
+| 1  0  0 |   | cos(r)   sin(r)  0 |   | cos(r)          sin(r)          0 |
+| s  1  0 | × | -sin(r)  cos(r)  0 | = | s*cos(r)-sin(r) s*sin(r)+cos(r) 0 |
+| 0  0  1 |   | x        y       1 |   | x               y               1 |
 ```
+
+合成結果の係数:
+- a = cos(r)
+- b = sin(r)
+- c = s*cos(r) - sin(r)
+- d = s*sin(r) + cos(r)
 
 **実装コード** (`insert_laid_out_text()` 内):
 
@@ -272,11 +285,11 @@ ITALIC_SKEW = 0.21  # tan(12°) ≈ 0.21
 
 # In insert_laid_out_text(), when is_italic=True and no italic font:
 if needs_italic_skew:
-    # Combined rotation + skew transform
+    # Combined skew + rotation transform (S × R)
     a = cos_r
-    b = ITALIC_SKEW * cos_r + sin_r
-    c = -sin_r
-    d = -ITALIC_SKEW * sin_r + cos_r
+    b = sin_r
+    c = ITALIC_SKEW * cos_r - sin_r
+    d = ITALIC_SKEW * sin_r + cos_r
 else:
     # Rotation only (current behavior)
     a = cos_r
@@ -299,15 +312,18 @@ pdfium.raw.FPDFPageObj_Transform(
 
 ```python
 def _apply_italic_transform(text_obj_handle: int, skew: float = 0.21) -> None:
-    """Apply italic skew transform to text object (no rotation)."""
+    """Apply italic skew transform to text object (no rotation).
+
+    x' = x + skew*y (horizontal shear, text leans right)
+    """
     pdfium.raw.FPDFPageObj_Transform(
         text_obj_handle,
-        ctypes.c_double(1.0),   # a
-        ctypes.c_double(skew),  # b: horizontal skew
-        ctypes.c_double(0.0),   # c
-        ctypes.c_double(1.0),   # d
-        ctypes.c_double(0.0),   # e
-        ctypes.c_double(0.0),   # f
+        ctypes.c_double(1.0),    # a
+        ctypes.c_double(0.0),    # b
+        ctypes.c_double(skew),   # c: horizontal skew (x += skew*y)
+        ctypes.c_double(1.0),    # d
+        ctypes.c_double(0.0),    # e
+        ctypes.c_double(0.0),    # f
     )
 ```
 
