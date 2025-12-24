@@ -5,15 +5,14 @@ import pytest
 
 from pdf_translator.core.models import BBox, Paragraph
 from pdf_translator.core.paragraph_merger import (
-    MergeConfig,
     SENTENCE_ENDING_PUNCTUATION,
+    MergeConfig,
     _calc_x_overlap,
     _can_merge,
     _ends_with_sentence_punctuation,
     _merge_two_paragraphs,
     merge_adjacent_paragraphs,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -272,13 +271,18 @@ class TestCanMerge:
 
         assert _can_merge(para1, para2, config) is False
 
-    def test_cannot_merge_different_alignments(self) -> None:
-        """Paragraphs with different alignments should not merge."""
+    def test_can_merge_different_alignments(self) -> None:
+        """Different alignments should NOT prevent merging.
+
+        Alignment check was removed because _estimate_alignment() is unreliable
+        for short paragraphs and causes false negatives (e.g., left vs justify).
+        """
         para1 = make_paragraph(alignment="left", y0=50, y1=100)
-        para2 = make_paragraph(alignment="center", y0=0, y1=48)
+        para2 = make_paragraph(alignment="justify", y0=0, y1=48)
         config = MergeConfig()
 
-        assert _can_merge(para1, para2, config) is False
+        # Should merge even with different alignments
+        assert _can_merge(para1, para2, config) is True
 
     def test_cannot_merge_sentence_ending(self) -> None:
         """First paragraph ending with sentence punctuation should not merge."""

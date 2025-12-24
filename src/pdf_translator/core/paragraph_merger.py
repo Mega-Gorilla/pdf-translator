@@ -5,7 +5,7 @@ This module provides functionality to merge paragraphs that are:
 - On the same page
 - Have the same layout category
 - Are vertically adjacent
-- Meet various similarity criteria (font size, alignment, etc.)
+- Meet various similarity criteria (font size, etc.)
 
 This helps improve translation quality by maintaining context across
 over-segmented paragraphs from pdftext.
@@ -128,8 +128,12 @@ def _can_merge(
     5. Gap <= font_size * gap_tolerance
     6. X overlap >= threshold
     7. Same font size (within tolerance)
-    8. Same alignment
-    9. para1 doesn't end with sentence-ending punctuation
+    8. para1 doesn't end with sentence-ending punctuation
+
+    Note: Alignment check was intentionally removed because:
+    - _estimate_alignment() is unreliable for short paragraphs
+    - Category and font size checks already distinguish headers from body text
+    - "left" vs "justify" distinction causes false negatives in continuous text
 
     Args:
         para1: First paragraph (should be above para2).
@@ -179,11 +183,7 @@ def _can_merge(
     if font_diff > config.font_size_tolerance:
         return False
 
-    # 8. Alignment must match
-    if para1.alignment != para2.alignment:
-        return False
-
-    # 9. First paragraph should not end with sentence-ending punctuation
+    # 8. First paragraph should not end with sentence-ending punctuation
     if _ends_with_sentence_punctuation(para1.text):
         return False
 
