@@ -222,37 +222,94 @@ Italic 指定時は以下の動作とする:
 
 **Italic transform 実装**:
 
-フォントファイルがない場合、skew transform を使用して斜体を表現する:
+フォントファイルがない場合、skew transform を使用して斜体を表現する。
 
-```python
-def _apply_italic_transform(
-    text_obj_handle: int,
-    page_handle: int,
-    skew_angle: float = 0.2,  # 約11.5度
-) -> None:
-    """Apply italic skew transform to text object.
+**統合位置**:
 
-    Uses horizontal skew (c parameter) in the affine transform matrix.
-    Standard italic angle is about 12 degrees (skew ≈ tan(12°) ≈ 0.21).
-    """
-    import ctypes
-    import pypdfium2 as pdfium
+翻訳適用の主経路は `apply_paragraphs()` → `insert_laid_out_text()` であるため、
+Italic skew transform は以下の両方に統合する:
 
-    # Affine transform: [a, b, c, d, e, f]
-    # c = horizontal skew (positive = right lean)
-    pdfium.raw.FPDFPageObj_Transform(
-        text_obj_handle,
-        ctypes.c_double(1.0),      # a: horizontal scale
-        ctypes.c_double(0.0),      # b: vertical skew
-        ctypes.c_double(skew_angle),  # c: horizontal skew (italic)
-        ctypes.c_double(1.0),      # d: vertical scale
-        ctypes.c_double(0.0),      # e: horizontal translation
-        ctypes.c_double(0.0),      # f: vertical translation
-    )
+1. **`insert_laid_out_text()`** (主経路): 回転と skew を合成した変換行列を適用
+2. **`insert_text_object()`** (フォールバック): 単独の skew 変換を適用
+
+**行列合成**:
+
+PDF の affine transform `[a, b, c, d, e, f]` は以下の行列を表す:
+```
+| a  b  0 |
+| c  d  0 |
+| e  f  1 |
 ```
 
-**統合位置**: `pdf_processor.py` の `insert_text_object()` 内で、
-Italic フォントが見つからない場合にこの transform を適用する。
+現在の `insert_laid_out_text()` の回転変換:
+```
+| cos(r)   sin(r)  0 |
+| -sin(r)  cos(r)  0 |
+| x        y       1 |
+```
+
+Italic skew 変換 (s = tan(12°) ≈ 0.21):
+```
+| 1  s  0 |
+| 0  1  0 |
+| 0  0  1 |
+```
+
+**合成順序**: Skew を先に適用し、その後回転 (オブジェクト座標系での斜体)
+
+`Rotation × Skew` の結果:
+```
+| cos(r)   s*cos(r) + sin(r)   0 |
+| -sin(r)  -s*sin(r) + cos(r)  0 |
+| x        y                   1 |
+```
+
+**実装コード** (`insert_laid_out_text()` 内):
+
+```python
+# Constants
+ITALIC_SKEW = 0.21  # tan(12°) ≈ 0.21
+
+# In insert_laid_out_text(), when is_italic=True and no italic font:
+if needs_italic_skew:
+    # Combined rotation + skew transform
+    a = cos_r
+    b = ITALIC_SKEW * cos_r + sin_r
+    c = -sin_r
+    d = -ITALIC_SKEW * sin_r + cos_r
+else:
+    # Rotation only (current behavior)
+    a = cos_r
+    b = sin_r
+    c = -sin_r
+    d = cos_r
+
+pdfium.raw.FPDFPageObj_Transform(
+    text_obj,
+    ctypes.c_double(a),
+    ctypes.c_double(b),
+    ctypes.c_double(c),
+    ctypes.c_double(d),
+    ctypes.c_double(x_pos),
+    ctypes.c_double(y_pos),
+)
+```
+
+**`insert_text_object()` フォールバック用** (回転なしの単純ケース):
+
+```python
+def _apply_italic_transform(text_obj_handle: int, skew: float = 0.21) -> None:
+    """Apply italic skew transform to text object (no rotation)."""
+    pdfium.raw.FPDFPageObj_Transform(
+        text_obj_handle,
+        ctypes.c_double(1.0),   # a
+        ctypes.c_double(skew),  # b: horizontal skew
+        ctypes.c_double(0.0),   # c
+        ctypes.c_double(1.0),   # d
+        ctypes.c_double(0.0),   # e
+        ctypes.c_double(0.0),   # f
+    )
+```
 
 ### 6. TTC 対応
 
@@ -591,6 +648,9 @@ class TranslationPipeline:
 2. **独立したサブセット生成**: `is_bold=True/False` で適切なフォントファイルからサブセット
 3. **段落ごとの適用**: 各段落の `is_bold` フラグに基づいて適切なサブセットを使用
 4. **キャッシュ効率**: Regular/Bold は別ファイルのため自動的に別キャッシュエントリ
+5. **Italic 処理**: NotoSansCJK は Italic ファイルを持たないため、Italic 段落は
+   Regular/Bold と同じサブセットを使用し、`insert_laid_out_text()` 内で
+   skew transform を適用して斜体を表現する (セクション 5 参照)
 
 ### Phase 4: pyproject.toml の更新
 
