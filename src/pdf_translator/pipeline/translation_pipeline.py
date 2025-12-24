@@ -131,7 +131,7 @@ class TranslationPipeline:
         # Generate side-by-side PDF if enabled
         side_by_side_bytes: bytes | None = None
         if self._config.side_by_side:
-            side_by_side_bytes = self._stage_side_by_side(pdf_path, pdf_bytes)
+            side_by_side_bytes = self._stage_side_by_side(pdf_path, pdf_bytes, paragraphs)
 
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,11 +259,15 @@ class TranslationPipeline:
                     "Target language is CJK but no cjk_font_path is set; output may be garbled."
                 )
 
+        # When side_by_side is enabled, draw debug boxes on original PDF instead
+        # of translated PDF (handled in _stage_side_by_side)
+        draw_bbox_on_translated = self._config.debug_draw_bbox and not self._config.side_by_side
+
         with PDFProcessor(pdf_path) as processor:
             processor.apply_paragraphs(
                 paragraphs,
                 font_path=font_path,
-                debug_draw_bbox=self._config.debug_draw_bbox,
+                debug_draw_bbox=draw_bbox_on_translated,
                 min_font_size=self._config.min_font_size,
             )
             self._notify("apply", 1, 1)
@@ -273,12 +277,18 @@ class TranslationPipeline:
         self,
         original_pdf_path: Path,
         translated_pdf_bytes: bytes,
+        paragraphs: list[Paragraph],
     ) -> bytes:
         """Generate side-by-side comparison PDF.
+
+        When debug_draw_bbox is enabled, debug boxes are drawn on the original
+        PDF side instead of the translated PDF, allowing users to see clean
+        translation results while viewing layout analysis on the original.
 
         Args:
             original_pdf_path: Path to the original PDF.
             translated_pdf_bytes: Bytes of the translated PDF.
+            paragraphs: List of paragraphs (used for debug box drawing).
 
         Returns:
             bytes: The side-by-side PDF bytes.
@@ -289,7 +299,14 @@ class TranslationPipeline:
         )
         generator = SideBySideGenerator(config)
 
-        original_bytes = original_pdf_path.read_bytes()
+        # Draw debug boxes on original PDF if enabled
+        if self._config.debug_draw_bbox:
+            with PDFProcessor(original_pdf_path) as processor:
+                processor.draw_debug_overlay(paragraphs)
+                original_bytes = processor.to_bytes()
+        else:
+            original_bytes = original_pdf_path.read_bytes()
+
         result = generator.generate(
             translated_pdf=translated_pdf_bytes,
             original_pdf=original_bytes,
