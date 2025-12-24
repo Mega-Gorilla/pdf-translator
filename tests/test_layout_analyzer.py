@@ -138,8 +138,6 @@ class TestTranslatableCategories:
             "text",
             "vertical_text",
             "abstract",
-            "aside_text",
-            "paragraph_title",
             "doc_title",
             "figure_title",
         }
@@ -148,7 +146,12 @@ class TestTranslatableCategories:
     def test_text_is_translatable(self) -> None:
         """Text categories should be translatable."""
         assert "text" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
-        assert "paragraph_title" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        assert "abstract" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+
+    def test_aside_and_paragraph_title_not_translatable(self) -> None:
+        """aside_text and paragraph_title should not be translatable."""
+        assert "aside_text" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        assert "paragraph_title" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
     def test_formula_is_not_translatable(self) -> None:
         """Formula categories should not be translatable."""
@@ -550,12 +553,12 @@ class TestFilterTranslatable:
         objs = [
             TextObject(id="t1", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="Text"),
             TextObject(id="t2", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="Formula"),
-            TextObject(id="t3", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="Title"),
+            TextObject(id="t3", bbox=BBox(x0=0, y0=0, x1=10, y1=10), text="Abstract"),
         ]
         categories = {
             "t1": "text",
             "t2": "inline_formula",
-            "t3": "paragraph_title",
+            "t3": "abstract",
         }
 
         result = filter_translatable(objs, categories)
