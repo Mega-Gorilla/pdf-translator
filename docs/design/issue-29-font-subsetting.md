@@ -214,8 +214,45 @@ def get_subset_font(
 **Italic の注意点**:
 
 NotoSansCJK は Italic バリアントを持たない。
-Italic 指定時は Regular/Bold にフォールバックし、
-PDF 側で斜体変換（Transform）を使用する（既存の動作を維持）。
+Italic 指定時は以下の動作とする:
+
+1. `_find_font_variant()` で Italic ファイルを探索
+2. 見つからない場合は Regular/Bold にフォールバック
+3. **PDF transform による斜体変換を適用** (新規実装)
+
+**Italic transform 実装**:
+
+フォントファイルがない場合、skew transform を使用して斜体を表現する:
+
+```python
+def _apply_italic_transform(
+    text_obj_handle: int,
+    page_handle: int,
+    skew_angle: float = 0.2,  # 約11.5度
+) -> None:
+    """Apply italic skew transform to text object.
+
+    Uses horizontal skew (c parameter) in the affine transform matrix.
+    Standard italic angle is about 12 degrees (skew ≈ tan(12°) ≈ 0.21).
+    """
+    import ctypes
+    import pypdfium2 as pdfium
+
+    # Affine transform: [a, b, c, d, e, f]
+    # c = horizontal skew (positive = right lean)
+    pdfium.raw.FPDFPageObj_Transform(
+        text_obj_handle,
+        ctypes.c_double(1.0),      # a: horizontal scale
+        ctypes.c_double(0.0),      # b: vertical skew
+        ctypes.c_double(skew_angle),  # c: horizontal skew (italic)
+        ctypes.c_double(1.0),      # d: vertical scale
+        ctypes.c_double(0.0),      # e: horizontal translation
+        ctypes.c_double(0.0),      # f: vertical translation
+    )
+```
+
+**統合位置**: `pdf_processor.py` の `insert_text_object()` 内で、
+Italic フォントが見つからない場合にこの transform を適用する。
 
 ### 6. TTC 対応
 
@@ -302,8 +339,8 @@ def _find_font_variant(
 
     NotoSansCJK-Regular.ttc → NotoSansCJK-Bold.ttc (is_bold=True)
 
-    Note: NotoSansCJK does not have Italic variants. Italic styling
-    is handled via PDF transform at render time.
+    Note: NotoSansCJK does not have Italic variants.
+    When Italic is requested but not available, falls back to Regular/Bold.
 
     Args:
         base_font_path: Path to the base font file (typically Regular).
@@ -507,21 +544,53 @@ class TranslationPipeline:
     def _stage_apply(self, pdf_path: Path, paragraphs: list[Paragraph]) -> bytes:
         # ...
 
-        # Font subsetting
-        actual_font_path = font_path
+        # Font subsetting: スタイル別にサブセット生成
         if self._config.optimize_fonts and font_path:
-            texts = [p.translated_text for p in paragraphs if p.translated_text]
-            subset_path = self._font_subsetter.subset_for_texts(
-                font_path,
-                texts,
-                font_number=self._config.cjk_font_number,
-            )
-            if subset_path:
-                actual_font_path = subset_path
+            # 1. スタイル別に段落をグループ化
+            regular_texts: list[str] = []
+            bold_texts: list[str] = []
 
-        # Use actual_font_path for text insertion
-        # ...
+            for para in paragraphs:
+                if para.translated_text:
+                    if para.is_bold:
+                        bold_texts.append(para.translated_text)
+                    else:
+                        regular_texts.append(para.translated_text)
+
+            # 2. Regular サブセット生成
+            regular_subset = None
+            if regular_texts:
+                regular_subset = self._font_subsetter.subset_for_texts(
+                    font_path,
+                    regular_texts,
+                    font_number=self._config.cjk_font_number,
+                    is_bold=False,
+                )
+
+            # 3. Bold サブセット生成
+            bold_subset = None
+            if bold_texts:
+                bold_subset = self._font_subsetter.subset_for_texts(
+                    font_path,
+                    bold_texts,
+                    font_number=self._config.cjk_font_number,
+                    is_bold=True,
+                )
+
+        # 4. 各段落に適切なサブセットを適用
+        for para in paragraphs:
+            if para.translated_text:
+                subset_path = bold_subset if para.is_bold else regular_subset
+                # Use subset_path (or original font_path if None) for text insertion
+                # ...
 ```
+
+**実装のポイント**:
+
+1. **スタイル別文字収集**: Regular と Bold で使用される文字を別々に収集
+2. **独立したサブセット生成**: `is_bold=True/False` で適切なフォントファイルからサブセット
+3. **段落ごとの適用**: 各段落の `is_bold` フラグに基づいて適切なサブセットを使用
+4. **キャッシュ効率**: Regular/Bold は別ファイルのため自動的に別キャッシュエントリ
 
 ### Phase 4: pyproject.toml の更新
 
@@ -556,6 +625,7 @@ dependencies = [
 - `test_italic_fallback`: Italic 指定時のフォールバック動作
 - `test_bold_separate_cache`: Regular と Bold は別キャッシュエントリ
 - `test_find_font_variant_pattern`: ウェイトパターンの正規表現テスト
+- `test_italic_skew_transform`: Italic フォントがない場合の skew transform 適用
 
 **フォント fixture 方針**:
 
@@ -614,7 +684,7 @@ requires_cjk_font = pytest.mark.skipif(
 | パフォーマンス劣化 | 中 | 低 | キャッシュ機構 |
 | 欠落グリフ | 低 | 中 | 安全マージン文字追加 |
 | Bold ファイル欠損 | 低 | 中 | Regular へのフォールバック + 警告ログ |
-| Italic 非対応 | 低 | 低 | PDF Transform で斜体表現 (既存動作維持) |
+| Italic ファイル欠損 | 低 | 低 | PDF skew transform で斜体表現 (新規実装) |
 
 **フォールバック戦略**:
 - サブセット化失敗時は元のフォントを使用
