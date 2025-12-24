@@ -25,11 +25,6 @@ from pdf_translator.core.models import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# Sentence-ending punctuation for Japanese and English
-SENTENCE_ENDING_PUNCTUATION: frozenset[str] = frozenset(
-    {"。", ".", "!", "?", "！", "？"}
-)
-
 
 @dataclass
 class MergeConfig:
@@ -128,12 +123,14 @@ def _can_merge(
     5. Gap <= font_size * gap_tolerance
     6. X overlap >= threshold
     7. Same font size (within tolerance)
-    8. para1 doesn't end with sentence-ending punctuation
 
-    Note: Alignment check was intentionally removed because:
-    - _estimate_alignment() is unreliable for short paragraphs
-    - Category and font size checks already distinguish headers from body text
-    - "left" vs "justify" distinction causes false negatives in continuous text
+    Note: The following checks were intentionally removed:
+    - Alignment check: _estimate_alignment() is unreliable for short paragraphs,
+      and "left" vs "justify" distinction causes false negatives.
+    - Sentence-ending punctuation check: The purpose of merging is layout
+      optimization (larger bbox = better font size and line-breaking decisions),
+      not semantic analysis. Complete sentences should still merge for
+      consistent visual appearance.
 
     Args:
         para1: First paragraph (should be above para2).
@@ -181,10 +178,6 @@ def _can_merge(
     # 7. Font size similarity
     font_diff = abs(para1.original_font_size - para2.original_font_size)
     if font_diff > config.font_size_tolerance:
-        return False
-
-    # 8. First paragraph should not end with sentence-ending punctuation
-    if _ends_with_sentence_punctuation(para1.text):
         return False
 
     return True
@@ -268,18 +261,3 @@ def _merge_two_paragraphs(para1: Paragraph, para2: Paragraph) -> Paragraph:
         translated_text=None,
         adjusted_font_size=None,
     )
-
-
-def _ends_with_sentence_punctuation(text: str) -> bool:
-    """Check if text ends with sentence-ending punctuation.
-
-    Args:
-        text: Text to check.
-
-    Returns:
-        True if text ends with sentence-ending punctuation.
-    """
-    stripped = text.rstrip()
-    if not stripped:
-        return False
-    return stripped[-1] in SENTENCE_ENDING_PUNCTUATION

@@ -5,11 +5,9 @@ import pytest
 
 from pdf_translator.core.models import BBox, Paragraph
 from pdf_translator.core.paragraph_merger import (
-    SENTENCE_ENDING_PUNCTUATION,
     MergeConfig,
     _calc_x_overlap,
     _can_merge,
-    _ends_with_sentence_punctuation,
     _merge_two_paragraphs,
     merge_adjacent_paragraphs,
 )
@@ -136,50 +134,6 @@ class TestCalcXOverlap:
 
 
 # =============================================================================
-# Tests for _ends_with_sentence_punctuation()
-# =============================================================================
-
-
-class TestEndsWithSentencePunctuation:
-    """Tests for _ends_with_sentence_punctuation() function."""
-
-    def test_english_period(self) -> None:
-        assert _ends_with_sentence_punctuation("This is a sentence.") is True
-
-    def test_japanese_period(self) -> None:
-        assert _ends_with_sentence_punctuation("これは文です。") is True
-
-    def test_exclamation(self) -> None:
-        assert _ends_with_sentence_punctuation("Hello!") is True
-        assert _ends_with_sentence_punctuation("こんにちは！") is True
-
-    def test_question(self) -> None:
-        assert _ends_with_sentence_punctuation("What?") is True
-        assert _ends_with_sentence_punctuation("なに？") is True
-
-    def test_comma_ending(self) -> None:
-        assert _ends_with_sentence_punctuation("First item,") is False
-
-    def test_no_punctuation(self) -> None:
-        assert _ends_with_sentence_punctuation("No punctuation") is False
-
-    def test_whitespace_after_punctuation(self) -> None:
-        """Trailing whitespace should be ignored."""
-        assert _ends_with_sentence_punctuation("End.   ") is True
-
-    def test_empty_string(self) -> None:
-        assert _ends_with_sentence_punctuation("") is False
-
-    def test_whitespace_only(self) -> None:
-        assert _ends_with_sentence_punctuation("   ") is False
-
-    def test_all_punctuation_types(self) -> None:
-        """Verify all punctuation in SENTENCE_ENDING_PUNCTUATION."""
-        for punct in SENTENCE_ENDING_PUNCTUATION:
-            assert _ends_with_sentence_punctuation(f"Text{punct}") is True
-
-
-# =============================================================================
 # Tests for _can_merge()
 # =============================================================================
 
@@ -284,29 +238,28 @@ class TestCanMerge:
         # Should merge even with different alignments
         assert _can_merge(para1, para2, config) is True
 
-    def test_cannot_merge_sentence_ending(self) -> None:
-        """First paragraph ending with sentence punctuation should not merge."""
+    def test_can_merge_sentence_ending(self) -> None:
+        """Sentence-ending punctuation should NOT prevent merging.
+
+        Sentence-ending check was removed because the purpose of merging is
+        layout optimization (larger bbox = better font size and line-breaking),
+        not semantic analysis.
+        """
         para1 = make_paragraph(text="Complete sentence.", y0=50, y1=100)
         para2 = make_paragraph(text="New sentence", y0=0, y1=48)
         config = MergeConfig()
 
-        assert _can_merge(para1, para2, config) is False
-
-    def test_can_merge_comma_ending(self) -> None:
-        """First paragraph ending with comma should merge."""
-        para1 = make_paragraph(text="First part,", y0=50, y1=100)
-        para2 = make_paragraph(text="second part", y0=0, y1=48)
-        config = MergeConfig()
-
+        # Should merge even with sentence-ending punctuation
         assert _can_merge(para1, para2, config) is True
 
     def test_can_merge_japanese_sentence(self) -> None:
-        """Japanese sentence ending should not merge."""
+        """Japanese sentence ending should also merge."""
         para1 = make_paragraph(text="日本語の文。", y0=50, y1=100)
         para2 = make_paragraph(text="次の文", y0=0, y1=48)
         config = MergeConfig()
 
-        assert _can_merge(para1, para2, config) is False
+        # Should merge even with Japanese sentence-ending punctuation
+        assert _can_merge(para1, para2, config) is True
 
 
 # =============================================================================
@@ -467,28 +420,33 @@ class TestMergeAdjacentParagraphs:
         assert result[0].text == "First second third"
 
     def test_merge_partial_chain(self) -> None:
-        """Chain broken by sentence ending."""
+        """Chain broken by category change."""
         para1 = make_paragraph(
             id="para_p0_b0",
-            text="Complete sentence.",
+            text="First paragraph",
+            category="text",
             y0=100, y1=150,
         )
         para2 = make_paragraph(
             id="para_p0_b1",
-            text="New paragraph",
+            text="Title in between",
+            category="paragraph_title",  # Different category breaks chain
             y0=50, y1=98,
         )
         para3 = make_paragraph(
             id="para_p0_b2",
             text="continues here",
+            category="text",
             y0=0, y1=48,
         )
 
         result = merge_adjacent_paragraphs([para1, para2, para3])
 
-        assert len(result) == 2
-        assert result[0].text == "Complete sentence."
-        assert result[1].text == "New paragraph continues here"
+        # Three separate paragraphs (title in the middle breaks both chains)
+        assert len(result) == 3
+        assert result[0].text == "First paragraph"
+        assert result[1].text == "Title in between"
+        assert result[2].text == "continues here"
 
     def test_merge_preserves_non_translatable(self) -> None:
         """Non-translatable paragraphs should pass through unchanged."""
