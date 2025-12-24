@@ -802,9 +802,12 @@ class PDFProcessor:
         path = Path(font_path)
         path_str = str(path)
 
-        # Return cached font if already loaded
-        if path_str in self._loaded_fonts:
-            return self._loaded_fonts[path_str]
+        # Cache key includes is_cid to avoid using non-CID font for CJK text
+        cache_key = f"{path_str}:cid={is_cid}"
+
+        # Return cached font if already loaded with same is_cid setting
+        if cache_key in self._loaded_fonts:
+            return self._loaded_fonts[cache_key]
 
         if not path.exists():
             return None
@@ -814,7 +817,7 @@ class PDFProcessor:
 
         font_arr = to_byte_array(font_data)
         # Keep the buffer alive for the lifetime of this processor
-        self._loaded_font_buffers[path_str] = font_arr
+        self._loaded_font_buffers[cache_key] = font_arr
 
         pdf = self._ensure_open()
         font_handle = pdfium.raw.FPDFText_LoadFont(
@@ -826,7 +829,7 @@ class PDFProcessor:
         )
 
         if font_handle:
-            self._loaded_fonts[path_str] = font_handle
+            self._loaded_fonts[cache_key] = font_handle
             return font_handle
         return None
 
