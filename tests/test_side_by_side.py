@@ -18,8 +18,14 @@ from pdf_translator.core.side_by_side import (
 
 @pytest.fixture
 def sample_pdf_path() -> Path:
-    """Return path to the sample PDF fixture."""
+    """Return path to the sample PDF fixture (1 page)."""
     return Path(__file__).parent / "fixtures" / "sample_llama.pdf"
+
+
+@pytest.fixture
+def multi_page_pdf_path() -> Path:
+    """Return path to a multi-page PDF fixture (43 pages)."""
+    return Path(__file__).parent / "fixtures" / "sample_autogen_paper.pdf"
 
 
 @pytest.fixture
@@ -137,18 +143,19 @@ class TestSideBySideGenerator:
         expected_width = original_width * 2 + gap
         assert abs(result_width - expected_width) < 1.0
 
-    def test_page_count_mismatch_raises_error(self, sample_pdf_path: Path) -> None:
+    def test_page_count_mismatch_raises_error(
+        self, sample_pdf_path: Path, multi_page_pdf_path: Path
+    ) -> None:
         """Test that mismatched page counts raise ValueError."""
-        # Create a multi-page PDF by using a different fixture or mock
-        # For now, we'll test with the same PDF (should work)
         generator = SideBySideGenerator()
 
-        # This should not raise because page counts match
-        result = generator.generate(
-            translated_pdf=sample_pdf_path,
-            original_pdf=sample_pdf_path,
-        )
-        assert result is not None
+        # sample_pdf_path has 1 page, multi_page_pdf_path has 43 pages
+        # This should raise ValueError due to page count mismatch
+        with pytest.raises(ValueError, match="Page count mismatch"):
+            generator.generate(
+                translated_pdf=sample_pdf_path,
+                original_pdf=multi_page_pdf_path,
+            )
 
 
 class TestCreateSideBySidePdf:
