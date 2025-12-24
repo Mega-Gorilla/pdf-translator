@@ -111,6 +111,22 @@ class BBox:
         """Convert to dictionary."""
         return {"x0": self.x0, "y0": self.y0, "x1": self.x1, "y1": self.y1}
 
+    def union(self, other: BBox) -> BBox:
+        """Return the bounding box that contains both bboxes.
+
+        Args:
+            other: Another bounding box to union with.
+
+        Returns:
+            A new BBox that is the union (minimum enclosing box) of both.
+        """
+        return BBox(
+            x0=min(self.x0, other.x0),
+            y0=min(self.y0, other.y0),
+            x1=max(self.x1, other.x1),
+            y1=max(self.y1, other.y1),
+        )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BBox:
         """Create from dictionary."""

@@ -69,6 +69,9 @@ DEBUG_RAW_CATEGORY_COLORS: dict[str | None, tuple[int, int, int]] = {
     "seal": (128, 0, 0),              # Maroon - 印鑑
     "content": (70, 130, 180),        # Steel Blue - コンテンツ
     "unknown": (128, 128, 0),         # Olive - 不明
+    # デバッグ用
+    "MERGED": (255, 0, 128),          # Deep Pink - マージ結果
+    "merged_result": (255, 0, 128),   # Deep Pink - マージ結果 (alias)
     None: (100, 100, 100),            # Default Gray
 }
 
@@ -1431,6 +1434,9 @@ class PDFProcessor:
         confidence: Optional[float] = None,
         line_width: float = 1.5,
         label_font_size: float = 10.0,
+        alpha: int = 200,
+        label_position: str = "left",
+        label_alpha: int = 220,
     ) -> None:
         """Draw a colored bbox outline with category label for debugging.
 
@@ -1441,6 +1447,9 @@ class PDFProcessor:
             confidence: Detection confidence (0.0-1.0) to display in label.
             line_width: Stroke width in points.
             label_font_size: Font size for category label.
+            alpha: Stroke alpha value (0-255, default 200).
+            label_position: Label position - "left" (top-left) or "right" (top-right).
+            label_alpha: Label background alpha value (0-255, default 220).
         """
         pdf = self._ensure_open()
         if page_num < 0 or page_num >= len(pdf):
@@ -1464,7 +1473,7 @@ class PDFProcessor:
         )
 
         # Set stroke color and width
-        pdfium.raw.FPDFPageObj_SetStrokeColor(rect, r, g, b, 200)
+        pdfium.raw.FPDFPageObj_SetStrokeColor(rect, r, g, b, alpha)
         pdfium.raw.FPDFPageObj_SetStrokeWidth(rect, ctypes.c_float(line_width))
 
         # Draw mode: stroke only (fill_mode=0, stroke=1)
@@ -1488,6 +1497,8 @@ class PDFProcessor:
             bbox=bbox,
             font_size=label_font_size,
             color=Color(r=r, g=g, b=b),
+            position=label_position,
+            alpha=label_alpha,
         )
 
         page.gen_content()
@@ -1500,8 +1511,10 @@ class PDFProcessor:
         bbox: BBox,
         font_size: float = 10.0,
         color: Optional[Color] = None,
+        position: str = "left",
+        alpha: int = 220,
     ) -> None:
-        """Draw a debug label with background at top-left of bbox.
+        """Draw a debug label with background at top corner of bbox.
 
         Args:
             doc_handle: PDFium document handle.
@@ -1510,6 +1523,8 @@ class PDFProcessor:
             bbox: Bounding box to label.
             font_size: Font size in points.
             color: Text color (also used for background).
+            position: Label position - "left" (top-left) or "right" (top-right).
+            alpha: Background alpha value (0-255, default 220).
         """
 
         # Load Helvetica-Bold font for label
@@ -1522,13 +1537,17 @@ class PDFProcessor:
         label_width = len(text) * char_width + 4
         label_height = font_size + 4
 
-        # Position: ABOVE bbox at top-left corner (outside the box)
-        # Text baseline position
-        text_x = bbox.x0 + 2
-        text_y = bbox.y1 + 2  # Above the box
+        # Position: ABOVE bbox at top corner (outside the box)
+        if position == "right":
+            # Top-right corner
+            text_x = bbox.x1 - label_width + 2
+            bg_x = bbox.x1 - label_width
+        else:
+            # Top-left corner (default)
+            text_x = bbox.x0 + 2
+            bg_x = bbox.x0
 
-        # Background rectangle position (above the box)
-        bg_x = bbox.x0
+        text_y = bbox.y1 + 2  # Above the box
         bg_y = bbox.y1 + 1
 
         # Draw background rectangle with category color
@@ -1541,7 +1560,7 @@ class PDFProcessor:
             )
             # Solid background using the category color
             pdfium.raw.FPDFPageObj_SetFillColor(
-                bg_rect, color.r, color.g, color.b, 220
+                bg_rect, color.r, color.g, color.b, alpha
             )
             # Fill mode: FPDF_FILLMODE_WINDING = 2
             pdfium.raw.FPDFPath_SetDrawMode(bg_rect, 2, ctypes.c_int(0))
@@ -1602,3 +1621,57 @@ class PDFProcessor:
                 line_width=line_width,
                 label_font_size=label_font_size,
             )
+
+    def draw_merge_debug_overlay(
+        self,
+        original_paragraphs: list[Paragraph],
+        merged_paragraphs: list[Paragraph],
+        line_width: float = 1.5,
+        label_font_size: float = 10.0,
+        merged_alpha: int = 128,
+    ) -> None:
+        """Draw debug bbox overlays showing both original and merged paragraphs.
+
+        This method first draws original paragraph bboxes with labels at top-left,
+        then overlays merged paragraph bboxes with 50% transparency and labels
+        at top-right to avoid overlap.
+
+        Args:
+            original_paragraphs: List of original paragraphs (before merge).
+            merged_paragraphs: List of merged paragraphs (after merge).
+            line_width: Stroke width for bbox outlines.
+            label_font_size: Font size for category labels.
+            merged_alpha: Alpha value for merged bbox overlays (0-255, default 128 = 50%).
+        """
+        # First, draw original paragraphs with normal styling
+        for para in original_paragraphs:
+            self._draw_debug_bbox(
+                page_num=para.page_number,
+                bbox=para.block_bbox,
+                raw_category=para.category,
+                confidence=para.category_confidence,
+                line_width=line_width,
+                label_font_size=label_font_size,
+                alpha=200,
+                label_position="left",
+                label_alpha=220,
+            )
+
+        # Then, overlay merged paragraphs with semi-transparent styling
+        # Only draw merged paragraphs that actually grew (were merged with others)
+        original_texts = {p.id: len(p.text) for p in original_paragraphs}
+        for para in merged_paragraphs:
+            original_len = original_texts.get(para.id, 0)
+            # Only draw if this paragraph was merged (text length increased by 10%+)
+            if len(para.text) > original_len * 1.1:
+                self._draw_debug_bbox(
+                    page_num=para.page_number,
+                    bbox=para.block_bbox,
+                    raw_category="MERGED",
+                    confidence=None,
+                    line_width=line_width * 1.5,  # Slightly thicker line
+                    label_font_size=label_font_size,
+                    alpha=merged_alpha,
+                    label_position="right",
+                    label_alpha=merged_alpha,
+                )

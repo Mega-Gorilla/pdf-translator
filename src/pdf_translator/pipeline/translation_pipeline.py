@@ -14,6 +14,7 @@ from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
 from pdf_translator.core.models import LayoutBlock, Paragraph
 from pdf_translator.core.paragraph_extractor import ParagraphExtractor
+from pdf_translator.core.paragraph_merger import MergeConfig, merge_adjacent_paragraphs
 from pdf_translator.core.pdf_processor import PDFProcessor
 from pdf_translator.pipeline.errors import (
     ExtractionError,
@@ -48,6 +49,13 @@ class PipelineConfig:
     translation_batch_size: int = 20
 
     cjk_font_path: Path | None = None
+
+    # Paragraph merge settings
+    merge_adjacent_paragraphs: bool = True  # Enabled by default
+    merge_gap_tolerance: float = 0.5  # Gap <= font_size * 0.5
+    merge_x_overlap_threshold: float = 0.7  # X overlap >= 70%
+    merge_font_size_tolerance: float = 1.0  # Font size difference <= 1pt
+    merge_width_tolerance: float = 0.95  # Width ratio >= 95%
 
     # Debug options
     debug_draw_bbox: bool = False
@@ -102,8 +110,10 @@ class TranslationPipeline:
         output_path: Path | None,
     ) -> TranslationResult:
         paragraphs = await self._stage_extract(pdf_path)
+        original_count = len(paragraphs)
         layout_blocks = await self._stage_analyze(pdf_path)
         self._stage_categorize(paragraphs, layout_blocks)
+        paragraphs = self._stage_merge(paragraphs)
         translatable = await self._stage_translate(paragraphs)
         pdf_bytes = self._stage_apply(pdf_path, paragraphs)
 
@@ -112,7 +122,9 @@ class TranslationPipeline:
             output_path.write_bytes(pdf_bytes)
 
         stats = {
+            "original_paragraphs": original_count,
             "paragraphs": len(paragraphs),
+            "merged_paragraphs": original_count - len(paragraphs),
             "translated_paragraphs": len(translatable),
             "skipped_paragraphs": len(paragraphs) - len(translatable),
         }
@@ -161,6 +173,27 @@ class TranslationPipeline:
             threshold=self._config.layout_containment_threshold,
         )
         self._notify("categorize", len(paragraphs), len(paragraphs))
+
+    def _stage_merge(self, paragraphs: list[Paragraph]) -> list[Paragraph]:
+        """Merge adjacent same-category paragraphs.
+
+        Only runs if merge_adjacent_paragraphs is True in config.
+        """
+        if not self._config.merge_adjacent_paragraphs:
+            return paragraphs
+
+        merge_config = MergeConfig(
+            gap_tolerance=self._config.merge_gap_tolerance,
+            x_overlap_threshold=self._config.merge_x_overlap_threshold,
+            font_size_tolerance=self._config.merge_font_size_tolerance,
+            translatable_categories=self._config.translatable_categories,
+            width_tolerance=self._config.merge_width_tolerance,
+        )
+
+        original_count = len(paragraphs)
+        merged = merge_adjacent_paragraphs(paragraphs, merge_config)
+        self._notify("merge", len(merged), original_count)
+        return merged
 
     async def _stage_translate(self, paragraphs: list[Paragraph]) -> list[Paragraph]:
         categories = self._config.translatable_categories
