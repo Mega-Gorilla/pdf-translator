@@ -288,21 +288,24 @@ class TranslationPipeline:
             if not has_truetype_outlines(font_path, self._config.cjk_font_number):
                 logger.warning(CFF_OPTIMIZATION_WARNING, font_path.name)
 
-            translated_texts = [p.translated_text for p in paragraphs if p.translated_text]
-            if translated_texts:
+            # Collect texts per style variant for optimized subsetting
+            texts_by_style: dict[tuple[bool, bool], list[str]] = {}
+            for p in paragraphs:
+                if p.translated_text:
+                    key = (p.is_bold, p.is_italic)
+                    if key not in texts_by_style:
+                        texts_by_style[key] = []
+                    texts_by_style[key].append(p.translated_text)
+
+            if texts_by_style:
                 subset_config = SubsetConfig(cache_dir=self._config.font_subset_cache_dir)
                 subsetter = FontSubsetter(subset_config)
 
-                # Collect style variants used by translated paragraphs
-                styles_used = {
-                    (p.is_bold, p.is_italic) for p in paragraphs if p.translated_text
-                }
-
-                # Create subset for each style variant
-                for is_bold, is_italic in styles_used:
+                # Create subset for each style variant with only its texts
+                for (is_bold, is_italic), style_texts in texts_by_style.items():
                     subset_path = subsetter.subset_for_texts(
                         font_path=font_path,
-                        texts=translated_texts,  # All texts for consistent char coverage
+                        texts=style_texts,  # Only texts for this style
                         font_number=self._config.cjk_font_number,
                         is_bold=is_bold,
                         is_italic=is_italic,
@@ -310,10 +313,11 @@ class TranslationPipeline:
                     if subset_path:
                         font_subsets[(is_bold, is_italic)] = subset_path
                         logger.debug(
-                            "Created font subset: bold=%s, italic=%s -> %s",
+                            "Created font subset: bold=%s, italic=%s -> %s (%d chars)",
                             is_bold,
                             is_italic,
                             subset_path.name,
+                            len(set("".join(style_texts))),
                         )
 
         # When side_by_side is enabled, draw debug boxes on original PDF instead

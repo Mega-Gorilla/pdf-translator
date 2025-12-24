@@ -27,6 +27,11 @@ requires_noto_font = pytest.mark.skipif(
     reason="NotoSansCJK-Regular.ttc not found",
 )
 
+requires_noto_font_bold = pytest.mark.skipif(
+    not NOTO_SANS_CJK_BOLD.exists(),
+    reason="NotoSansCJK-Bold.ttc not found",
+)
+
 
 # Bundled Koruri font (TrueType)
 BUNDLED_KORURI = Path(__file__).parent.parent / "src" / "pdf_translator" / "resources" / "fonts" / "Koruri-Regular.ttf"
@@ -72,6 +77,7 @@ class TestFindFontVariant:
     """Tests for _find_font_variant() function."""
 
     @requires_noto_font
+    @requires_noto_font_bold
     def test_find_bold_variant(self) -> None:
         """Find Bold variant from Regular path."""
         result = _find_font_variant(NOTO_SANS_CJK_REGULAR, is_bold=True, is_italic=False)
@@ -172,6 +178,7 @@ class TestFontSubsetter:
         subsetter.cleanup()
 
     @requires_noto_font
+    @requires_noto_font_bold
     def test_subset_with_bold_variant(self) -> None:
         """subset_for_texts uses Bold variant when is_bold=True."""
         subsetter = FontSubsetter()
