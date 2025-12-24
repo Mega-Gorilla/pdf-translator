@@ -1119,6 +1119,7 @@ class PDFProcessor:
         self,
         paragraphs: list[Paragraph],
         font_path: Optional[Union[Path, str]] = None,
+        font_subsets: Optional[dict[tuple[bool, bool], Path]] = None,
         debug_draw_bbox: bool = False,
         min_font_size: Optional[float] = None,
     ) -> None:
@@ -1130,6 +1131,8 @@ class PDFProcessor:
         Args:
             paragraphs: List of paragraphs to apply.
             font_path: Path to TTF font file for custom fonts.
+            font_subsets: Pre-generated subset fonts keyed by (is_bold, is_italic).
+                If provided, uses subsets instead of finding font variants.
             debug_draw_bbox: If True, draw colored bbox outlines with category labels.
             min_font_size: Minimum font size for text fitting. If None, uses engine default.
         """
@@ -1167,11 +1170,17 @@ class PDFProcessor:
             text = para.translated_text
             font_handle = None
             if font_path:
-                # Find appropriate font variant (Bold/Italic) if available
                 base_font_path = Path(font_path) if isinstance(font_path, str) else font_path
-                actual_font_path = self._find_font_variant(
-                    base_font_path, para.is_bold, para.is_italic
-                )
+                style_key = (para.is_bold, para.is_italic)
+
+                # Use subset if available, otherwise fall back to variant finding
+                if font_subsets and style_key in font_subsets:
+                    actual_font_path = font_subsets[style_key]
+                else:
+                    actual_font_path = self._find_font_variant(
+                        base_font_path, para.is_bold, para.is_italic
+                    )
+
                 is_cid = self._needs_cid_font(text)
                 font_handle = self.load_font(actual_font_path, is_cid=is_cid)
             else:

@@ -10,6 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pdf_translator.core.font_subsetter import (
+    CFF_OPTIMIZATION_WARNING,
+    FontSubsetter,
+    SubsetConfig,
+    has_truetype_outlines,
+)
 from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
 from pdf_translator.core.models import LayoutBlock, Paragraph
@@ -30,6 +36,11 @@ from pdf_translator.pipeline.progress import ProgressCallback
 from pdf_translator.translators.base import ConfigurationError, TranslationError, TranslatorBackend
 
 logger = logging.getLogger(__name__)
+
+# Bundled Koruri font (Apache 2.0 licensed TrueType font with good PDF compatibility)
+_BUNDLED_FONT_DIR = Path(__file__).parent.parent / "resources" / "fonts"
+BUNDLED_KORURI_REGULAR = _BUNDLED_FONT_DIR / "Koruri-Regular.ttf"
+BUNDLED_KORURI_BOLD = _BUNDLED_FONT_DIR / "Koruri-Bold.ttf"
 
 
 @dataclass
@@ -54,6 +65,11 @@ class PipelineConfig:
     translation_batch_size: int = 20
 
     cjk_font_path: Path | None = None
+
+    # Font optimization settings
+    optimize_fonts: bool = True  # Enable font subsetting (reduces PDF size)
+    font_subset_cache_dir: Path | None = None  # Cache directory for subset fonts
+    cjk_font_number: int = 0  # Font index for TTC files (default: 0 = Japanese)
 
     # Paragraph merge settings
     merge_adjacent_paragraphs: bool = True  # Enabled by default
@@ -250,28 +266,79 @@ class TranslationPipeline:
 
     def _stage_apply(self, pdf_path: Path, paragraphs: list[Paragraph]) -> bytes:
         target_lang = self._config.target_lang.lower()
-        font_path = None
+        font_path: Path | None = None
         if target_lang in {"ja", "zh", "ko"}:
             if self._config.cjk_font_path is not None:
                 font_path = self._config.cjk_font_path
+            elif BUNDLED_KORURI_REGULAR.exists():
+                # Use bundled Koruri font as default (TrueType, good compatibility)
+                font_path = BUNDLED_KORURI_REGULAR
+                logger.info("Using bundled Koruri font for CJK text rendering.")
             else:
                 logger.warning(
-                    "Target language is CJK but no cjk_font_path is set; output may be garbled."
+                    "Target language is CJK but no cjk_font_path is set "
+                    "and bundled font not found; output may be garbled."
                 )
+
+        # Create font subsets if optimization is enabled
+        font_subsets: dict[tuple[bool, bool], Path] = {}
+        subsetter: FontSubsetter | None = None
+        if self._config.optimize_fonts and font_path is not None:
+            # Check for CFF font compatibility issues
+            if not has_truetype_outlines(font_path, self._config.cjk_font_number):
+                logger.warning(CFF_OPTIMIZATION_WARNING, font_path.name)
+
+            # Collect texts per style variant for optimized subsetting
+            texts_by_style: dict[tuple[bool, bool], list[str]] = {}
+            for p in paragraphs:
+                if p.translated_text:
+                    key = (p.is_bold, p.is_italic)
+                    if key not in texts_by_style:
+                        texts_by_style[key] = []
+                    texts_by_style[key].append(p.translated_text)
+
+            if texts_by_style:
+                subset_config = SubsetConfig(cache_dir=self._config.font_subset_cache_dir)
+                subsetter = FontSubsetter(subset_config)
+
+                # Create subset for each style variant with only its texts
+                for (is_bold, is_italic), style_texts in texts_by_style.items():
+                    subset_path = subsetter.subset_for_texts(
+                        font_path=font_path,
+                        texts=style_texts,  # Only texts for this style
+                        font_number=self._config.cjk_font_number,
+                        is_bold=is_bold,
+                        is_italic=is_italic,
+                    )
+                    if subset_path:
+                        font_subsets[(is_bold, is_italic)] = subset_path
+                        logger.debug(
+                            "Created font subset: bold=%s, italic=%s -> %s (%d chars)",
+                            is_bold,
+                            is_italic,
+                            subset_path.name,
+                            len(set("".join(style_texts))),
+                        )
 
         # When side_by_side is enabled, draw debug boxes on original PDF instead
         # of translated PDF (handled in _stage_side_by_side)
         draw_bbox_on_translated = self._config.debug_draw_bbox and not self._config.side_by_side
 
-        with PDFProcessor(pdf_path) as processor:
-            processor.apply_paragraphs(
-                paragraphs,
-                font_path=font_path,
-                debug_draw_bbox=draw_bbox_on_translated,
-                min_font_size=self._config.min_font_size,
-            )
-            self._notify("apply", 1, 1)
-            return processor.to_bytes()
+        try:
+            with PDFProcessor(pdf_path) as processor:
+                processor.apply_paragraphs(
+                    paragraphs,
+                    font_path=font_path,
+                    font_subsets=font_subsets if font_subsets else None,
+                    debug_draw_bbox=draw_bbox_on_translated,
+                    min_font_size=self._config.min_font_size,
+                )
+                self._notify("apply", 1, 1)
+                return processor.to_bytes()
+        finally:
+            # Clean up subset files if not using cache directory
+            if subsetter and not self._config.font_subset_cache_dir:
+                subsetter.cleanup()
 
     def _stage_side_by_side(
         self,

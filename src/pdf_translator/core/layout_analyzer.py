@@ -67,7 +67,7 @@ class LayoutAnalyzer:
             LayoutDetection model instance
         """
         if self._model is None:
-            from paddleocr import LayoutDetection  # type: ignore[import-untyped]
+            from paddleocr import LayoutDetection  # type: ignore[import-not-found,import-untyped]
 
             logger.info("Initializing %s model...", self._model_name)
             self._model = LayoutDetection(model_name=self._model_name)
