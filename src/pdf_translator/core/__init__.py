@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Core PDF processing modules."""
 
+from .font_subsetter import FontSubsetter, SubsetConfig
 from .models import (
     BBox,
     CharPosition,
@@ -21,12 +22,14 @@ __all__ = [
     "CharPosition",
     "Color",
     "Font",
+    "FontSubsetter",
     "LayoutBlock",
     "Metadata",
     "Page",
     "Paragraph",
     "PDFDocument",
     "PDFProcessor",
+    "SubsetConfig",
     "TextObject",
     "Transform",
 ]

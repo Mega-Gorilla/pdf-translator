@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pdf_translator.core.font_subsetter import FontSubsetter, SubsetConfig
 from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
 from pdf_translator.core.models import LayoutBlock, Paragraph
@@ -54,6 +55,11 @@ class PipelineConfig:
     translation_batch_size: int = 20
 
     cjk_font_path: Path | None = None
+
+    # Font optimization settings
+    optimize_fonts: bool = True  # Enable font subsetting (reduces PDF size)
+    font_subset_cache_dir: Path | None = None  # Cache directory for subset fonts
+    cjk_font_number: int = 0  # Font index for TTC files (default: 0 = Japanese)
 
     # Paragraph merge settings
     merge_adjacent_paragraphs: bool = True  # Enabled by default
@@ -250,7 +256,7 @@ class TranslationPipeline:
 
     def _stage_apply(self, pdf_path: Path, paragraphs: list[Paragraph]) -> bytes:
         target_lang = self._config.target_lang.lower()
-        font_path = None
+        font_path: Path | None = None
         if target_lang in {"ja", "zh", "ko"}:
             if self._config.cjk_font_path is not None:
                 font_path = self._config.cjk_font_path
@@ -259,19 +265,57 @@ class TranslationPipeline:
                     "Target language is CJK but no cjk_font_path is set; output may be garbled."
                 )
 
+        # Create font subsets if optimization is enabled
+        font_subsets: dict[tuple[bool, bool], Path] = {}
+        subsetter: FontSubsetter | None = None
+        if self._config.optimize_fonts and font_path is not None:
+            translated_texts = [p.translated_text for p in paragraphs if p.translated_text]
+            if translated_texts:
+                subset_config = SubsetConfig(cache_dir=self._config.font_subset_cache_dir)
+                subsetter = FontSubsetter(subset_config)
+
+                # Collect style variants used by translated paragraphs
+                styles_used = {
+                    (p.is_bold, p.is_italic) for p in paragraphs if p.translated_text
+                }
+
+                # Create subset for each style variant
+                for is_bold, is_italic in styles_used:
+                    subset_path = subsetter.subset_for_texts(
+                        font_path=font_path,
+                        texts=translated_texts,  # All texts for consistent char coverage
+                        font_number=self._config.cjk_font_number,
+                        is_bold=is_bold,
+                        is_italic=is_italic,
+                    )
+                    if subset_path:
+                        font_subsets[(is_bold, is_italic)] = subset_path
+                        logger.debug(
+                            "Created font subset: bold=%s, italic=%s -> %s",
+                            is_bold,
+                            is_italic,
+                            subset_path.name,
+                        )
+
         # When side_by_side is enabled, draw debug boxes on original PDF instead
         # of translated PDF (handled in _stage_side_by_side)
         draw_bbox_on_translated = self._config.debug_draw_bbox and not self._config.side_by_side
 
-        with PDFProcessor(pdf_path) as processor:
-            processor.apply_paragraphs(
-                paragraphs,
-                font_path=font_path,
-                debug_draw_bbox=draw_bbox_on_translated,
-                min_font_size=self._config.min_font_size,
-            )
-            self._notify("apply", 1, 1)
-            return processor.to_bytes()
+        try:
+            with PDFProcessor(pdf_path) as processor:
+                processor.apply_paragraphs(
+                    paragraphs,
+                    font_path=font_path,
+                    font_subsets=font_subsets if font_subsets else None,
+                    debug_draw_bbox=draw_bbox_on_translated,
+                    min_font_size=self._config.min_font_size,
+                )
+                self._notify("apply", 1, 1)
+                return processor.to_bytes()
+        finally:
+            # Clean up subset files if not using cache directory
+            if subsetter and not self._config.font_subset_cache_dir:
+                subsetter.cleanup()
 
     def _stage_side_by_side(
         self,
