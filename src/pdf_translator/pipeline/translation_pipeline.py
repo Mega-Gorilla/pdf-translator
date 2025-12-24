@@ -51,7 +51,7 @@ class PipelineConfig:
     cjk_font_path: Path | None = None
 
     # Paragraph merge settings
-    merge_adjacent_paragraphs: bool = False  # Disabled by default (opt-in)
+    merge_adjacent_paragraphs: bool = True  # Enabled by default
     merge_gap_tolerance: float = 0.5  # Gap <= font_size * 0.5
     merge_x_overlap_threshold: float = 0.7  # X overlap >= 70%
     merge_font_size_tolerance: float = 1.0  # Font size difference <= 1pt
