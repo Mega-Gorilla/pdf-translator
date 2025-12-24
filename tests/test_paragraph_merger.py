@@ -227,6 +227,45 @@ class TestCanMerge:
 
         assert _can_merge(para1, para2, config) is False
 
+    def test_cannot_merge_different_widths(self) -> None:
+        """Paragraphs with significantly different widths should not merge.
+
+        This prevents short headings or list items from being absorbed
+        into adjacent body text paragraphs.
+        """
+        # para1: full width (width=400)
+        para1 = make_paragraph(x0=100, x1=500, y0=50, y1=100)
+        # para2: narrow (width=150) - ratio = 150/400 = 0.375 < 0.8
+        para2 = make_paragraph(x0=100, x1=250, y0=0, y1=48)
+        config = MergeConfig(width_tolerance=0.8)
+
+        assert _can_merge(para1, para2, config) is False
+
+    def test_can_merge_similar_widths(self) -> None:
+        """Paragraphs with similar widths should merge normally."""
+        # para1: width=400
+        para1 = make_paragraph(x0=100, x1=500, y0=50, y1=100)
+        # para2: width=380 - ratio = 380/400 = 0.95 >= 0.8
+        para2 = make_paragraph(x0=100, x1=480, y0=0, y1=48)
+        config = MergeConfig(width_tolerance=0.8)
+
+        assert _can_merge(para1, para2, config) is True
+
+    def test_width_tolerance_configurable(self) -> None:
+        """Width tolerance should be configurable."""
+        # para1: width=400, para2: width=280
+        # ratio = 280/400 = 0.70
+        para1 = make_paragraph(x0=100, x1=500, y0=50, y1=100)
+        para2 = make_paragraph(x0=100, x1=380, y0=0, y1=48)
+
+        # With 80% tolerance: 0.70 < 0.80 → no merge
+        config_strict = MergeConfig(width_tolerance=0.8)
+        assert _can_merge(para1, para2, config_strict) is False
+
+        # With 60% tolerance: 0.70 >= 0.60 → merge
+        config_relaxed = MergeConfig(width_tolerance=0.6)
+        assert _can_merge(para1, para2, config_relaxed) is True
+
     def test_can_merge_different_alignments(self) -> None:
         """Different alignments should NOT prevent merging.
 

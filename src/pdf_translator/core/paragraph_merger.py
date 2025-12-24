@@ -38,12 +38,16 @@ class MergeConfig:
         font_size_tolerance: Maximum font size difference in points.
         translatable_categories: Set of category strings that are eligible
             for merging. If None, uses DEFAULT_TRANSLATABLE_RAW_CATEGORIES.
+        width_tolerance: Minimum width ratio (0.0 to 1.0) for merging.
+            Calculated as min(width1, width2) / max(width1, width2).
+            Paragraphs with significantly different widths won't merge.
     """
 
     gap_tolerance: float = 1.5
     x_overlap_threshold: float = 0.7
     font_size_tolerance: float = 1.0
     translatable_categories: frozenset[str] | None = None
+    width_tolerance: float = 0.8
 
 
 def _detect_columns(
@@ -256,6 +260,7 @@ def _can_merge(
     5. Gap <= font_size * gap_tolerance
     6. X overlap >= threshold
     7. Same font size (within tolerance)
+    8. Similar width (within tolerance)
 
     Note: The following checks were intentionally removed:
     - Alignment check: _estimate_alignment() is unreliable for short paragraphs,
@@ -312,6 +317,16 @@ def _can_merge(
     font_diff = abs(para1.original_font_size - para2.original_font_size)
     if font_diff > config.font_size_tolerance:
         return False
+
+    # 8. Width similarity
+    # Prevents merging of structurally different paragraphs (e.g., short headings
+    # with body text, or indented items with full-width paragraphs)
+    width1 = para1.block_bbox.width
+    width2 = para2.block_bbox.width
+    if width1 > 0 and width2 > 0:
+        width_ratio = min(width1, width2) / max(width1, width2)
+        if width_ratio < config.width_tolerance:
+            return False
 
     return True
 
