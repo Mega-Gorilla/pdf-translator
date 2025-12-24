@@ -140,14 +140,20 @@ class TranslationPipeline:
         original_count = len(paragraphs)
         layout_blocks = await self._stage_analyze(pdf_path)
         self._stage_categorize(paragraphs, layout_blocks)
+
+        # Save pre-merge paragraphs for debug overlay
+        pre_merge_paragraphs = list(paragraphs) if self._config.debug_draw_bbox else None
+
         paragraphs = self._stage_merge(paragraphs)
         translatable = await self._stage_translate(paragraphs)
-        pdf_bytes = self._stage_apply(pdf_path, paragraphs)
+        pdf_bytes = self._stage_apply(pdf_path, paragraphs, pre_merge_paragraphs)
 
         # Generate side-by-side PDF if enabled
         side_by_side_bytes: bytes | None = None
         if self._config.side_by_side:
-            side_by_side_bytes = self._stage_side_by_side(pdf_path, pdf_bytes, paragraphs)
+            side_by_side_bytes = self._stage_side_by_side(
+                pdf_path, pdf_bytes, paragraphs, pre_merge_paragraphs
+            )
 
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,7 +270,12 @@ class TranslationPipeline:
 
         return translatable
 
-    def _stage_apply(self, pdf_path: Path, paragraphs: list[Paragraph]) -> bytes:
+    def _stage_apply(
+        self,
+        pdf_path: Path,
+        paragraphs: list[Paragraph],
+        pre_merge_paragraphs: list[Paragraph] | None = None,
+    ) -> bytes:
         target_lang = self._config.target_lang.lower()
         font_path: Path | None = None
         if target_lang in {"ja", "zh", "ko"}:
@@ -321,8 +332,7 @@ class TranslationPipeline:
                         )
 
         # When side_by_side is enabled, draw debug boxes on original PDF instead
-        # of translated PDF (handled in _stage_side_by_side)
-        draw_bbox_on_translated = self._config.debug_draw_bbox and not self._config.side_by_side
+        draw_debug = pre_merge_paragraphs is not None and not self._config.side_by_side
 
         try:
             with PDFProcessor(pdf_path) as processor:
@@ -330,9 +340,16 @@ class TranslationPipeline:
                     paragraphs,
                     font_path=font_path,
                     font_subsets=font_subsets if font_subsets else None,
-                    debug_draw_bbox=draw_bbox_on_translated,
                     min_font_size=self._config.min_font_size,
                 )
+
+                # Draw debug overlay showing original and merged paragraphs
+                if draw_debug and pre_merge_paragraphs is not None:
+                    processor.draw_merge_debug_overlay(
+                        original_paragraphs=pre_merge_paragraphs,
+                        merged_paragraphs=paragraphs,
+                    )
+
                 self._notify("apply", 1, 1)
                 return processor.to_bytes()
         finally:
@@ -345,6 +362,7 @@ class TranslationPipeline:
         original_pdf_path: Path,
         translated_pdf_bytes: bytes,
         paragraphs: list[Paragraph],
+        pre_merge_paragraphs: list[Paragraph] | None = None,
     ) -> bytes:
         """Generate side-by-side comparison PDF.
 
@@ -355,7 +373,9 @@ class TranslationPipeline:
         Args:
             original_pdf_path: Path to the original PDF.
             translated_pdf_bytes: Bytes of the translated PDF.
-            paragraphs: List of paragraphs (used for debug box drawing).
+            paragraphs: List of merged paragraphs.
+            pre_merge_paragraphs: List of original paragraphs before merge
+                (for debug overlay).
 
         Returns:
             bytes: The side-by-side PDF bytes.
@@ -367,9 +387,12 @@ class TranslationPipeline:
         generator = SideBySideGenerator(config)
 
         # Draw debug boxes on original PDF if enabled
-        if self._config.debug_draw_bbox:
+        if pre_merge_paragraphs is not None:
             with PDFProcessor(original_pdf_path) as processor:
-                processor.draw_debug_overlay(paragraphs)
+                processor.draw_merge_debug_overlay(
+                    original_paragraphs=pre_merge_paragraphs,
+                    merged_paragraphs=paragraphs,
+                )
                 original_bytes = processor.to_bytes()
         else:
             original_bytes = original_pdf_path.read_bytes()
