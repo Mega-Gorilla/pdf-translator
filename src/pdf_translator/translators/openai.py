@@ -239,7 +239,6 @@ class OpenAITranslator:
                     {"role": "user", "content": user_content},
                 ],
                 response_format=self._TranslationResult,
-                temperature=0.2,
             )
 
             result = response.choices[0].message.parsed
