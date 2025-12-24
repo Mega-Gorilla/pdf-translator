@@ -1120,7 +1120,6 @@ class PDFProcessor:
         paragraphs: list[Paragraph],
         font_path: Optional[Union[Path, str]] = None,
         font_subsets: Optional[dict[tuple[bool, bool], Path]] = None,
-        debug_draw_bbox: bool = False,
         min_font_size: Optional[float] = None,
     ) -> None:
         """Apply translated paragraphs to the PDF.
@@ -1133,7 +1132,6 @@ class PDFProcessor:
             font_path: Path to TTF font file for custom fonts.
             font_subsets: Pre-generated subset fonts keyed by (is_bold, is_italic).
                 If provided, uses subsets instead of finding font variants.
-            debug_draw_bbox: If True, draw colored bbox outlines with category labels.
             min_font_size: Minimum font size for text fitting. If None, uses engine default.
         """
         self._ensure_open()
@@ -1144,14 +1142,6 @@ class PDFProcessor:
 
         for para in paragraphs:
             if not para.translated_text:
-                # Even if no translation, draw debug bbox if enabled
-                if debug_draw_bbox:
-                    self._draw_debug_bbox(
-                        page_num=para.page_number,
-                        bbox=para.block_bbox,
-                        raw_category=para.category,
-                        confidence=para.category_confidence,
-                    )
                 continue
 
             self.remove_text_in_bbox(
@@ -1234,14 +1224,6 @@ class PDFProcessor:
                 rotation=rotation_radians,
                 pdftext_rotation_degrees=para.rotation,
             )
-
-            if debug_draw_bbox:
-                self._draw_debug_bbox(
-                    page_num=para.page_number,
-                    bbox=para.block_bbox,
-                    raw_category=para.category,
-                    confidence=para.category_confidence,
-                )
 
     def _needs_cid_font(self, text: str) -> bool:
         """Check if text contains CJK characters requiring CID font.
@@ -1604,32 +1586,6 @@ class PDFProcessor:
 
         # Insert text into page
         pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
-
-    def draw_debug_overlay(
-        self,
-        paragraphs: list[Paragraph],
-        line_width: float = 1.5,
-        label_font_size: float = 10.0,
-    ) -> None:
-        """Draw debug bbox overlays for all paragraphs without modifying text.
-
-        This method draws colored bbox outlines and category labels on top of
-        the existing PDF content, useful for verifying layout analysis results.
-
-        Args:
-            paragraphs: List of paragraphs to visualize.
-            line_width: Stroke width for bbox outlines.
-            label_font_size: Font size for category labels.
-        """
-        for para in paragraphs:
-            self._draw_debug_bbox(
-                page_num=para.page_number,
-                bbox=para.block_bbox,
-                raw_category=para.category,
-                confidence=para.category_confidence,
-                line_width=line_width,
-                label_font_size=label_font_size,
-            )
 
     def draw_merge_debug_overlay(
         self,
