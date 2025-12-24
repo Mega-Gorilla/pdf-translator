@@ -123,14 +123,99 @@ cache_key = hashlib.sha256(f"{font_identity}:{sorted_chars}".encode()).hexdigest
 
 ### 5. Bold/Italic フォントの扱い
 
-**決定: 初期実装は Regular のみ、後で拡張**
+**決定: 初期実装で対応**
 
-現状の `_find_font_variant()` はファイル名ベースの探索であり、
-TTC 運用時は実質ベースフォントのみ。
+Issue #29 の主目的は PDF ファイルサイズの削減であり、
+Regular のみサブセット化して Bold/Italic をそのままにすると目標を達成できない。
 
-将来的には `PipelineConfig` で明示マッピング可能に:
-- `cjk_bold_font_path`
-- `cjk_italic_font_path`
+```
+Regular テキスト → サブセット (25KB) ✓
+Bold テキスト → フルフォント埋め込み (18.6MB) ✗  ← 問題
+```
+
+**NotoSansCJK のファイル構造**:
+
+| スタイル | ファイル |
+|---------|---------|
+| Regular | `NotoSansCJK-Regular.ttc` |
+| Bold | `NotoSansCJK-Bold.ttc` |
+| Light | `NotoSansCJK-Light.ttc` |
+
+**実装アプローチ**:
+
+1. `is_bold`/`is_italic` 属性（既存の Paragraph モデル）を活用
+2. フォントファイル名のウェイト部分を置換して対応ファイルを探索
+3. バリアントが見つからない場合は Regular にフォールバック
+
+```python
+def _find_font_variant(
+    base_font_path: Path,
+    is_bold: bool,
+    is_italic: bool,
+) -> Path | None:
+    """Find font file for the given style variant.
+
+    NotoSansCJK-Regular.ttc → NotoSansCJK-Bold.ttc (is_bold=True)
+    """
+    stem = base_font_path.stem  # "NotoSansCJK-Regular"
+    parent = base_font_path.parent
+
+    # Determine target weight
+    if is_bold:
+        target_weight = "Bold"
+    else:
+        target_weight = "Regular"
+
+    # Replace weight in filename
+    import re
+    new_stem = re.sub(
+        r"-(Regular|Bold|Light|Medium|Thin|Black)",
+        f"-{target_weight}",
+        stem,
+    )
+
+    variant_path = parent / f"{new_stem}{base_font_path.suffix}"
+    return variant_path if variant_path.exists() else None
+```
+
+**キャッシュへの影響**:
+
+キャッシュキーは `font_path` を含むため、Bold/Italic 用の別ファイルは
+自動的に別キャッシュエントリになる:
+
+```
+Regular: sha256("NotoSansCJK-Regular.ttc:...:chars") → subset_abc123.ttf
+Bold:    sha256("NotoSansCJK-Bold.ttc:...:chars")    → subset_def456.ttf
+```
+
+**フォールバック戦略**:
+
+```python
+def get_subset_font(
+    font_path: Path,
+    chars: set[str],
+    is_bold: bool = False,
+    is_italic: bool = False,
+) -> Path:
+    """Get subset font, with fallback to Regular if variant not found."""
+    if is_bold or is_italic:
+        variant_path = _find_font_variant(font_path, is_bold, is_italic)
+        if variant_path:
+            return self._create_subset(variant_path, chars)
+        else:
+            logger.warning(
+                "Font variant not found for bold=%s, italic=%s. Using %s",
+                is_bold, is_italic, font_path.name
+            )
+
+    return self._create_subset(font_path, chars)
+```
+
+**Italic の注意点**:
+
+NotoSansCJK は Italic バリアントを持たない。
+Italic 指定時は Regular/Bold にフォールバックし、
+PDF 側で斜体変換（Transform）を使用する（既存の動作を維持）。
 
 ### 6. TTC 対応
 
@@ -187,7 +272,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import tempfile
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -196,6 +281,9 @@ logger = logging.getLogger(__name__)
 # Common punctuation and digits to include in subset
 SAFETY_MARGIN_CHARS = "。、！？「」『』（）…―　0123456789"
 
+# Font weight patterns for variant detection
+WEIGHT_PATTERN = re.compile(r"-(Regular|Bold|Light|Medium|Thin|Black)")
+
 
 @dataclass
 class SubsetConfig:
@@ -203,6 +291,43 @@ class SubsetConfig:
 
     include_common_punctuation: bool = True
     cache_dir: Path | None = None  # None = use temp directory
+
+
+def _find_font_variant(
+    base_font_path: Path,
+    is_bold: bool,
+    is_italic: bool,
+) -> Path | None:
+    """Find font file for the given style variant.
+
+    NotoSansCJK-Regular.ttc → NotoSansCJK-Bold.ttc (is_bold=True)
+
+    Note: NotoSansCJK does not have Italic variants. Italic styling
+    is handled via PDF transform at render time.
+
+    Args:
+        base_font_path: Path to the base font file (typically Regular).
+        is_bold: Whether Bold variant is requested.
+        is_italic: Ignored for NotoSansCJK (no italic files).
+
+    Returns:
+        Path to variant font file, or None if not found.
+    """
+    stem = base_font_path.stem
+    parent = base_font_path.parent
+
+    # Determine target weight
+    target_weight = "Bold" if is_bold else "Regular"
+
+    # Replace weight in filename
+    if WEIGHT_PATTERN.search(stem):
+        new_stem = WEIGHT_PATTERN.sub(f"-{target_weight}", stem)
+    else:
+        # No weight pattern found, return None
+        return None
+
+    variant_path = parent / f"{new_stem}{base_font_path.suffix}"
+    return variant_path if variant_path.exists() else None
 
 
 class FontSubsetter:
@@ -217,13 +342,17 @@ class FontSubsetter:
         font_path: Path,
         texts: list[str],
         font_number: int = 0,
+        is_bold: bool = False,
+        is_italic: bool = False,
     ) -> Path | None:
         """Create subset font containing only characters used in texts.
 
         Args:
-            font_path: Path to the font file (TTF or TTC).
+            font_path: Path to the base font file (TTF or TTC).
             texts: List of texts to extract characters from.
             font_number: Font index for TTC files (default: 0).
+            is_bold: Use Bold variant if available.
+            is_italic: Use Italic variant if available (fallback to base if not).
 
         Returns:
             Path to the subset font file, or None if subsetting failed.
@@ -244,8 +373,24 @@ class FontSubsetter:
         if self._config.include_common_punctuation:
             chars.update(SAFETY_MARGIN_CHARS)
 
+        # Resolve font variant
+        actual_font_path = font_path
+        if is_bold or is_italic:
+            variant_path = _find_font_variant(font_path, is_bold, is_italic)
+            if variant_path:
+                actual_font_path = variant_path
+                logger.debug(
+                    "Using font variant: %s (bold=%s, italic=%s)",
+                    variant_path.name, is_bold, is_italic
+                )
+            else:
+                logger.warning(
+                    "Font variant not found for bold=%s, italic=%s. Using %s",
+                    is_bold, is_italic, font_path.name
+                )
+
         # Check cache
-        cache_key = self._get_cache_key(font_path, chars, font_number)
+        cache_key = self._get_cache_key(actual_font_path, chars, font_number)
         if cache_key in self._cache:
             cached_path = self._cache[cache_key]
             if cached_path.exists():
@@ -253,10 +398,10 @@ class FontSubsetter:
 
         try:
             # Load font
-            if font_path.suffix.lower() == ".ttc":
-                font = TTFont(font_path, fontNumber=font_number)
+            if actual_font_path.suffix.lower() == ".ttc":
+                font = TTFont(actual_font_path, fontNumber=font_number)
             else:
-                font = TTFont(font_path)
+                font = TTFont(actual_font_path)
 
             # Create subset
             options = Options()
@@ -276,9 +421,10 @@ class FontSubsetter:
 
             self._cache[cache_key] = subset_path
             logger.info(
-                "Created subset font: %d chars, %s",
+                "Created subset font: %d chars, %s (bold=%s)",
                 len(chars),
                 subset_path.name,
+                is_bold,
             )
 
             return subset_path
@@ -307,13 +453,12 @@ class FontSubsetter:
     def _get_subset_path(self, cache_key: str) -> Path:
         """Get path for subset file.
 
-        Uses NamedTemporaryFile for safety instead of mktemp.
+        Uses mkstemp for safety instead of mktemp.
         """
         if self._config.cache_dir:
             self._config.cache_dir.mkdir(parents=True, exist_ok=True)
             return self._config.cache_dir / f"{cache_key}.ttf"
         else:
-            # Use NamedTemporaryFile to avoid race conditions
             import tempfile as tmp
             fd, path = tmp.mkstemp(suffix=f"_{cache_key}.ttf")
             os.close(fd)  # Close fd, we'll write via fontTools
@@ -396,12 +541,21 @@ dependencies = [
 **新規ファイル**: `tests/test_font_subsetter.py`
 
 テストケース:
+
+**基本機能**:
 - TTC からのサブセット生成
 - TTF からのサブセット生成
 - キャッシュ動作
 - 空テキストリストの処理
 - 無効なフォントパスの処理
 - cleanup() メソッドの動作
+
+**Bold/Italic 対応**:
+- `test_bold_variant_selection`: Bold 指定時に Bold ファイルを使用
+- `test_bold_fallback_to_regular`: Bold ファイルが存在しない場合 Regular にフォールバック
+- `test_italic_fallback`: Italic 指定時のフォールバック動作
+- `test_bold_separate_cache`: Regular と Bold は別キャッシュエントリ
+- `test_find_font_variant_pattern`: ウェイトパターンの正規表現テスト
 
 **フォント fixture 方針**:
 
@@ -444,9 +598,9 @@ requires_cjk_font = pytest.mark.skipif(
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `src/pdf_translator/core/font_subsetter.py` | **新規** - FontSubsetter クラス |
+| `src/pdf_translator/core/font_subsetter.py` | **新規** - FontSubsetter クラス, `_find_font_variant()` |
 | `src/pdf_translator/pipeline/translation_pipeline.py` | PipelineConfig 拡張 + 統合 |
-| `tests/test_font_subsetter.py` | **新規** - ユニットテスト |
+| `tests/test_font_subsetter.py` | **新規** - ユニットテスト (Bold/Italic 含む) |
 | `pyproject.toml` | fonttools 依存追加 |
 
 ---
@@ -459,9 +613,12 @@ requires_cjk_font = pytest.mark.skipif(
 | CID 互換性問題 | 低 | 高 | 検証済み (Step 2 PASS) |
 | パフォーマンス劣化 | 中 | 低 | キャッシュ機構 |
 | 欠落グリフ | 低 | 中 | 安全マージン文字追加 |
+| Bold ファイル欠損 | 低 | 中 | Regular へのフォールバック + 警告ログ |
+| Italic 非対応 | 低 | 低 | PDF Transform で斜体表現 (既存動作維持) |
 
 **フォールバック戦略**:
 - サブセット化失敗時は元のフォントを使用
+- Bold/Italic バリアント未検出時は Regular を使用
 - 警告ログを出力
 
 ---
