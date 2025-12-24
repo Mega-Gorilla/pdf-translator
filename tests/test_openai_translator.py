@@ -13,7 +13,24 @@ from pdf_translator.translators.base import (
     ConfigurationError,
     TranslationError,
 )
-from pdf_translator.translators.openai import OpenAITranslator
+
+
+def _has_openai() -> bool:
+    """Check if openai is available."""
+    try:
+        import openai  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+# Skip all tests in this module if openai is not installed
+pytestmark = pytest.mark.skipif(not _has_openai(), reason="openai not installed")
+
+# Import OpenAITranslator only if openai is available
+if _has_openai():
+    from pdf_translator.translators.openai import OpenAITranslator
 
 
 class TestOpenAITranslatorModel:
@@ -123,9 +140,61 @@ class TestOpenAITranslatorErrorHandling:
                 "ja",
             )
 
-        error_msg = str(exc_info.value)
-        assert "not available" in error_msg
-        assert "OPENAI_MODEL" in error_msg
+        result_msg = str(exc_info.value)
+        assert "not available" in result_msg
+        assert "OPENAI_MODEL" in result_msg
+
+    @pytest.mark.asyncio
+    async def test_model_not_found_via_notfounderror(
+        self, mock_translator: OpenAITranslator
+    ) -> None:
+        """Should handle NotFoundError for model not found."""
+        from openai import NotFoundError
+
+        # Create a NotFoundError-like exception
+        error = NotFoundError(
+            message="The model 'gpt-5-nano' does not exist",
+            response=MagicMock(status_code=404),
+            body={"error": {"code": "model_not_found"}},
+        )
+        mock_translator._client.beta.chat.completions.parse = AsyncMock(
+            side_effect=error
+        )
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            await mock_translator.translate_batch(
+                ["test text"],
+                "en",
+                "ja",
+            )
+
+        result_msg = str(exc_info.value)
+        assert "not available" in result_msg
+        assert "OPENAI_MODEL" in result_msg
+
+    @pytest.mark.asyncio
+    async def test_model_not_found_via_error_code(
+        self, mock_translator: OpenAITranslator
+    ) -> None:
+        """Should detect model_not_found via error.code attribute."""
+        from openai import OpenAIError
+
+        # Create an error with code attribute
+        error = OpenAIError("API error")
+        error.code = "model_not_found"  # type: ignore[attr-defined]
+        mock_translator._client.beta.chat.completions.parse = AsyncMock(
+            side_effect=error
+        )
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            await mock_translator.translate_batch(
+                ["test text"],
+                "en",
+                "ja",
+            )
+
+        result_msg = str(exc_info.value)
+        assert "not available" in result_msg
 
 
 class TestBatchSplittingFallback:

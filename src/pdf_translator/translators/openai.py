@@ -291,7 +291,7 @@ class OpenAITranslator:
             TranslationError: On other API errors.
         """
         try:
-            from openai import AuthenticationError, RateLimitError
+            from openai import AuthenticationError, NotFoundError, RateLimitError
         except ImportError:
             raise TranslationError(f"OpenAI API error: {error}") from error
 
@@ -301,14 +301,28 @@ class OpenAITranslator:
             raise TranslationError(
                 "OpenAI rate limit exceeded, please retry later"
             ) from error
+        elif isinstance(error, NotFoundError):
+            # NotFoundError is raised when model is not found
+            raise ConfigurationError(
+                f"Model '{self._model}' is not available. "
+                f"Set OPENAI_MODEL environment variable to use a different model "
+                f"(e.g., 'gpt-4o-mini', 'gpt-4o')."
+            ) from error
 
-        # Check for model not found/access error
+        # Check for model not found/access error via error code or message
+        error_code = getattr(error, "code", None) or ""
         error_str = str(error).lower()
-        is_model_error = "model" in error_str and (
-            "not found" in error_str
-            or "invalid" in error_str
-            or "does not exist" in error_str
-            or "do not have access" in error_str
+        is_model_error = (
+            error_code in ("model_not_found", "invalid_model", "not_found")
+            or (
+                "model" in error_str
+                and (
+                    "not found" in error_str
+                    or "invalid" in error_str
+                    or "does not exist" in error_str
+                    or "do not have access" in error_str
+                )
+            )
         )
         if is_model_error:
             raise ConfigurationError(
