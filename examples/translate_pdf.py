@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dotenv import load_dotenv
+
 if TYPE_CHECKING:
     from pdf_translator.core.side_by_side import SideBySideOrder
     from pdf_translator.translators.base import TranslatorBackend
@@ -31,40 +33,8 @@ if TYPE_CHECKING:
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-
-def load_dotenv(dotenv_path: Path | None = None) -> None:
-    """Load environment variables from .env file.
-
-    Args:
-        dotenv_path: Path to .env file. If None, searches in project root.
-    """
-    if dotenv_path is None:
-        dotenv_path = PROJECT_ROOT / ".env"
-
-    if not dotenv_path.exists():
-        return
-
-    with open(dotenv_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            # Skip empty lines and comments
-            if not line or line.startswith("#"):
-                continue
-            # Parse KEY=VALUE
-            if "=" in line:
-                key, _, value = line.partition("=")
-                key = key.strip()
-                value = value.strip()
-                # Remove quotes if present
-                if value and value[0] in ('"', "'") and value[-1] == value[0]:
-                    value = value[1:-1]
-                # Only set if not already in environment
-                if key and key not in os.environ:
-                    os.environ[key] = value
-
-
 # Load .env file from project root
-load_dotenv()
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 # =============================================================================
