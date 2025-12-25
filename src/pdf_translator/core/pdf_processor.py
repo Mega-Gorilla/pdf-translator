@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ctypes
 import math
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -214,17 +213,22 @@ class PDFProcessor:
         """
         self._source_name: str
         self._pdf: Optional[pdfium.PdfDocument] = None
+        self._pdf_bytes: bytes  # Store original PDF bytes for hybrid approach
         self._loaded_fonts: dict[str, Any] = {}  # font_path -> font_handle
         self._loaded_font_buffers: dict[str, ctypes.Array[Any]] = {}  # keep buffers alive
         self._layout_engine = TextLayoutEngine()
 
         if isinstance(pdf_source, bytes):
+            self._pdf_bytes = pdf_source
             self._pdf = pdfium.PdfDocument(pdf_source)
             self._source_name = "bytes"
         elif isinstance(pdf_source, (str, Path)):
             path = Path(pdf_source)
             if not path.exists():
                 raise FileNotFoundError(f"PDF file not found: {path}")
+            # Read and store PDF bytes for hybrid approach
+            with open(path, "rb") as f:
+                self._pdf_bytes = f.read()
             self._pdf = pdfium.PdfDocument(str(path))
             self._source_name = path.name
         else:
@@ -757,8 +761,10 @@ class PDFProcessor:
             return False
 
         # Open PDF with pikepdf
+        from io import BytesIO
+
         if isinstance(pdf_source, bytes):
-            pdf = pikepdf.open(pdf_source)
+            pdf = pikepdf.open(BytesIO(pdf_source))
         else:
             pdf = pikepdf.open(str(pdf_source))
 
@@ -776,6 +782,9 @@ class PDFProcessor:
                 # Track current text position
                 current_x: float = 0.0
                 current_y: float = 0.0
+
+                # Track text leading for T* operator
+                text_leading: float = 0.0
 
                 for cmd in cs:
                     operands, operator = cmd
@@ -802,15 +811,44 @@ class PDFProcessor:
                             current_y += float(operands[1])
                             new_cs.append(cmd)
                         elif op_str == "TD" and len(operands) >= 2:
-                            # Text move with leading: dx dy
+                            # Text move with leading: dx dy (also sets TL = -dy)
                             current_x += float(operands[0])
                             current_y += float(operands[1])
+                            text_leading = -float(operands[1])
+                            new_cs.append(cmd)
+                        elif op_str == "TL" and len(operands) >= 1:
+                            # Set text leading
+                            text_leading = float(operands[0])
+                            new_cs.append(cmd)
+                        elif op_str == "T*":
+                            # Move to start of next line (equivalent to 0 -TL Td)
+                            current_x = 0.0
+                            current_y -= text_leading
                             new_cs.append(cmd)
                         elif op_str in ("TJ", "Tj"):
                             # Text showing operators - filter based on position
                             if point_in_any_bbox(current_x, current_y, bboxes):
                                 # Skip this text operation (remove it)
                                 pass
+                            else:
+                                new_cs.append(cmd)
+                        elif op_str == "'":
+                            # Move to next line and show text (T* followed by Tj)
+                            current_x = 0.0
+                            current_y -= text_leading
+                            if point_in_any_bbox(current_x, current_y, bboxes):
+                                # Replace with just T* (move without text)
+                                new_cs.append(([], pikepdf.Operator("T*")))
+                            else:
+                                new_cs.append(cmd)
+                        elif op_str == '"':
+                            # Set spacing, move to next line and show text
+                            # Operands: aw ac string (word spacing, char spacing, string)
+                            current_x = 0.0
+                            current_y -= text_leading
+                            if point_in_any_bbox(current_x, current_y, bboxes):
+                                # Replace with just T* (move without text)
+                                new_cs.append(([], pikepdf.Operator("T*")))
                             else:
                                 new_cs.append(cmd)
                         else:
@@ -824,11 +862,10 @@ class PDFProcessor:
                 new_stream = pikepdf.unparse_content_stream(new_cs)
                 page.Contents = pdf.make_stream(new_stream)
 
-            # Save to bytes
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as f:
-                pdf.save(f.name)
-                with open(f.name, "rb") as rf:
-                    return rf.read()
+            # Save to bytes using BytesIO (cross-platform compatible)
+            output = BytesIO()
+            pdf.save(output)
+            return output.getvalue()
         finally:
             pdf.close()
 
@@ -1412,12 +1449,14 @@ class PDFProcessor:
         font_path: Optional[Union[Path, str]] = None,
         font_subsets: Optional[dict[tuple[bool, bool], Path]] = None,
         min_font_size: Optional[float] = None,
-        pdf_source: Optional[Union[Path, str, bytes]] = None,
     ) -> None:
         """Apply translated paragraphs to the PDF.
 
-        Uses TextLayoutEngine to properly fit text within bounding boxes,
-        with automatic line wrapping and font size adjustment.
+        Uses the hybrid approach (pikepdf + pypdfium2) to:
+        1. Remove original text using pikepdf (preserves spacing in adjacent text)
+        2. Insert translated text using pypdfium2
+
+        This approach solves Issue #47 (spacing corruption after text removal).
 
         Args:
             paragraphs: List of paragraphs to apply.
@@ -1425,46 +1464,37 @@ class PDFProcessor:
             font_subsets: Pre-generated subset fonts keyed by (is_bold, is_italic).
                 If provided, uses subsets instead of finding font variants.
             min_font_size: Minimum font size for text fitting. If None, uses engine default.
-            pdf_source: Original PDF source for hybrid approach (pikepdf + pypdfium2).
-                If provided, uses pikepdf to remove text first (preserves spacing).
-                If None, uses overlay approach (cover_bbox_with_rect).
-
-        Note:
-            When pdf_source is provided, the hybrid approach is used:
-            1. pikepdf removes text in translation bboxes (preserves spacing in adjacent text)
-            2. pypdfium2 inserts translated text
-            This solves Issue #47 (spacing corruption after text removal).
         """
         # Update TextLayoutEngine min_font_size if specified
         if min_font_size is not None:
             self._layout_engine._min_font_size = min_font_size
 
-        # Collect bboxes to remove for hybrid approach
+        # Collect translated paragraphs
         translated_paragraphs = [p for p in paragraphs if p.translated_text]
         if not translated_paragraphs:
             return
 
-        # Use hybrid approach if pdf_source is provided
-        if pdf_source is not None:
-            # Collect bboxes by page
-            bboxes_by_page: dict[int, list[BBox]] = {}
-            for para in translated_paragraphs:
-                if para.page_number not in bboxes_by_page:
-                    bboxes_by_page[para.page_number] = []
-                bboxes_by_page[para.page_number].append(para.block_bbox)
+        # Collect bboxes by page for text removal
+        bboxes_by_page: dict[int, list[BBox]] = {}
+        for para in translated_paragraphs:
+            if para.page_number not in bboxes_by_page:
+                bboxes_by_page[para.page_number] = []
+            bboxes_by_page[para.page_number].append(para.block_bbox)
 
-            # Remove text using pikepdf (preserves spacing)
-            modified_pdf_bytes = self.remove_text_with_pikepdf(bboxes_by_page, pdf_source)
+        # Remove text using pikepdf (preserves spacing in adjacent text)
+        modified_pdf_bytes = self.remove_text_with_pikepdf(
+            bboxes_by_page, self._pdf_bytes
+        )
 
-            # Close current PDF and reopen with modified bytes
-            self.close()
-            self._pdf = pdfium.PdfDocument(modified_pdf_bytes)
-            self._source_name = "modified"
+        # Close current PDF and reopen with modified bytes
+        self.close()
+        self._pdf = pdfium.PdfDocument(modified_pdf_bytes)
+        self._pdf_bytes = modified_pdf_bytes  # Update stored bytes
+        self._source_name = "modified"
 
         pdf = self._ensure_open()
 
         # Track page objects that need gen_content() call
-        # Store actual page objects to ensure gen_content() is called on the correct instance
         pages_modified: dict[int, pdfium.PdfPage] = {}
 
         for para in translated_paragraphs:
@@ -1473,15 +1503,6 @@ class PDFProcessor:
                 pages_modified[para.page_number] = pdf[para.page_number]
 
             page = pages_modified[para.page_number]
-
-            # If not using hybrid approach, use overlay (cover_bbox_with_rect)
-            # This is the fallback when pdf_source is not provided
-            if pdf_source is None:
-                self.cover_bbox_with_rect(
-                    page_num=para.page_number,
-                    bbox=para.block_bbox,
-                    _page=page,
-                )
 
             # Determine initial font size
             initial_font_size = (
