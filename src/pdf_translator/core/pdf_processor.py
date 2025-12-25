@@ -1485,7 +1485,7 @@ class PDFProcessor:
             )
 
         # Call gen_content() once per modified page at the end
-        # This ensures proper z-ordering: original text -> rectangles -> translated text
+        # This finalizes all inserted text objects into the page content stream
         for page_num, page in pages_modified.items():
             page.gen_content()
 
