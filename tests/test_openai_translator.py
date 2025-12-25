@@ -359,3 +359,208 @@ class TestBatchSplittingFallback:
         result = await pipeline._translate_with_split([])
 
         assert result == []
+
+
+class TestParallelTranslation:
+    """Tests for parallel batch translation."""
+
+    @pytest.fixture
+    def mock_translator(self) -> MagicMock:
+        """Create a mock translator."""
+        translator = MagicMock()
+        translator.name = "openai"
+        return translator
+
+    @pytest.mark.asyncio
+    async def test_parallel_translation_preserves_order(
+        self, mock_translator: MagicMock
+    ) -> None:
+        """Parallel translation should preserve original order."""
+        import asyncio
+
+        from pdf_translator.core.models import BBox, Paragraph
+        from pdf_translator.pipeline.translation_pipeline import (
+            PipelineConfig,
+            TranslationPipeline,
+        )
+
+        # Create mock with varying delays to test order preservation
+        async def mock_translate_batch(
+            texts: list[str], source: str, target: str
+        ) -> list[str]:
+            # Add varying delays to simulate real API behavior
+            delay = 0.01 * (hash(texts[0]) % 5)
+            await asyncio.sleep(delay)
+            return [f"translated_{t}" for t in texts]
+
+        mock_translator.translate_batch = mock_translate_batch
+
+        config = PipelineConfig(
+            translation_batch_size=2,
+            translation_max_concurrent=5,
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+
+        # Create test paragraphs
+        paragraphs = [
+            Paragraph(
+                id=f"p{i}",
+                text=f"text{i}",
+                page_number=0,
+                block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+                line_count=1,
+                original_font_size=12.0,
+                category="text",
+            )
+            for i in range(10)
+        ]
+
+        result = await pipeline._stage_translate(paragraphs)
+
+        # Verify order is preserved
+        assert len(result) == 10
+        for i, para in enumerate(result):
+            assert para.translated_text == f"translated_text{i}"
+
+    @pytest.mark.asyncio
+    async def test_parallel_translation_progress_callback(
+        self, mock_translator: MagicMock
+    ) -> None:
+        """Progress callback should be called during parallel translation."""
+        from pdf_translator.core.models import BBox, Paragraph
+        from pdf_translator.pipeline.translation_pipeline import (
+            PipelineConfig,
+            TranslationPipeline,
+        )
+
+        async def mock_translate_batch(
+            texts: list[str], source: str, target: str
+        ) -> list[str]:
+            return [f"translated_{t}" for t in texts]
+
+        mock_translator.translate_batch = mock_translate_batch
+
+        progress_calls: list[tuple[str, int, int]] = []
+
+        def progress_callback(
+            stage: str, current: int, total: int, message: str = ""
+        ) -> None:
+            progress_calls.append((stage, current, total))
+
+        config = PipelineConfig(
+            translation_batch_size=3,
+            translation_max_concurrent=5,
+        )
+        pipeline = TranslationPipeline(
+            mock_translator, config, progress_callback=progress_callback
+        )
+
+        paragraphs = [
+            Paragraph(
+                id=f"p{i}",
+                text=f"text{i}",
+                page_number=0,
+                block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+                line_count=1,
+                original_font_size=12.0,
+                category="text",
+            )
+            for i in range(9)
+        ]
+
+        await pipeline._stage_translate(paragraphs)
+
+        # Verify progress was reported
+        translate_calls = [c for c in progress_calls if c[0] == "translate"]
+        assert len(translate_calls) == 3  # 9 paragraphs / 3 batch size = 3 chunks
+        # Final call should show total completed
+        assert translate_calls[-1][1] == 9
+        assert translate_calls[-1][2] == 9
+
+    @pytest.mark.asyncio
+    async def test_max_concurrent_zero_is_clamped_to_one(
+        self, mock_translator: MagicMock
+    ) -> None:
+        """translation_max_concurrent=0 should be clamped to 1."""
+        from pdf_translator.core.models import BBox, Paragraph
+        from pdf_translator.pipeline.translation_pipeline import (
+            PipelineConfig,
+            TranslationPipeline,
+        )
+
+        call_count = 0
+
+        async def mock_translate_batch(
+            texts: list[str], source: str, target: str
+        ) -> list[str]:
+            nonlocal call_count
+            call_count += 1
+            return [f"translated_{t}" for t in texts]
+
+        mock_translator.translate_batch = mock_translate_batch
+
+        # This should not hang due to Semaphore(0)
+        config = PipelineConfig(
+            translation_batch_size=2,
+            translation_max_concurrent=0,  # Should be clamped to 1
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+
+        paragraphs = [
+            Paragraph(
+                id=f"p{i}",
+                text=f"text{i}",
+                page_number=0,
+                block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+                line_count=1,
+                original_font_size=12.0,
+                category="text",
+            )
+            for i in range(4)
+        ]
+
+        result = await pipeline._stage_translate(paragraphs)
+
+        assert len(result) == 4
+        assert call_count == 2  # 4 paragraphs / 2 batch size = 2 calls
+
+    @pytest.mark.asyncio
+    async def test_max_concurrent_negative_is_clamped_to_one(
+        self, mock_translator: MagicMock
+    ) -> None:
+        """translation_max_concurrent=-1 should be clamped to 1."""
+        from pdf_translator.core.models import BBox, Paragraph
+        from pdf_translator.pipeline.translation_pipeline import (
+            PipelineConfig,
+            TranslationPipeline,
+        )
+
+        async def mock_translate_batch(
+            texts: list[str], source: str, target: str
+        ) -> list[str]:
+            return [f"translated_{t}" for t in texts]
+
+        mock_translator.translate_batch = mock_translate_batch
+
+        config = PipelineConfig(
+            translation_batch_size=2,
+            translation_max_concurrent=-1,  # Should be clamped to 1
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+
+        paragraphs = [
+            Paragraph(
+                id="p0",
+                text="text0",
+                page_number=0,
+                block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+                line_count=1,
+                original_font_size=12.0,
+                category="text",
+            )
+        ]
+
+        result = await pipeline._stage_translate(paragraphs)
+
+        assert len(result) == 1
+        assert result[0].translated_text == "translated_text0"
