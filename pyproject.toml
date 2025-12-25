@@ -30,6 +30,7 @@ dependencies = [
     "numpy>=1.24.0",
     "fonttools>=4.50.0",  # Font subsetting for CJK
     "python-dotenv>=1.0.0",  # .env file loading
+    "pikepdf>=10.0.0",  # Content stream editing for text removal (Issue #47)
 ]
 
 [project.optional-dependencies]

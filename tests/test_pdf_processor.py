@@ -455,15 +455,6 @@ class TestTextLayerEdit:
 class TestPDFProcessorParagraphs:
     """Tests for paragraph-based PDF operations."""
 
-    def test_remove_text_in_bbox(self):
-        """Ensure text objects are removed within a bounding box."""
-        with PDFProcessor(SAMPLE_PDF) as processor:
-            doc = processor.extract_text_objects()
-            page = doc.pages[0]
-            bbox = BBox(0, 0, page.width, page.height)
-            removed = processor.remove_text_in_bbox(0, bbox, containment_threshold=0.5)
-            assert removed > 0
-
     def test_apply_paragraphs_and_to_bytes(self):
         """Apply paragraphs and ensure PDF bytes are returned."""
         with PDFProcessor(SAMPLE_PDF) as processor:
@@ -529,3 +520,123 @@ class TestPDFProcessorParagraphs:
             # Should fall back when italic not found
             result = processor._find_font_variant(base_font, False, True)
             assert result == base_font
+
+
+
+class TestHybridApproach:
+    """Test hybrid approach: pikepdf for removal + pypdfium2 for insertion."""
+
+    def test_remove_text_with_pikepdf_preserves_spacing(self) -> None:
+        """Test that pikepdf-based text removal preserves spacing in adjacent text."""
+        from pdf_translator.core.paragraph_extractor import ParagraphExtractor
+
+        # First, find the '1 Introduction' text to verify original has spacing
+        original_paragraphs = ParagraphExtractor.extract_from_pdf(SAMPLE_PDF)
+        intro_text = None
+        for para in original_paragraphs:
+            if "Introduction" in para.text and para.text.startswith("1"):
+                intro_text = para.text
+                break
+
+        assert intro_text is not None, "Could not find '1 Introduction' in sample PDF"
+        assert " " in intro_text, f"Original text should have space: {intro_text!r}"
+
+        # Define bbox to remove (left column body text, not touching headers)
+        bboxes_by_page = {
+            0: [BBox(x0=70.5, y0=106.3, x1=291.0, y1=400.0)]  # Avoid header area
+        }
+
+        # Remove text using pikepdf
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            modified_pdf_bytes = processor.remove_text_with_pikepdf(
+                bboxes_by_page, SAMPLE_PDF
+            )
+
+        # Check that spacing is preserved in output
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(modified_pdf_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            output_paragraphs = ParagraphExtractor.extract_from_pdf(temp_path)
+            output_intro = None
+            for para in output_paragraphs:
+                if "Introduction" in para.text and para.text.startswith("1"):
+                    output_intro = para.text
+                    break
+
+            assert output_intro is not None, "Could not find '1 Introduction' in output PDF"
+            assert " " in output_intro, (
+                f"Spacing was corrupted! Expected space in '{output_intro!r}'. "
+                "This indicates pikepdf removal failed to preserve spacing."
+            )
+        finally:
+            temp_path.unlink()
+
+    def test_remove_text_with_pikepdf_removes_target_text(self) -> None:
+        """Test that pikepdf-based removal actually removes text in bbox."""
+        from pdf_translator.core.paragraph_extractor import ParagraphExtractor
+
+        # Get original text in the left column (where we'll remove text)
+        original_paragraphs = ParagraphExtractor.extract_from_pdf(SAMPLE_PDF)
+        target_bbox = BBox(x0=70.5, y0=106.3, x1=291.0, y1=400.0)
+
+        # Count paragraphs that overlap with target bbox (not fully contained)
+        def overlaps_bbox(p_bbox: BBox, t_bbox: BBox) -> bool:
+            """Check if two bboxes overlap."""
+            return not (
+                p_bbox.x1 < t_bbox.x0 or p_bbox.x0 > t_bbox.x1 or
+                p_bbox.y1 < t_bbox.y0 or p_bbox.y0 > t_bbox.y1
+            )
+
+        original_overlapping = [
+            p for p in original_paragraphs
+            if p.page_number == 0 and overlaps_bbox(p.block_bbox, target_bbox)
+        ]
+
+        # Ensure we have some paragraphs to remove
+        assert len(original_overlapping) > 0, "Test requires paragraphs in target area"
+
+        # Remove text using pikepdf
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            modified_pdf_bytes = processor.remove_text_with_pikepdf(
+                {0: [target_bbox]}, SAMPLE_PDF
+            )
+
+        # Check that text in bbox is reduced/removed
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(modified_pdf_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            output_paragraphs = ParagraphExtractor.extract_from_pdf(temp_path)
+            output_overlapping = [
+                p for p in output_paragraphs
+                if p.page_number == 0 and overlaps_bbox(p.block_bbox, target_bbox)
+            ]
+
+            # Should have fewer paragraphs overlapping bbox after removal
+            assert len(output_overlapping) < len(original_overlapping), (
+                f"Expected fewer paragraphs in bbox after removal. "
+                f"Original: {len(original_overlapping)}, Output: {len(output_overlapping)}"
+            )
+        finally:
+            temp_path.unlink()
+
+    def test_remove_text_with_pikepdf_handles_bytes_input(self) -> None:
+        """Test that pikepdf removal works with bytes input."""
+        # Read PDF as bytes
+        with open(SAMPLE_PDF, "rb") as f:
+            pdf_bytes = f.read()
+
+        bboxes_by_page = {0: [BBox(x0=70.5, y0=200.0, x1=291.0, y1=300.0)]}
+
+        with PDFProcessor(pdf_bytes) as processor:
+            # Should work with bytes stored internally
+            modified_pdf_bytes = processor.remove_text_with_pikepdf(
+                bboxes_by_page, processor._pdf_bytes
+            )
+
+        # Verify output is valid PDF
+        assert modified_pdf_bytes[:4] == b"%PDF", "Output should be valid PDF"
+        assert len(modified_pdf_bytes) > 0, "Output should not be empty"

@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
+import pikepdf  # type: ignore[import-untyped]
 import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
 from .helpers import to_byte_array, to_widestring
@@ -212,17 +213,27 @@ class PDFProcessor:
         """
         self._source_name: str
         self._pdf: Optional[pdfium.PdfDocument] = None
+        # Store original PDF bytes for hybrid approach (pikepdf removal).
+        # Note: This is updated by apply_paragraphs() after text removal.
+        # If you modify the PDF via other methods before calling apply_paragraphs(),
+        # those changes will be lost. For normal translation workflow, this is fine
+        # since apply_paragraphs() is the final step.
+        self._pdf_bytes: bytes
         self._loaded_fonts: dict[str, Any] = {}  # font_path -> font_handle
         self._loaded_font_buffers: dict[str, ctypes.Array[Any]] = {}  # keep buffers alive
         self._layout_engine = TextLayoutEngine()
 
         if isinstance(pdf_source, bytes):
+            self._pdf_bytes = pdf_source
             self._pdf = pdfium.PdfDocument(pdf_source)
             self._source_name = "bytes"
         elif isinstance(pdf_source, (str, Path)):
             path = Path(pdf_source)
             if not path.exists():
                 raise FileNotFoundError(f"PDF file not found: {path}")
+            # Read and store PDF bytes for hybrid approach
+            with open(path, "rb") as f:
+                self._pdf_bytes = f.read()
             self._pdf = pdfium.PdfDocument(str(path))
             self._source_name = path.name
         else:
@@ -656,71 +667,174 @@ class PDFProcessor:
 
         return removed
 
-    def remove_text_in_bbox(
+    def remove_text_with_pikepdf(
         self,
-        page_num: int,
-        bbox: BBox,
-        containment_threshold: float = 0.5,
-    ) -> int:
-        """Remove text objects contained in a bounding box.
+        bboxes_by_page: dict[int, list[BBox]],
+        pdf_source: Union[Path, str, bytes],
+    ) -> bytes:
+        """Remove text in specified bboxes using pikepdf content stream editing.
+
+        This method uses pikepdf to directly edit PDF content streams,
+        filtering out TJ/Tj operators that fall within the specified bounding boxes.
+        This approach preserves spacing information in adjacent text because it
+        edits content streams directly without triggering gen_content() regeneration.
 
         Args:
-            page_num: Page number (0-indexed).
-            bbox: Target bounding box (PDF coordinates).
-            containment_threshold: Ratio of text bbox area contained in bbox.
+            bboxes_by_page: Dictionary mapping page numbers to lists of bboxes to remove.
+            pdf_source: Path to PDF file or PDF bytes.
 
         Returns:
-            Number of objects removed.
+            Modified PDF as bytes.
+
+        Note:
+            This is the standard method for text removal (Issue #47 fix).
+            The returned bytes can be used to create a new PDFProcessor instance
+            for further manipulation (e.g., inserting translated text).
+
+        Known Limitations:
+            - Text position after Tj/TJ is not tracked (would require font metrics
+              for accurate character width calculation). This means if multiple
+              Tj/TJ operations appear on the same line without intervening Tm/Td,
+              only the first text block's position is used for bbox matching.
+              Most PDFs use Tm to set absolute position before each text block,
+              so this is rarely an issue in practice.
         """
-        pdf = self._ensure_open()
-        if page_num < 0 or page_num >= len(pdf):
-            raise IndexError(f"Page number {page_num} out of range")
 
-        page = pdf[page_num]
-        removed = 0
-        objects_to_remove = []
+        def point_in_any_bbox(x: float, y: float, bboxes: list[BBox]) -> bool:
+            """Check if point (x, y) is inside any of the bboxes.
 
-        def containment_ratio(text_bbox: BBox, target_bbox: BBox) -> float:
-            x0 = max(text_bbox.x0, target_bbox.x0)
-            y0 = max(text_bbox.y0, target_bbox.y0)
-            x1 = min(text_bbox.x1, target_bbox.x1)
-            y1 = min(text_bbox.y1, target_bbox.y1)
-            if x0 >= x1 or y0 >= y1:
-                return 0.0
-            inter_area = (x1 - x0) * (y1 - y0)
-            text_area = text_bbox.width * text_bbox.height
-            if text_area <= 0:
-                return 0.0
-            return inter_area / text_area
+            Uses a small tolerance (0.5 pt) to handle floating-point precision
+            differences between pdftext and pikepdf coordinate systems.
+            """
+            tolerance = 0.5  # Points - handles precision mismatch
+            for bbox in bboxes:
+                if (bbox.x0 - tolerance <= x <= bbox.x1 + tolerance and
+                        bbox.y0 - tolerance <= y <= bbox.y1 + tolerance):
+                    return True
+            return False
 
-        textpage = page.get_textpage()
+        # Open PDF with pikepdf
+        from io import BytesIO
+
+        if isinstance(pdf_source, bytes):
+            pdf = pikepdf.open(BytesIO(pdf_source))
+        else:
+            pdf = pikepdf.open(str(pdf_source))
+
         try:
-            for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
-                bounds = obj.get_bounds()
-                if bounds is None:
+            for page_num, bboxes in bboxes_by_page.items():
+                if page_num >= len(pdf.pages):
                     continue
 
-                text = self._get_text_object_text_direct(obj, textpage)
-                text = text.strip() if text else ""
-                if not text:
-                    continue
+                page = pdf.pages[page_num]
+                cs = list(pikepdf.parse_content_stream(page))
 
-                left, bottom, right, top = bounds
-                text_bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
-                containment = containment_ratio(text_bbox, bbox)
-                if containment >= containment_threshold:
-                    objects_to_remove.append(obj)
+                new_cs = []
+                in_text = False
+
+                # Track current text position
+                current_x: float = 0.0
+                current_y: float = 0.0
+
+                # Track text leading for T* operator
+                text_leading: float = 0.0
+
+                for cmd in cs:
+                    operands, operator = cmd
+                    op_str = str(operator)
+
+                    if op_str == "BT":
+                        # Begin Text block - reset text matrix to identity
+                        in_text = True
+                        current_x = 0.0
+                        current_y = 0.0
+                        new_cs.append(cmd)
+                    elif op_str == "ET":
+                        # End Text block
+                        in_text = False
+                        new_cs.append(cmd)
+                    elif in_text:
+                        # Inside text block - track position and filter text
+                        if op_str == "Tm" and len(operands) >= 6:
+                            # Text Matrix: a b c d e f (e=x, f=y)
+                            current_x = float(operands[4])
+                            current_y = float(operands[5])
+                            new_cs.append(cmd)
+                        elif op_str == "Td" and len(operands) >= 2:
+                            # Text move: dx dy
+                            current_x += float(operands[0])
+                            current_y += float(operands[1])
+                            new_cs.append(cmd)
+                        elif op_str == "TD" and len(operands) >= 2:
+                            # Text move with leading: dx dy (also sets TL = -dy)
+                            current_x += float(operands[0])
+                            current_y += float(operands[1])
+                            text_leading = -float(operands[1])
+                            new_cs.append(cmd)
+                        elif op_str == "TL" and len(operands) >= 1:
+                            # Set text leading
+                            text_leading = float(operands[0])
+                            new_cs.append(cmd)
+                        elif op_str == "T*":
+                            # Move to next line (equivalent to 0 -TL Td)
+                            # Note: x position is maintained (relative move with dx=0)
+                            current_y -= text_leading
+                            new_cs.append(cmd)
+                        elif op_str in ("TJ", "Tj"):
+                            # Text showing operators - filter based on position
+                            # Note: We don't update current_x after text rendering because
+                            # accurate tracking requires font metrics (character widths).
+                            # This is acceptable for bbox-based filtering since most PDFs
+                            # use Tm to set absolute position before each text block.
+                            if point_in_any_bbox(current_x, current_y, bboxes):
+                                # Skip this text operation (remove it)
+                                pass
+                            else:
+                                new_cs.append(cmd)
+                        elif op_str == "'":
+                            # Move to next line and show text (T* followed by Tj)
+                            # Note: x position is maintained (relative move with dx=0)
+                            current_y -= text_leading
+                            if point_in_any_bbox(current_x, current_y, bboxes):
+                                # Replace with just T* (move without text)
+                                new_cs.append(([], pikepdf.Operator("T*")))
+                            else:
+                                new_cs.append(cmd)
+                        elif op_str == '"':
+                            # Set spacing, move to next line and show text
+                            # Equivalent to: aw Tw ac Tc string '
+                            # Operands: aw ac string (word spacing, char spacing, string)
+                            # Note: x position is maintained (relative move with dx=0)
+                            current_y -= text_leading
+                            if point_in_any_bbox(current_x, current_y, bboxes):
+                                # Keep Tw/Tc settings for subsequent text, add T* for line move
+                                # This preserves word/char spacing for text that follows
+                                if len(operands) >= 2:
+                                    # aw Tw (word spacing)
+                                    new_cs.append(([operands[0]], pikepdf.Operator("Tw")))
+                                    # ac Tc (character spacing)
+                                    new_cs.append(([operands[1]], pikepdf.Operator("Tc")))
+                                # T* for line move
+                                new_cs.append(([], pikepdf.Operator("T*")))
+                            else:
+                                new_cs.append(cmd)
+                        else:
+                            # Other text-related commands (Tf, Tc, Tw, etc.)
+                            new_cs.append(cmd)
+                    else:
+                        # Outside text block - keep all commands
+                        new_cs.append(cmd)
+
+                # Unparse and update page content
+                new_stream = pikepdf.unparse_content_stream(new_cs)
+                page.Contents = pdf.make_stream(new_stream)
+
+            # Save to bytes using BytesIO (cross-platform compatible)
+            output = BytesIO()
+            pdf.save(output)
+            return output.getvalue()
         finally:
-            textpage.close()
-
-        for obj in objects_to_remove:
-            page.remove_obj(obj)
-            removed += 1
-
-        if removed > 0:
-            page.gen_content()
-
-        return removed
+            pdf.close()
 
     def remove_all_text(self, page_num: int) -> int:
         """Remove all text objects from a page.
@@ -1114,6 +1228,120 @@ class PDFProcessor:
         page.gen_content()
         return success
 
+    def _insert_laid_out_text_no_gen(
+        self,
+        page_num: int,
+        layout_result: LayoutResult,
+        bbox: BBox,
+        font_handle: Any,
+        font_size: float,
+        color: Optional[Color] = None,
+        alignment: str = "left",
+        rotation: float = 0.0,
+        pdftext_rotation_degrees: float = 0.0,
+        *,
+        _page: Optional[pdfium.PdfPage] = None,
+    ) -> bool:
+        """Insert laid out text without calling gen_content().
+
+        This is an internal method used by apply_paragraphs() to batch
+        gen_content() calls for better performance and correct z-ordering.
+        See insert_laid_out_text() for parameter documentation.
+
+        Args:
+            _page: Pre-fetched page object to ensure consistent object insertion.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        # Use provided page object or fetch new one
+        page = _page if _page is not None else pdf[page_num]
+        doc_handle = pdf.raw
+        page_handle = page.raw
+
+        # Pre-calculate rotation matrix components
+        cos_r = math.cos(rotation)
+        sin_r = math.sin(rotation)
+
+        # Determine rotation type for coordinate calculation
+        visual_rotation = pdftext_rotation_degrees % 360
+        is_270_rotation = 265 <= visual_rotation <= 275
+        is_90_rotation = 85 <= visual_rotation <= 95
+
+        success = True
+        for line in layout_result.lines:
+            text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+                doc_handle, font_handle, ctypes.c_float(font_size)
+            )
+
+            if not text_obj:
+                success = False
+                continue
+
+            text_ws = to_widestring(line.text)
+            if not pdfium.raw.FPDFText_SetText(text_obj, text_ws):
+                success = False
+                continue
+
+            if color:
+                pdfium.raw.FPDFPageObj_SetFillColor(
+                    text_obj, color.r, color.g, color.b, 255
+                )
+
+            # Calculate position based on rotation (same logic as insert_laid_out_text)
+            if is_270_rotation:
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+                local_y = line.y_position - bbox.y1
+                x_pos = bbox.x1 + local_y
+                y_pos = bbox.y0 + local_x
+            elif is_90_rotation:
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+                local_y = line.y_position - bbox.y1
+                x_pos = bbox.x0 - local_y
+                y_pos = bbox.y1 - local_x
+            else:
+                if alignment == "center":
+                    local_x = (bbox.width - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.width - line.width
+                else:
+                    local_x = 0.0
+                local_y = line.y_position - bbox.y1
+                if abs(rotation) > 0.001:
+                    rotated_x = local_x * cos_r - local_y * sin_r
+                    rotated_y = local_x * sin_r + local_y * cos_r
+                    x_pos = bbox.x0 + rotated_x
+                    y_pos = bbox.y1 + rotated_y
+                else:
+                    x_pos = bbox.x0 + local_x
+                    y_pos = line.y_position
+
+            pdfium.raw.FPDFPageObj_Transform(
+                text_obj,
+                ctypes.c_double(cos_r),
+                ctypes.c_double(sin_r),
+                ctypes.c_double(-sin_r),
+                ctypes.c_double(cos_r),
+                ctypes.c_double(x_pos),
+                ctypes.c_double(y_pos),
+            )
+
+            pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
+
+        # Note: gen_content() is NOT called here - caller is responsible
+        return success
+
     def apply_paragraphs(
         self,
         paragraphs: list[Paragraph],
@@ -1123,8 +1351,11 @@ class PDFProcessor:
     ) -> None:
         """Apply translated paragraphs to the PDF.
 
-        Uses TextLayoutEngine to properly fit text within bounding boxes,
-        with automatic line wrapping and font size adjustment.
+        Uses the hybrid approach (pikepdf + pypdfium2) to:
+        1. Remove original text using pikepdf (preserves spacing in adjacent text)
+        2. Insert translated text using pypdfium2
+
+        This approach solves Issue #47 (spacing corruption after text removal).
 
         Args:
             paragraphs: List of paragraphs to apply.
@@ -1133,20 +1364,44 @@ class PDFProcessor:
                 If provided, uses subsets instead of finding font variants.
             min_font_size: Minimum font size for text fitting. If None, uses engine default.
         """
-        self._ensure_open()
-
         # Update TextLayoutEngine min_font_size if specified
         if min_font_size is not None:
             self._layout_engine._min_font_size = min_font_size
 
-        for para in paragraphs:
-            if not para.translated_text:
-                continue
+        # Collect translated paragraphs
+        translated_paragraphs = [p for p in paragraphs if p.translated_text]
+        if not translated_paragraphs:
+            return
 
-            self.remove_text_in_bbox(
-                page_num=para.page_number,
-                bbox=para.block_bbox,
-            )
+        # Collect bboxes by page for text removal
+        bboxes_by_page: dict[int, list[BBox]] = {}
+        for para in translated_paragraphs:
+            if para.page_number not in bboxes_by_page:
+                bboxes_by_page[para.page_number] = []
+            bboxes_by_page[para.page_number].append(para.block_bbox)
+
+        # Remove text using pikepdf (preserves spacing in adjacent text)
+        modified_pdf_bytes = self.remove_text_with_pikepdf(
+            bboxes_by_page, self._pdf_bytes
+        )
+
+        # Close current PDF and reopen with modified bytes
+        self.close()
+        self._pdf = pdfium.PdfDocument(modified_pdf_bytes)
+        self._pdf_bytes = modified_pdf_bytes  # Update stored bytes
+        self._source_name = "modified"
+
+        pdf = self._ensure_open()
+
+        # Track page objects that need gen_content() call
+        pages_modified: dict[int, pdfium.PdfPage] = {}
+
+        for para in translated_paragraphs:
+            # Get the page object once and reuse it
+            if para.page_number not in pages_modified:
+                pages_modified[para.page_number] = pdf[para.page_number]
+
+            page = pages_modified[para.page_number]
 
             # Determine initial font size
             initial_font_size = (
@@ -1184,20 +1439,28 @@ class PDFProcessor:
                 font_handle = self.load_standard_font(font_name)
 
             if not font_handle:
-                # Fallback to standard font if custom font loading fails
-                # Pass font_path=None to force standard font usage
-                font = Font(name="Helvetica", size=initial_font_size)
-                self.insert_text_object(
-                    page_num=para.page_number,
-                    text=text,
-                    bbox=para.block_bbox,
-                    font=font,
-                    font_path=None,  # Use standard font as fallback
+                # Fallback: create simple text object without gen_content()
+                text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+                    pdf.raw,
+                    self.load_standard_font("Helvetica"),
+                    ctypes.c_float(initial_font_size),
                 )
+                if text_obj:
+                    text_ws = to_widestring(text)
+                    pdfium.raw.FPDFText_SetText(text_obj, text_ws)
+                    pdfium.raw.FPDFPageObj_Transform(
+                        text_obj,
+                        ctypes.c_double(1.0),
+                        ctypes.c_double(0.0),
+                        ctypes.c_double(0.0),
+                        ctypes.c_double(1.0),
+                        ctypes.c_double(para.block_bbox.x0),
+                        ctypes.c_double(para.block_bbox.y0),
+                    )
+                    pdfium.raw.FPDFPage_InsertObject(page.raw, text_obj)
                 continue
 
             # Use TextLayoutEngine to calculate layout
-            # Pass rotation in degrees so layout engine can swap width/height for vertical text
             layout_result = self._layout_engine.fit_text_in_bbox(
                 text=text,
                 bbox=para.block_bbox,
@@ -1206,13 +1469,9 @@ class PDFProcessor:
                 rotation_degrees=para.rotation,
             )
 
-            # Insert laid out text
-            # Convert rotation from degrees to radians for the transform
-            # Note: pdftext rotation is the visual rotation angle (to read text normally),
-            # but PDF transform matrix needs the opposite direction.
-            # pdftext 270° means text reads bottom-to-top, requiring PDF matrix of -270° = 90°
+            # Insert laid out text WITHOUT calling gen_content()
             rotation_radians = math.radians(-para.rotation)
-            self.insert_laid_out_text(
+            self._insert_laid_out_text_no_gen(
                 page_num=para.page_number,
                 layout_result=layout_result,
                 bbox=para.block_bbox,
@@ -1222,7 +1481,13 @@ class PDFProcessor:
                 alignment=para.alignment,
                 rotation=rotation_radians,
                 pdftext_rotation_degrees=para.rotation,
+                _page=page,
             )
+
+        # Call gen_content() once per modified page at the end
+        # This finalizes all inserted text objects into the page content stream
+        for page_num, page in pages_modified.items():
+            page.gen_content()
 
     def _get_fallback_font(self, original_font: Font) -> Font:
         """Get appropriate fallback font for non-standard fonts.
