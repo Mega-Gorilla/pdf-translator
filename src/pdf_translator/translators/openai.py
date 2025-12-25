@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import json
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pdf_translator.translators.base import (
     ArrayLengthMismatchError,
@@ -13,6 +14,7 @@ from pdf_translator.translators.base import (
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
+    from pydantic import BaseModel
 
 
 # Language code to full name mapping for prompts
@@ -22,10 +24,13 @@ LANGUAGE_NAMES = {
     "auto": "the source language",
 }
 
+# Enhanced system prompt for reliable array-length matching
 DEFAULT_SYSTEM_PROMPT = (
     "You are a professional translator. Translate the given texts accurately "
     "while preserving the original meaning, tone, and formatting. "
-    "Return only the translations without any explanations."
+    "IMPORTANT: You must return EXACTLY the same number of translations as input texts. "
+    "Each input text must have exactly one corresponding translation. "
+    "Do not merge, split, or skip any texts."
 )
 
 
@@ -78,12 +83,10 @@ class OpenAITranslator:
 
         try:
             from pydantic import BaseModel as _BaseModel
+            from pydantic import Field as _Field
 
-            # Create the response model class here
-            class TranslationResult(_BaseModel):
-                translations: list[str]
-
-            self._TranslationResult = TranslationResult
+            self._BaseModel = _BaseModel
+            self._Field = _Field
         except ImportError:
             raise ImportError(
                 "pydantic is required for OpenAI backend. "
@@ -121,6 +124,24 @@ class OpenAITranslator:
             Full language name.
         """
         return LANGUAGE_NAMES.get(lang_code.lower(), lang_code)
+
+    def _create_response_model(self, n: int) -> type["BaseModel"]:
+        """Create a Pydantic model with fixed-length translations array.
+
+        This ensures OpenAI Structured Outputs enforces the exact array length,
+        preventing ArrayLengthMismatchError.
+
+        Args:
+            n: Expected number of translations.
+
+        Returns:
+            Pydantic model class with length-constrained translations field.
+        """
+
+        class TranslationResult(self._BaseModel):  # type: ignore[misc, name-defined]
+            translations: Annotated[list[str], self._Field(min_length=n, max_length=n)]
+
+        return TranslationResult
 
     async def translate(
         self,
@@ -204,7 +225,10 @@ class OpenAITranslator:
         source_lang: str,
         target_lang: str,
     ) -> list[str]:
-        """Translate texts using Structured Outputs.
+        """Translate texts using Structured Outputs with fixed-length schema.
+
+        Uses dynamic Pydantic schema with min_length/max_length constraints
+        and JSON-formatted input to ensure reliable array-length matching.
 
         Args:
             texts: List of non-empty texts to translate.
@@ -219,17 +243,24 @@ class OpenAITranslator:
             ConfigurationError: On authentication failure.
         """
         client = self._ensure_client()
+        n = len(texts)
 
         source_name = self._get_language_name(source_lang)
         target_name = self._get_language_name(target_lang)
 
+        # Create dynamic response model with fixed array length
+        response_model = self._create_response_model(n)
+
+        # Use indexed JSON format for clear text boundaries
+        indexed_texts = {str(i): text for i, text in enumerate(texts)}
+        texts_json = json.dumps(indexed_texts, ensure_ascii=False, indent=2)
+
         user_content = (
-            f"Translate the following {len(texts)} text(s) from {source_name} "
-            f"to {target_name}. Return exactly {len(texts)} translations "
-            f"in the same order.\n\nTexts to translate:\n"
+            f"Translate {n} texts from {source_name} to {target_name}.\n"
+            f"CRITICAL: Return exactly {n} translations, one for each indexed input.\n\n"
+            f"Input texts (indexed JSON):\n{texts_json}\n\n"
+            f"Return translations array with {n} elements in index order (0 to {n - 1})."
         )
-        for i, text in enumerate(texts, 1):
-            user_content += f"{i}. {text}\n"
 
         try:
             response = await client.beta.chat.completions.parse(
@@ -238,18 +269,18 @@ class OpenAITranslator:
                     {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                response_format=self._TranslationResult,
+                response_format=response_model,
             )
 
             result = response.choices[0].message.parsed
             if result is None:
                 raise TranslationError("OpenAI returned empty response")
 
-            # Validate response length
-            translations: list[str] = result.translations
-            if len(translations) != len(texts):
+            # Validate response length (should be guaranteed by schema, but verify)
+            translations: list[str] = result.translations  # type: ignore[attr-defined]
+            if len(translations) != n:
                 raise ArrayLengthMismatchError(
-                    expected=len(texts),
+                    expected=n,
                     actual=len(translations),
                 )
 
