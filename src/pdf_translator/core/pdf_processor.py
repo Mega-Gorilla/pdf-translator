@@ -722,6 +722,74 @@ class PDFProcessor:
 
         return removed
 
+    def cover_bbox_with_rect(
+        self,
+        page_num: int,
+        bbox: BBox,
+        color: Optional[Color] = None,
+        *,
+        _page: Optional[pdfium.PdfPage] = None,
+    ) -> bool:
+        """Cover a bounding box area with a filled rectangle.
+
+        This method draws a filled rectangle over the specified area,
+        effectively hiding any content underneath. Unlike remove_text_in_bbox(),
+        this approach does not corrupt spacing information in nearby text objects
+        because it does not trigger the problematic gen_content() after deletion.
+
+        Args:
+            page_num: Page number (0-indexed).
+            bbox: Target bounding box to cover (PDF coordinates).
+            color: Fill color for the rectangle (default: white).
+            _page: Internal use only. Pre-fetched page object to ensure
+                   consistent object insertion across method calls.
+
+        Returns:
+            True if the rectangle was successfully inserted.
+
+        Note:
+            The original content remains in the PDF but is visually hidden
+            under the rectangle. This is intentional to preserve document
+            structure and avoid gen_content() corruption issues.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        # Use provided page object or fetch new one
+        page = _page if _page is not None else pdf[page_num]
+        page_handle = page.raw
+
+        # Default to white if no color specified
+        fill_color = color or Color(r=255, g=255, b=255)
+
+        # Create rectangle object
+        rect = pdfium.raw.FPDFPageObj_CreateNewRect(
+            ctypes.c_float(bbox.x0),
+            ctypes.c_float(bbox.y0),
+            ctypes.c_float(bbox.width),
+            ctypes.c_float(bbox.height),
+        )
+
+        if not rect:
+            return False
+
+        # Set fill color (fully opaque)
+        pdfium.raw.FPDFPageObj_SetFillColor(
+            rect, fill_color.r, fill_color.g, fill_color.b, 255
+        )
+
+        # Set draw mode: fill only (FPDF_FILLMODE_WINDING=2, stroke=0)
+        pdfium.raw.FPDFPath_SetDrawMode(rect, 2, ctypes.c_int(0))
+
+        # Insert rectangle into page
+        pdfium.raw.FPDFPage_InsertObject(page_handle, rect)
+
+        # Note: gen_content() will be called later when text is inserted
+        # This avoids the spacing corruption issue caused by deletion + gen_content()
+
+        return True
+
     def remove_all_text(self, page_num: int) -> int:
         """Remove all text objects from a page.
 
@@ -1114,6 +1182,120 @@ class PDFProcessor:
         page.gen_content()
         return success
 
+    def _insert_laid_out_text_no_gen(
+        self,
+        page_num: int,
+        layout_result: LayoutResult,
+        bbox: BBox,
+        font_handle: Any,
+        font_size: float,
+        color: Optional[Color] = None,
+        alignment: str = "left",
+        rotation: float = 0.0,
+        pdftext_rotation_degrees: float = 0.0,
+        *,
+        _page: Optional[pdfium.PdfPage] = None,
+    ) -> bool:
+        """Insert laid out text without calling gen_content().
+
+        This is an internal method used by apply_paragraphs() to batch
+        gen_content() calls for better performance and correct z-ordering.
+        See insert_laid_out_text() for parameter documentation.
+
+        Args:
+            _page: Pre-fetched page object to ensure consistent object insertion.
+        """
+        pdf = self._ensure_open()
+        if page_num < 0 or page_num >= len(pdf):
+            raise IndexError(f"Page number {page_num} out of range")
+
+        # Use provided page object or fetch new one
+        page = _page if _page is not None else pdf[page_num]
+        doc_handle = pdf.raw
+        page_handle = page.raw
+
+        # Pre-calculate rotation matrix components
+        cos_r = math.cos(rotation)
+        sin_r = math.sin(rotation)
+
+        # Determine rotation type for coordinate calculation
+        visual_rotation = pdftext_rotation_degrees % 360
+        is_270_rotation = 265 <= visual_rotation <= 275
+        is_90_rotation = 85 <= visual_rotation <= 95
+
+        success = True
+        for line in layout_result.lines:
+            text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+                doc_handle, font_handle, ctypes.c_float(font_size)
+            )
+
+            if not text_obj:
+                success = False
+                continue
+
+            text_ws = to_widestring(line.text)
+            if not pdfium.raw.FPDFText_SetText(text_obj, text_ws):
+                success = False
+                continue
+
+            if color:
+                pdfium.raw.FPDFPageObj_SetFillColor(
+                    text_obj, color.r, color.g, color.b, 255
+                )
+
+            # Calculate position based on rotation (same logic as insert_laid_out_text)
+            if is_270_rotation:
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+                local_y = line.y_position - bbox.y1
+                x_pos = bbox.x1 + local_y
+                y_pos = bbox.y0 + local_x
+            elif is_90_rotation:
+                if alignment == "center":
+                    local_x = (bbox.height - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.height - line.width
+                else:
+                    local_x = 0.0
+                local_y = line.y_position - bbox.y1
+                x_pos = bbox.x0 - local_y
+                y_pos = bbox.y1 - local_x
+            else:
+                if alignment == "center":
+                    local_x = (bbox.width - line.width) / 2
+                elif alignment == "right":
+                    local_x = bbox.width - line.width
+                else:
+                    local_x = 0.0
+                local_y = line.y_position - bbox.y1
+                if abs(rotation) > 0.001:
+                    rotated_x = local_x * cos_r - local_y * sin_r
+                    rotated_y = local_x * sin_r + local_y * cos_r
+                    x_pos = bbox.x0 + rotated_x
+                    y_pos = bbox.y1 + rotated_y
+                else:
+                    x_pos = bbox.x0 + local_x
+                    y_pos = line.y_position
+
+            pdfium.raw.FPDFPageObj_Transform(
+                text_obj,
+                ctypes.c_double(cos_r),
+                ctypes.c_double(sin_r),
+                ctypes.c_double(-sin_r),
+                ctypes.c_double(cos_r),
+                ctypes.c_double(x_pos),
+                ctypes.c_double(y_pos),
+            )
+
+            pdfium.raw.FPDFPage_InsertObject(page_handle, text_obj)
+
+        # Note: gen_content() is NOT called here - caller is responsible
+        return success
+
     def apply_paragraphs(
         self,
         paragraphs: list[Paragraph],
@@ -1133,19 +1315,33 @@ class PDFProcessor:
                 If provided, uses subsets instead of finding font variants.
             min_font_size: Minimum font size for text fitting. If None, uses engine default.
         """
-        self._ensure_open()
+        pdf = self._ensure_open()
 
         # Update TextLayoutEngine min_font_size if specified
         if min_font_size is not None:
             self._layout_engine._min_font_size = min_font_size
 
+        # Track page objects that need gen_content() call
+        # Store actual page objects to ensure gen_content() is called on the correct instance
+        pages_modified: dict[int, pdfium.PdfPage] = {}
+
         for para in paragraphs:
             if not para.translated_text:
                 continue
 
-            self.remove_text_in_bbox(
+            # Get the page object once and reuse it
+            if para.page_number not in pages_modified:
+                pages_modified[para.page_number] = pdf[para.page_number]
+
+            page = pages_modified[para.page_number]
+
+            # Use cover_bbox_with_rect() instead of remove_text_in_bbox()
+            # to avoid gen_content() corrupting spacing in nearby text objects.
+            # See Issue #47 for details.
+            self.cover_bbox_with_rect(
                 page_num=para.page_number,
                 bbox=para.block_bbox,
+                _page=page,
             )
 
             # Determine initial font size
@@ -1184,20 +1380,28 @@ class PDFProcessor:
                 font_handle = self.load_standard_font(font_name)
 
             if not font_handle:
-                # Fallback to standard font if custom font loading fails
-                # Pass font_path=None to force standard font usage
-                font = Font(name="Helvetica", size=initial_font_size)
-                self.insert_text_object(
-                    page_num=para.page_number,
-                    text=text,
-                    bbox=para.block_bbox,
-                    font=font,
-                    font_path=None,  # Use standard font as fallback
+                # Fallback: create simple text object without gen_content()
+                text_obj = pdfium.raw.FPDFPageObj_CreateTextObj(
+                    pdf.raw,
+                    self.load_standard_font("Helvetica"),
+                    ctypes.c_float(initial_font_size),
                 )
+                if text_obj:
+                    text_ws = to_widestring(text)
+                    pdfium.raw.FPDFText_SetText(text_obj, text_ws)
+                    pdfium.raw.FPDFPageObj_Transform(
+                        text_obj,
+                        ctypes.c_double(1.0),
+                        ctypes.c_double(0.0),
+                        ctypes.c_double(0.0),
+                        ctypes.c_double(1.0),
+                        ctypes.c_double(para.block_bbox.x0),
+                        ctypes.c_double(para.block_bbox.y0),
+                    )
+                    pdfium.raw.FPDFPage_InsertObject(page.raw, text_obj)
                 continue
 
             # Use TextLayoutEngine to calculate layout
-            # Pass rotation in degrees so layout engine can swap width/height for vertical text
             layout_result = self._layout_engine.fit_text_in_bbox(
                 text=text,
                 bbox=para.block_bbox,
@@ -1206,13 +1410,9 @@ class PDFProcessor:
                 rotation_degrees=para.rotation,
             )
 
-            # Insert laid out text
-            # Convert rotation from degrees to radians for the transform
-            # Note: pdftext rotation is the visual rotation angle (to read text normally),
-            # but PDF transform matrix needs the opposite direction.
-            # pdftext 270° means text reads bottom-to-top, requiring PDF matrix of -270° = 90°
+            # Insert laid out text WITHOUT calling gen_content()
             rotation_radians = math.radians(-para.rotation)
-            self.insert_laid_out_text(
+            self._insert_laid_out_text_no_gen(
                 page_num=para.page_number,
                 layout_result=layout_result,
                 bbox=para.block_bbox,
@@ -1222,7 +1422,13 @@ class PDFProcessor:
                 alignment=para.alignment,
                 rotation=rotation_radians,
                 pdftext_rotation_degrees=para.rotation,
+                _page=page,
             )
+
+        # Call gen_content() once per modified page at the end
+        # This ensures proper z-ordering: original text -> rectangles -> translated text
+        for page_num, page in pages_modified.items():
+            page.gen_content()
 
     def _get_fallback_font(self, original_font: Font) -> Font:
         """Get appropriate fallback font for non-standard fonts.

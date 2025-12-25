@@ -529,3 +529,89 @@ class TestPDFProcessorParagraphs:
             # Should fall back when italic not found
             result = processor._find_font_variant(base_font, False, True)
             assert result == base_font
+
+    def test_cover_bbox_with_rect(self):
+        """Test covering a bbox area with a filled rectangle."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            # Cover a small area on page 0
+            bbox = BBox(x0=100.0, y0=100.0, x1=200.0, y1=200.0)
+            result = processor.cover_bbox_with_rect(0, bbox)
+            assert result is True
+
+            # Verify PDF can be saved and is valid
+            pdf_bytes = processor.to_bytes()
+            assert isinstance(pdf_bytes, bytes)
+            assert len(pdf_bytes) > 0
+
+    def test_cover_bbox_with_rect_custom_color(self):
+        """Test covering bbox with custom color."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            bbox = BBox(x0=100.0, y0=100.0, x1=200.0, y1=200.0)
+            custom_color = Color(r=128, g=128, b=128)
+            result = processor.cover_bbox_with_rect(0, bbox, color=custom_color)
+            assert result is True
+
+    def test_cover_bbox_with_rect_invalid_page(self):
+        """Test error on invalid page number."""
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            bbox = BBox(x0=100.0, y0=100.0, x1=200.0, y1=200.0)
+            with pytest.raises(IndexError):
+                processor.cover_bbox_with_rect(999, bbox)
+
+
+@pytest.mark.skipif(not SAMPLE_PDF.exists(), reason="Test fixture not available")
+class TestSpacingPreservation:
+    """Tests for Issue #47: spacing preservation during translation.
+
+    Verifies that cover_bbox_with_rect() preserves spacing in nearby text,
+    unlike remove_text_in_bbox() which can corrupt spacing via gen_content().
+    """
+
+    def test_cover_bbox_preserves_nearby_text_spacing(self):
+        """Verify that covering a bbox does not corrupt spacing in nearby text.
+
+        This test covers the fix for Issue #47 where remove_text_in_bbox()
+        caused "1 Introduction" to become "1Introduction" by corrupting
+        TJ operator spacing data during gen_content().
+        """
+        from pdf_translator.core.paragraph_extractor import ParagraphExtractor
+
+        # Find "1 Introduction" in original PDF
+        original_paragraphs = ParagraphExtractor.extract_from_pdf(SAMPLE_PDF)
+        intro_text = None
+        for para in original_paragraphs:
+            if "Introduction" in para.text and para.text.startswith("1"):
+                intro_text = para.text
+                break
+
+        assert intro_text is not None, "Could not find '1 Introduction' in sample PDF"
+        assert " " in intro_text, f"Original text should have space: {intro_text!r}"
+
+        # Apply overlay approach (should preserve spacing)
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            # Cover a nearby bbox (the one that caused issues in investigation)
+            nearby_bbox = BBox(x0=70.5, y0=106.3, x1=291.0, y1=431.1)
+            processor.cover_bbox_with_rect(0, nearby_bbox)
+            pdf_bytes = processor.to_bytes()
+
+        # Check that spacing is preserved in output
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(pdf_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            output_paragraphs = ParagraphExtractor.extract_from_pdf(temp_path)
+            output_intro = None
+            for para in output_paragraphs:
+                if "Introduction" in para.text:
+                    output_intro = para.text
+                    break
+
+            assert output_intro is not None, "Could not find 'Introduction' in output PDF"
+            assert " " in output_intro, (
+                f"Spacing was corrupted! Expected space in '{output_intro!r}'. "
+                "This indicates the overlay approach failed to preserve spacing."
+            )
+        finally:
+            temp_path.unlink()
