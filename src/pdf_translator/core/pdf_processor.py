@@ -690,6 +690,14 @@ class PDFProcessor:
             This is the standard method for text removal (Issue #47 fix).
             The returned bytes can be used to create a new PDFProcessor instance
             for further manipulation (e.g., inserting translated text).
+
+        Known Limitations:
+            - Text position after Tj/TJ is not tracked (would require font metrics
+              for accurate character width calculation). This means if multiple
+              Tj/TJ operations appear on the same line without intervening Tm/Td,
+              only the first text block's position is used for bbox matching.
+              Most PDFs use Tm to set absolute position before each text block,
+              so this is rarely an issue in practice.
         """
 
         def point_in_any_bbox(x: float, y: float, bboxes: list[BBox]) -> bool:
@@ -794,11 +802,19 @@ class PDFProcessor:
                                 new_cs.append(cmd)
                         elif op_str == '"':
                             # Set spacing, move to next line and show text
+                            # Equivalent to: aw Tw ac Tc string '
                             # Operands: aw ac string (word spacing, char spacing, string)
                             # Note: x position is maintained (relative move with dx=0)
                             current_y -= text_leading
                             if point_in_any_bbox(current_x, current_y, bboxes):
-                                # Replace with just T* (move without text)
+                                # Keep Tw/Tc settings for subsequent text, add T* for line move
+                                # This preserves word/char spacing for text that follows
+                                if len(operands) >= 2:
+                                    # aw Tw (word spacing)
+                                    new_cs.append(([operands[0]], pikepdf.Operator("Tw")))
+                                    # ac Tc (character spacing)
+                                    new_cs.append(([operands[1]], pikepdf.Operator("Tc")))
+                                # T* for line move
                                 new_cs.append(([], pikepdf.Operator("T*")))
                             else:
                                 new_cs.append(cmd)
