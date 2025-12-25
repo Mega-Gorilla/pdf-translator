@@ -693,9 +693,15 @@ class PDFProcessor:
         """
 
         def point_in_any_bbox(x: float, y: float, bboxes: list[BBox]) -> bool:
-            """Check if point (x, y) is inside any of the bboxes."""
+            """Check if point (x, y) is inside any of the bboxes.
+
+            Uses a small tolerance (0.5 pt) to handle floating-point precision
+            differences between pdftext and pikepdf coordinate systems.
+            """
+            tolerance = 0.5  # Points - handles precision mismatch
             for bbox in bboxes:
-                if bbox.x0 <= x <= bbox.x1 and bbox.y0 <= y <= bbox.y1:
+                if (bbox.x0 - tolerance <= x <= bbox.x1 + tolerance and
+                        bbox.y0 - tolerance <= y <= bbox.y1 + tolerance):
                     return True
             return False
 
