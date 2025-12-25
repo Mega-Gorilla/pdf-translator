@@ -21,6 +21,11 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pdf_translator.core.side_by_side import SideBySideOrder
+    from pdf_translator.translators.base import TranslatorBackend
 
 # プロジェクトルートをパスに追加（開発時用）
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -43,7 +48,7 @@ TARGET_LANG = "ja"  # 翻訳先の言語
 
 # デバッグ: レイアウト解析結果のbboxを描画
 # True にすると、段落の境界ボックスがPDFに描画されます
-DEBUG_DRAW_BBOX = False
+DEBUG_DRAW_BBOX = True
 
 # 見開きPDF生成: 原文と翻訳文を左右に並べて表示
 SIDE_BY_SIDE = True
@@ -55,6 +60,12 @@ SIDE_BY_SIDE_ORDER = "original_translated"
 
 # 見開きの間隔（ポイント）
 SIDE_BY_SIDE_GAP = 10.0
+
+# レイアウト解析によるカテゴリ分類
+# - True: PP-DocLayoutでレイアウト解析を行い、テキスト/タイトルのみ翻訳（推奨）
+#         図、表、数式などは自動的にスキップされます
+# - False: 全てのテキストを翻訳（数式や図のキャプションも翻訳される可能性あり）
+USE_LAYOUT_ANALYSIS = True
 
 # 厳格モード: 翻訳失敗時の動作
 # - False: 失敗したテキストは原文のまま保持（推奨）
@@ -70,7 +81,7 @@ OUTPUT_DIR = Path(__file__).parent / "outputs"
 # =============================================================================
 
 
-def get_translator(backend: str):
+def get_translator(backend: str) -> TranslatorBackend:
     """翻訳バックエンドを取得する。"""
     if backend == "google":
         from pdf_translator.translators import GoogleTranslator
@@ -87,7 +98,7 @@ def get_translator(backend: str):
         from pdf_translator.translators import get_openai_translator
 
         OpenAITranslator = get_openai_translator()
-        return OpenAITranslator(api_key=api_key)
+        return OpenAITranslator(api_key=api_key)  # type: ignore[no-any-return]
 
     elif backend == "deepl":
         api_key = os.environ.get("DEEPL_API_KEY")
@@ -99,7 +110,7 @@ def get_translator(backend: str):
         from pdf_translator.translators import get_deepl_translator
 
         DeepLTranslator = get_deepl_translator()
-        return DeepLTranslator(api_key=api_key)
+        return DeepLTranslator(api_key=api_key)  # type: ignore[no-any-return]
 
     else:
         print(f"Error: Unknown translator backend: {backend}")
@@ -107,7 +118,7 @@ def get_translator(backend: str):
         sys.exit(1)
 
 
-def get_side_by_side_order(order: str):
+def get_side_by_side_order(order: str) -> SideBySideOrder:
     """見開き順序を取得する。"""
     from pdf_translator.core.side_by_side import SideBySideOrder
 
@@ -121,7 +132,7 @@ def get_side_by_side_order(order: str):
         sys.exit(1)
 
 
-async def main():
+async def main() -> None:
     """メイン処理。"""
     from pdf_translator.pipeline.translation_pipeline import (
         PipelineConfig,
@@ -154,6 +165,7 @@ async def main():
     print(f"Output:      {output_pdf}")
     print(f"Translator:  {TRANSLATOR}")
     print(f"Languages:   {SOURCE_LANG} -> {TARGET_LANG}")
+    print(f"Layout analysis: {USE_LAYOUT_ANALYSIS}")
     print(f"Debug bbox:  {DEBUG_DRAW_BBOX}")
     print(f"Side-by-side: {SIDE_BY_SIDE}")
     if SIDE_BY_SIDE:
@@ -170,6 +182,7 @@ async def main():
     config = PipelineConfig(
         source_lang=SOURCE_LANG,
         target_lang=TARGET_LANG,
+        use_layout_analysis=USE_LAYOUT_ANALYSIS,
         debug_draw_bbox=DEBUG_DRAW_BBOX,
         side_by_side=SIDE_BY_SIDE,
         side_by_side_order=get_side_by_side_order(SIDE_BY_SIDE_ORDER),
@@ -187,8 +200,9 @@ async def main():
     print("\n" + "=" * 60)
     print("Translation Complete!")
     print("=" * 60)
-    print(f"Paragraphs translated: {result.stats['translated_paragraphs']}")
-    print(f"Paragraphs skipped:    {result.stats['skipped_paragraphs']}")
+    if result.stats:
+        print(f"Paragraphs translated: {result.stats['translated_paragraphs']}")
+        print(f"Paragraphs skipped:    {result.stats['skipped_paragraphs']}")
     print(f"Output file:           {output_pdf}")
     print(f"File size:             {output_pdf.stat().st_size / 1024:.1f} KB")
 
