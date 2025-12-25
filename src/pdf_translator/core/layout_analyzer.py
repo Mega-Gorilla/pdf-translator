@@ -73,16 +73,20 @@ class LayoutAnalyzer:
             import paddle
             from paddleocr import LayoutDetection  # type: ignore[import-untyped]
 
-            # Check GPU availability
+            # Check GPU availability and explicitly set device
             cuda_available: bool = paddle.is_compiled_with_cuda()  # type: ignore[attr-defined]
             gpu_count = paddle.device.cuda.device_count() if cuda_available else 0
 
             if cuda_available and gpu_count > 0:
+                # Explicitly set GPU device to ensure GPU is used
+                paddle.set_device("gpu:0")  # type: ignore[attr-defined]
                 logger.info(
                     "GPU detected (%d device(s)). Using GPU for layout analysis.",
                     gpu_count,
                 )
             else:
+                # Explicitly set CPU device
+                paddle.set_device("cpu")  # type: ignore[attr-defined]
                 logger.warning(
                     "GPU not available for layout analysis. Using CPU (slower). "
                     "For faster processing, install paddlepaddle-gpu. "

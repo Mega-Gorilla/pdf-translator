@@ -19,6 +19,8 @@ uv sync
 
 PDF Translator uses PP-DocLayout for layout analysis, which benefits significantly from GPU acceleration. With GPU, layout analysis is **4x faster** (benchmark: 9.5s → 2.3s).
 
+> **Important**: `uv sync` installs the CPU version of PaddlePaddle by default. To use GPU acceleration, you must replace it with the GPU version using the steps below. This replacement is required after every `uv sync`.
+
 **Check your CUDA version:**
 
 ```bash
