@@ -28,6 +28,22 @@ class ConfigurationError(TranslatorError):
     pass
 
 
+class ArrayLengthMismatchError(TranslationError):
+    """Raised when API returns wrong number of translations.
+
+    This error occurs with some models (e.g., GPT-4o-mini) due to
+    Structured Outputs reliability issues.
+
+    This error should NOT be retried with the same input.
+    Instead, the batch should be split into smaller chunks.
+    """
+
+    def __init__(self, expected: int, actual: int) -> None:
+        super().__init__(f"Expected {expected} translations but got {actual}")
+        self.expected = expected
+        self.actual = actual
+
+
 @runtime_checkable
 class TranslatorBackend(Protocol):
     """Protocol definition for translation backends.

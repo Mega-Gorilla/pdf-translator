@@ -5,7 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pdf_translator.translators.base import ConfigurationError, TranslationError
+from pdf_translator.translators.base import (
+    ArrayLengthMismatchError,
+    ConfigurationError,
+    TranslationError,
+)
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -37,7 +41,7 @@ class OpenAITranslator:
         name: Backend identifier ("openai").
     """
 
-    DEFAULT_MODEL = "gpt-4o-mini"
+    DEFAULT_MODEL = "gpt-5-nano"
 
     def __init__(
         self,
@@ -49,13 +53,15 @@ class OpenAITranslator:
 
         Args:
             api_key: OpenAI API key.
-            model: Model to use (default: gpt-4o-mini).
+            model: Model to use. Priority: argument > OPENAI_MODEL env > default.
             system_prompt: Custom system prompt for translation.
 
         Raises:
             ConfigurationError: If API key is not provided.
             ImportError: If openai package is not installed.
         """
+        import os
+
         if not api_key:
             raise ConfigurationError("OpenAI API key is required")
 
@@ -85,7 +91,8 @@ class OpenAITranslator:
             ) from None
 
         self._api_key = api_key
-        self._model = model or self.DEFAULT_MODEL
+        env_model = os.environ.get("OPENAI_MODEL")
+        self._model = model or env_model or self.DEFAULT_MODEL
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self._client: AsyncOpenAI | None = None
 
@@ -232,7 +239,6 @@ class OpenAITranslator:
                     {"role": "user", "content": user_content},
                 ],
                 response_format=self._TranslationResult,
-                temperature=0.2,
             )
 
             result = response.choices[0].message.parsed
@@ -242,9 +248,9 @@ class OpenAITranslator:
             # Validate response length
             translations: list[str] = result.translations
             if len(translations) != len(texts):
-                raise TranslationError(
-                    f"OpenAI returned {len(translations)} translations "
-                    f"for {len(texts)} texts"
+                raise ArrayLengthMismatchError(
+                    expected=len(texts),
+                    actual=len(translations),
                 )
 
             return translations
@@ -280,11 +286,11 @@ class OpenAITranslator:
             error: The caught exception.
 
         Raises:
-            ConfigurationError: On authentication failure.
+            ConfigurationError: On authentication or model access failure.
             TranslationError: On other API errors.
         """
         try:
-            from openai import AuthenticationError, RateLimitError
+            from openai import AuthenticationError, NotFoundError, RateLimitError
         except ImportError:
             raise TranslationError(f"OpenAI API error: {error}") from error
 
@@ -294,8 +300,37 @@ class OpenAITranslator:
             raise TranslationError(
                 "OpenAI rate limit exceeded, please retry later"
             ) from error
-        else:
-            raise TranslationError(f"OpenAI API error: {error}") from error
+        elif isinstance(error, NotFoundError):
+            # NotFoundError is raised when model is not found
+            raise ConfigurationError(
+                f"Model '{self._model}' is not available. "
+                f"Set OPENAI_MODEL environment variable to use a different model "
+                f"(e.g., 'gpt-4o-mini', 'gpt-4o')."
+            ) from error
+
+        # Check for model not found/access error via error code or message
+        error_code = getattr(error, "code", None) or ""
+        error_str = str(error).lower()
+        is_model_error = (
+            error_code in ("model_not_found", "invalid_model", "not_found")
+            or (
+                "model" in error_str
+                and (
+                    "not found" in error_str
+                    or "invalid" in error_str
+                    or "does not exist" in error_str
+                    or "do not have access" in error_str
+                )
+            )
+        )
+        if is_model_error:
+            raise ConfigurationError(
+                f"Model '{self._model}' is not available. "
+                f"Set OPENAI_MODEL environment variable to use a different model "
+                f"(e.g., 'gpt-4o-mini', 'gpt-4o')."
+            ) from error
+
+        raise TranslationError(f"OpenAI API error: {error}") from error
 
     async def close(self) -> None:
         """Close the OpenAI client."""

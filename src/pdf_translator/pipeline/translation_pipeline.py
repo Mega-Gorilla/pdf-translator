@@ -33,7 +33,12 @@ from pdf_translator.pipeline.errors import (
     PipelineError,
 )
 from pdf_translator.pipeline.progress import ProgressCallback
-from pdf_translator.translators.base import ConfigurationError, TranslationError, TranslatorBackend
+from pdf_translator.translators.base import (
+    ArrayLengthMismatchError,
+    ConfigurationError,
+    TranslationError,
+    TranslatorBackend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +90,9 @@ class PipelineConfig:
     side_by_side: bool = False  # Generate side-by-side comparison PDF
     side_by_side_order: SideBySideOrder = SideBySideOrder.TRANSLATED_ORIGINAL
     side_by_side_gap: float = 0.0  # Gap between pages in points
+
+    # Translation failure handling
+    strict_mode: bool = False  # If True, raise error on single text failure
 
 
 @dataclass
@@ -405,6 +413,10 @@ class TranslationPipeline:
         return result
 
     async def _translate_with_retry(self, texts: list[str]) -> list[str]:
+        """Translate texts with retry and fallback logic.
+
+        On ArrayLengthMismatchError, splits the batch and retries.
+        """
         last_error: TranslationError | None = None
         for attempt in range(self._config.max_retries + 1):
             try:
@@ -415,6 +427,13 @@ class TranslationPipeline:
                 )
             except ConfigurationError:
                 raise
+            except ArrayLengthMismatchError:
+                # Batch split fallback (do not retry with same input)
+                logger.warning(
+                    "Array length mismatch, splitting batch of %d texts",
+                    len(texts),
+                )
+                return await self._translate_with_split(texts)
             except TranslationError as exc:
                 last_error = exc
                 if attempt < self._config.max_retries:
@@ -426,6 +445,43 @@ class TranslationPipeline:
             stage="translate",
             cause=last_error,
         )
+
+    async def _translate_with_split(self, texts: list[str]) -> list[str]:
+        """Translate texts by splitting batch recursively.
+
+        When ArrayLengthMismatchError occurs, split the batch in half
+        and retry. If batch size is 1, fall back to individual translation.
+        """
+        if len(texts) == 0:
+            return []
+
+        if len(texts) == 1:
+            # Fall back to individual translation
+            try:
+                result = await self._translator.translate(
+                    texts[0],
+                    self._config.source_lang,
+                    self._config.target_lang,
+                )
+                return [result]
+            except TranslationError as exc:
+                if self._config.strict_mode:
+                    # Strict mode: re-raise error
+                    raise
+                else:
+                    # Lenient mode (default): log warning and return original
+                    logger.warning(
+                        "Translation failed for text (len=%d), returning original: %s",
+                        len(texts[0]),
+                        exc,
+                    )
+                    return [texts[0]]
+
+        # Split batch in half
+        mid = len(texts) // 2
+        left = await self._translate_with_retry(texts[:mid])
+        right = await self._translate_with_retry(texts[mid:])
+        return left + right
 
     def _chunk_texts(self, texts: list[str]) -> list[list[str]]:
         batch_size = max(1, int(self._config.translation_batch_size))
