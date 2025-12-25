@@ -68,6 +68,7 @@ class PipelineConfig:
     max_retries: int = 3
     retry_delay: float = 1.0
     translation_batch_size: int = 20
+    translation_max_concurrent: int = 10  # Maximum concurrent API requests
 
     cjk_font_path: Path | None = None
 
@@ -260,18 +261,36 @@ class TranslationPipeline:
             return []
 
         texts = [para.text for para in translatable]
-        translated_texts: list[str] = []
+        chunks = self._chunk_texts(texts)
         total = len(texts)
 
-        for chunk in self._chunk_texts(texts):
-            chunk_translations = await self._translate_with_retry(chunk)
-            if len(chunk_translations) != len(chunk):
-                raise PipelineError(
-                    "Translator returned unexpected number of results",
-                    stage="translate",
-                )
+        # Use semaphore to limit concurrent API requests
+        semaphore = asyncio.Semaphore(self._config.translation_max_concurrent)
+        completed_count = 0
+
+        async def translate_chunk(chunk: list[str], chunk_idx: int) -> tuple[int, list[str]]:
+            """Translate a chunk with semaphore-based concurrency control."""
+            nonlocal completed_count
+            async with semaphore:
+                chunk_translations = await self._translate_with_retry(chunk)
+                if len(chunk_translations) != len(chunk):
+                    raise PipelineError(
+                        "Translator returned unexpected number of results",
+                        stage="translate",
+                    )
+                completed_count += len(chunk)
+                self._notify("translate", completed_count, total)
+                return chunk_idx, chunk_translations
+
+        # Execute all chunks in parallel with semaphore limiting concurrency
+        tasks = [translate_chunk(chunk, idx) for idx, chunk in enumerate(chunks)]
+        results = await asyncio.gather(*tasks)
+
+        # Reconstruct translated_texts in original order
+        results_sorted = sorted(results, key=lambda x: x[0])
+        translated_texts: list[str] = []
+        for _, chunk_translations in results_sorted:
             translated_texts.extend(chunk_translations)
-            self._notify("translate", len(translated_texts), total)
 
         for para, translated in zip(translatable, translated_texts):
             para.translated_text = translated
