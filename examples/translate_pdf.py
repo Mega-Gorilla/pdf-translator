@@ -9,7 +9,7 @@ Usage:
     cd examples
     python translate_pdf.py
 
-環境変数（.envファイルから自動読み込み）:
+環境変数:
     OPENAI_API_KEY: OpenAI翻訳に必要
     DEEPL_API_KEY: DeepL翻訳に必要
     OPENAI_MODEL: OpenAIモデル指定（デフォルト: gpt-5-nano）
@@ -23,8 +23,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dotenv import load_dotenv
-
 if TYPE_CHECKING:
     from pdf_translator.core.side_by_side import SideBySideOrder
     from pdf_translator.translators.base import TranslatorBackend
@@ -32,9 +30,6 @@ if TYPE_CHECKING:
 # プロジェクトルートをパスに追加（開発時用）
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-
-# Load .env file from project root
-load_dotenv(PROJECT_ROOT / ".env")
 
 
 # =============================================================================
@@ -45,7 +40,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 # - google: APIキー不要（無料、レート制限あり）
 # - openai: OPENAI_API_KEY 環境変数が必要
 # - deepl: DEEPL_API_KEY 環境変数が必要
-TRANSLATOR = "openai"
+TRANSLATOR = "google"
 
 # 言語設定
 SOURCE_LANG = "en"  # 原文の言語
