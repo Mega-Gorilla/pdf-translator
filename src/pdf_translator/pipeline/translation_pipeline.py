@@ -370,6 +370,7 @@ class TranslationPipeline:
                     font_path=font_path,
                     font_subsets=font_subsets if font_subsets else None,
                     min_font_size=self._config.min_font_size,
+                    pdf_source=pdf_path,  # Enable hybrid approach (pikepdf + pypdfium2)
                 )
 
                 # Draw debug overlay showing original and merged paragraphs

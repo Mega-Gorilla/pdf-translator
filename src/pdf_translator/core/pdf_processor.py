@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import ctypes
 import math
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
+import pikepdf  # type: ignore[import-untyped]
 import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
 from .helpers import to_byte_array, to_widestring
@@ -722,6 +724,114 @@ class PDFProcessor:
 
         return removed
 
+    def remove_text_with_pikepdf(
+        self,
+        bboxes_by_page: dict[int, list[BBox]],
+        pdf_source: Union[Path, str, bytes],
+    ) -> bytes:
+        """Remove text in specified bboxes using pikepdf content stream editing.
+
+        This method uses pikepdf to directly edit PDF content streams,
+        filtering out TJ/Tj operators that fall within the specified bounding boxes.
+        Unlike remove_text_in_bbox(), this approach preserves spacing information
+        in adjacent text because it doesn't trigger gen_content() regeneration.
+
+        Args:
+            bboxes_by_page: Dictionary mapping page numbers to lists of bboxes to remove.
+            pdf_source: Path to PDF file or PDF bytes.
+
+        Returns:
+            Modified PDF as bytes.
+
+        Note:
+            This is the recommended method for text removal when spacing preservation
+            is important (Issue #47). The returned bytes can be used to create a new
+            PDFProcessor instance for further manipulation (e.g., inserting translated text).
+        """
+
+        def point_in_any_bbox(x: float, y: float, bboxes: list[BBox]) -> bool:
+            """Check if point (x, y) is inside any of the bboxes."""
+            for bbox in bboxes:
+                if bbox.x0 <= x <= bbox.x1 and bbox.y0 <= y <= bbox.y1:
+                    return True
+            return False
+
+        # Open PDF with pikepdf
+        if isinstance(pdf_source, bytes):
+            pdf = pikepdf.open(pdf_source)
+        else:
+            pdf = pikepdf.open(str(pdf_source))
+
+        try:
+            for page_num, bboxes in bboxes_by_page.items():
+                if page_num >= len(pdf.pages):
+                    continue
+
+                page = pdf.pages[page_num]
+                cs = list(pikepdf.parse_content_stream(page))
+
+                new_cs = []
+                in_text = False
+
+                # Track current text position
+                current_x: float = 0.0
+                current_y: float = 0.0
+
+                for cmd in cs:
+                    operands, operator = cmd
+                    op_str = str(operator)
+
+                    if op_str == "BT":
+                        # Begin Text block
+                        in_text = True
+                        new_cs.append(cmd)
+                    elif op_str == "ET":
+                        # End Text block
+                        in_text = False
+                        new_cs.append(cmd)
+                    elif in_text:
+                        # Inside text block - track position and filter text
+                        if op_str == "Tm" and len(operands) >= 6:
+                            # Text Matrix: a b c d e f (e=x, f=y)
+                            current_x = float(operands[4])
+                            current_y = float(operands[5])
+                            new_cs.append(cmd)
+                        elif op_str == "Td" and len(operands) >= 2:
+                            # Text move: dx dy
+                            current_x += float(operands[0])
+                            current_y += float(operands[1])
+                            new_cs.append(cmd)
+                        elif op_str == "TD" and len(operands) >= 2:
+                            # Text move with leading: dx dy
+                            current_x += float(operands[0])
+                            current_y += float(operands[1])
+                            new_cs.append(cmd)
+                        elif op_str in ("TJ", "Tj"):
+                            # Text showing operators - filter based on position
+                            if point_in_any_bbox(current_x, current_y, bboxes):
+                                # Skip this text operation (remove it)
+                                pass
+                            else:
+                                new_cs.append(cmd)
+                        else:
+                            # Other text-related commands (Tf, Tc, Tw, etc.)
+                            new_cs.append(cmd)
+                    else:
+                        # Outside text block - keep all commands
+                        new_cs.append(cmd)
+
+                # Unparse and update page content
+                new_stream = pikepdf.unparse_content_stream(new_cs)
+                page.Contents = pdf.make_stream(new_stream)
+
+            # Save to bytes
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as f:
+                pdf.save(f.name)
+                with open(f.name, "rb") as rf:
+                    return rf.read()
+        finally:
+            pdf.close()
+
     def cover_bbox_with_rect(
         self,
         page_num: int,
@@ -1302,6 +1412,7 @@ class PDFProcessor:
         font_path: Optional[Union[Path, str]] = None,
         font_subsets: Optional[dict[tuple[bool, bool], Path]] = None,
         min_font_size: Optional[float] = None,
+        pdf_source: Optional[Union[Path, str, bytes]] = None,
     ) -> None:
         """Apply translated paragraphs to the PDF.
 
@@ -1314,35 +1425,63 @@ class PDFProcessor:
             font_subsets: Pre-generated subset fonts keyed by (is_bold, is_italic).
                 If provided, uses subsets instead of finding font variants.
             min_font_size: Minimum font size for text fitting. If None, uses engine default.
-        """
-        pdf = self._ensure_open()
+            pdf_source: Original PDF source for hybrid approach (pikepdf + pypdfium2).
+                If provided, uses pikepdf to remove text first (preserves spacing).
+                If None, uses overlay approach (cover_bbox_with_rect).
 
+        Note:
+            When pdf_source is provided, the hybrid approach is used:
+            1. pikepdf removes text in translation bboxes (preserves spacing in adjacent text)
+            2. pypdfium2 inserts translated text
+            This solves Issue #47 (spacing corruption after text removal).
+        """
         # Update TextLayoutEngine min_font_size if specified
         if min_font_size is not None:
             self._layout_engine._min_font_size = min_font_size
+
+        # Collect bboxes to remove for hybrid approach
+        translated_paragraphs = [p for p in paragraphs if p.translated_text]
+        if not translated_paragraphs:
+            return
+
+        # Use hybrid approach if pdf_source is provided
+        if pdf_source is not None:
+            # Collect bboxes by page
+            bboxes_by_page: dict[int, list[BBox]] = {}
+            for para in translated_paragraphs:
+                if para.page_number not in bboxes_by_page:
+                    bboxes_by_page[para.page_number] = []
+                bboxes_by_page[para.page_number].append(para.block_bbox)
+
+            # Remove text using pikepdf (preserves spacing)
+            modified_pdf_bytes = self.remove_text_with_pikepdf(bboxes_by_page, pdf_source)
+
+            # Close current PDF and reopen with modified bytes
+            self.close()
+            self._pdf = pdfium.PdfDocument(modified_pdf_bytes)
+            self._source_name = "modified"
+
+        pdf = self._ensure_open()
 
         # Track page objects that need gen_content() call
         # Store actual page objects to ensure gen_content() is called on the correct instance
         pages_modified: dict[int, pdfium.PdfPage] = {}
 
-        for para in paragraphs:
-            if not para.translated_text:
-                continue
-
+        for para in translated_paragraphs:
             # Get the page object once and reuse it
             if para.page_number not in pages_modified:
                 pages_modified[para.page_number] = pdf[para.page_number]
 
             page = pages_modified[para.page_number]
 
-            # Use cover_bbox_with_rect() instead of remove_text_in_bbox()
-            # to avoid gen_content() corrupting spacing in nearby text objects.
-            # See Issue #47 for details.
-            self.cover_bbox_with_rect(
-                page_num=para.page_number,
-                bbox=para.block_bbox,
-                _page=page,
-            )
+            # If not using hybrid approach, use overlay (cover_bbox_with_rect)
+            # This is the fallback when pdf_source is not provided
+            if pdf_source is None:
+                self.cover_bbox_with_rect(
+                    page_num=para.page_number,
+                    bbox=para.block_bbox,
+                    _page=page,
+                )
 
             # Determine initial font size
             initial_font_size = (
