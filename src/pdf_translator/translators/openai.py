@@ -251,9 +251,9 @@ class OpenAITranslator:
         # Create dynamic response model with fixed array length
         response_model = self._create_response_model(n)
 
-        # Use indexed JSON format for clear text boundaries
+        # Use indexed JSON format for clear text boundaries (compact for token efficiency)
         indexed_texts = {str(i): text for i, text in enumerate(texts)}
-        texts_json = json.dumps(indexed_texts, ensure_ascii=False, indent=2)
+        texts_json = json.dumps(indexed_texts, ensure_ascii=False)
 
         user_content = (
             f"Translate {n} texts from {source_name} to {target_name}.\n"
