@@ -213,7 +213,12 @@ class PDFProcessor:
         """
         self._source_name: str
         self._pdf: Optional[pdfium.PdfDocument] = None
-        self._pdf_bytes: bytes  # Store original PDF bytes for hybrid approach
+        # Store original PDF bytes for hybrid approach (pikepdf removal).
+        # Note: This is updated by apply_paragraphs() after text removal.
+        # If you modify the PDF via other methods before calling apply_paragraphs(),
+        # those changes will be lost. For normal translation workflow, this is fine
+        # since apply_paragraphs() is the final step.
+        self._pdf_bytes: bytes
         self._loaded_fonts: dict[str, Any] = {}  # font_path -> font_handle
         self._loaded_font_buffers: dict[str, ctypes.Array[Any]] = {}  # keep buffers alive
         self._layout_engine = TextLayoutEngine()
@@ -725,8 +730,10 @@ class PDFProcessor:
                     op_str = str(operator)
 
                     if op_str == "BT":
-                        # Begin Text block
+                        # Begin Text block - reset text matrix to identity
                         in_text = True
+                        current_x = 0.0
+                        current_y = 0.0
                         new_cs.append(cmd)
                     elif op_str == "ET":
                         # End Text block
@@ -755,12 +762,16 @@ class PDFProcessor:
                             text_leading = float(operands[0])
                             new_cs.append(cmd)
                         elif op_str == "T*":
-                            # Move to start of next line (equivalent to 0 -TL Td)
-                            current_x = 0.0
+                            # Move to next line (equivalent to 0 -TL Td)
+                            # Note: x position is maintained (relative move with dx=0)
                             current_y -= text_leading
                             new_cs.append(cmd)
                         elif op_str in ("TJ", "Tj"):
                             # Text showing operators - filter based on position
+                            # Note: We don't update current_x after text rendering because
+                            # accurate tracking requires font metrics (character widths).
+                            # This is acceptable for bbox-based filtering since most PDFs
+                            # use Tm to set absolute position before each text block.
                             if point_in_any_bbox(current_x, current_y, bboxes):
                                 # Skip this text operation (remove it)
                                 pass
@@ -768,7 +779,7 @@ class PDFProcessor:
                                 new_cs.append(cmd)
                         elif op_str == "'":
                             # Move to next line and show text (T* followed by Tj)
-                            current_x = 0.0
+                            # Note: x position is maintained (relative move with dx=0)
                             current_y -= text_leading
                             if point_in_any_bbox(current_x, current_y, bboxes):
                                 # Replace with just T* (move without text)
@@ -778,7 +789,7 @@ class PDFProcessor:
                         elif op_str == '"':
                             # Set spacing, move to next line and show text
                             # Operands: aw ac string (word spacing, char spacing, string)
-                            current_x = 0.0
+                            # Note: x position is maintained (relative move with dx=0)
                             current_y -= text_leading
                             if point_in_any_bbox(current_x, current_y, bboxes):
                                 # Replace with just T* (move without text)
@@ -802,71 +813,6 @@ class PDFProcessor:
             return output.getvalue()
         finally:
             pdf.close()
-
-    def cover_bbox_with_rect(
-        self,
-        page_num: int,
-        bbox: BBox,
-        color: Optional[Color] = None,
-        *,
-        _page: Optional[pdfium.PdfPage] = None,
-    ) -> bool:
-        """Cover a bounding box area with a filled rectangle.
-
-        This method draws a filled rectangle over the specified area,
-        effectively hiding any content underneath.
-
-        Args:
-            page_num: Page number (0-indexed).
-            bbox: Target bounding box to cover (PDF coordinates).
-            color: Fill color for the rectangle (default: white).
-            _page: Internal use only. Pre-fetched page object to ensure
-                   consistent object insertion across method calls.
-
-        Returns:
-            True if the rectangle was successfully inserted.
-
-        Note:
-            The original content remains in the PDF but is visually hidden
-            under the rectangle.
-        """
-        pdf = self._ensure_open()
-        if page_num < 0 or page_num >= len(pdf):
-            raise IndexError(f"Page number {page_num} out of range")
-
-        # Use provided page object or fetch new one
-        page = _page if _page is not None else pdf[page_num]
-        page_handle = page.raw
-
-        # Default to white if no color specified
-        fill_color = color or Color(r=255, g=255, b=255)
-
-        # Create rectangle object
-        rect = pdfium.raw.FPDFPageObj_CreateNewRect(
-            ctypes.c_float(bbox.x0),
-            ctypes.c_float(bbox.y0),
-            ctypes.c_float(bbox.width),
-            ctypes.c_float(bbox.height),
-        )
-
-        if not rect:
-            return False
-
-        # Set fill color (fully opaque)
-        pdfium.raw.FPDFPageObj_SetFillColor(
-            rect, fill_color.r, fill_color.g, fill_color.b, 255
-        )
-
-        # Set draw mode: fill only (FPDF_FILLMODE_WINDING=2, stroke=0)
-        pdfium.raw.FPDFPath_SetDrawMode(rect, 2, ctypes.c_int(0))
-
-        # Insert rectangle into page
-        pdfium.raw.FPDFPage_InsertObject(page_handle, rect)
-
-        # Note: gen_content() will be called later when text is inserted
-        # This avoids the spacing corruption issue caused by deletion + gen_content()
-
-        return True
 
     def remove_all_text(self, page_num: int) -> int:
         """Remove all text objects from a page.
