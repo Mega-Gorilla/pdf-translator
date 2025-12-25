@@ -17,7 +17,7 @@ uv sync
 
 ### GPU Acceleration (Recommended)
 
-PDF Translator uses PP-DocLayout for layout analysis, which benefits significantly from GPU acceleration. With GPU, layout analysis is 5-10x faster.
+PDF Translator uses PP-DocLayout for layout analysis, which benefits significantly from GPU acceleration. With GPU, layout analysis is **4x faster** (benchmark: 9.5s → 2.3s).
 
 **Check your CUDA version:**
 
@@ -33,14 +33,22 @@ nvidia-smi
 # First, uninstall CPU version
 uv pip uninstall paddlepaddle
 
-# Then install GPU version for your CUDA version:
+# Install pip (required for GPU package installation)
+uv pip install pip
+
+# Install GPU version for your CUDA version:
 
 # CUDA 11.8
-uv pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+uv run pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 
-# CUDA 12.3
-uv pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu123/
+# CUDA 12.3 / 12.6
+uv run pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu123/
 ```
+
+> **Note**: If you encounter dependency errors (e.g., `nvidia-cuda-cccl-cu12`), install the missing package from PyPI first:
+> ```bash
+> uv run pip install nvidia-cuda-cccl-cu12==12.3.52
+> ```
 
 For other CUDA versions, see [PaddlePaddle Installation Guide](https://www.paddlepaddle.org.cn/install/quick).
 
