@@ -348,14 +348,6 @@ class TestPDFProcessor:
             assert processor.page_count > 0
         # After exit, operations should fail or be cleaned up
 
-    def test_needs_cid_font(self):
-        """Test CID font detection for CJK characters."""
-        with PDFProcessor(SAMPLE_PDF) as processor:
-            assert processor._needs_cid_font("Hello World") is False
-            assert processor._needs_cid_font("こんにちは") is True
-            assert processor._needs_cid_font("你好") is True
-            assert processor._needs_cid_font("한글") is True
-
     def test_stable_ids(self):
         """Test that object IDs are stable across extractions."""
         with PDFProcessor(SAMPLE_PDF) as processor:

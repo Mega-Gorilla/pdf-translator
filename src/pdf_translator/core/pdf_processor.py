@@ -787,14 +787,14 @@ class PDFProcessor:
         # Return original if no variant found
         return base_font_path
 
-    def load_font(
-        self, font_path: Union[Path, str], is_cid: bool = False
-    ) -> Optional[Any]:
+    def load_font(self, font_path: Union[Path, str]) -> Optional[Any]:
         """Load a TrueType font for text insertion.
+
+        Always loads as CID font to support both ASCII and CJK characters.
+        CID fonts handle ASCII correctly, so this is safe for all text.
 
         Args:
             font_path: Path to TTF font file
-            is_cid: Whether this is a CID font (for CJK characters)
 
         Returns:
             Font handle or None if loading failed
@@ -802,12 +802,9 @@ class PDFProcessor:
         path = Path(font_path)
         path_str = str(path)
 
-        # Cache key includes is_cid to avoid using non-CID font for CJK text
-        cache_key = f"{path_str}:cid={is_cid}"
-
-        # Return cached font if already loaded with same is_cid setting
-        if cache_key in self._loaded_fonts:
-            return self._loaded_fonts[cache_key]
+        # Return cached font if already loaded
+        if path_str in self._loaded_fonts:
+            return self._loaded_fonts[path_str]
 
         if not path.exists():
             return None
@@ -817,19 +814,20 @@ class PDFProcessor:
 
         font_arr = to_byte_array(font_data)
         # Keep the buffer alive for the lifetime of this processor
-        self._loaded_font_buffers[cache_key] = font_arr
+        self._loaded_font_buffers[path_str] = font_arr
 
         pdf = self._ensure_open()
+        # Always use CID mode (is_cid=1) for full Unicode support
         font_handle = pdfium.raw.FPDFText_LoadFont(
             pdf.raw,
             font_arr,
             ctypes.c_uint(len(font_data)),
             ctypes.c_int(pdfium.raw.FPDF_FONT_TRUETYPE),
-            ctypes.c_int(1 if is_cid else 0),
+            ctypes.c_int(1),  # CID mode for CJK support
         )
 
         if font_handle:
-            self._loaded_fonts[cache_key] = font_handle
+            self._loaded_fonts[path_str] = font_handle
             return font_handle
         return None
 
@@ -893,9 +891,7 @@ class PDFProcessor:
         # Load font
         font_handle = None
         if font_path:
-            # Check if CID font needed for CJK
-            is_cid = self._needs_cid_font(text)
-            font_handle = self.load_font(font_path, is_cid=is_cid)
+            font_handle = self.load_font(font_path)
         else:
             font_handle = self.load_standard_font(font.name)
 
@@ -1174,8 +1170,7 @@ class PDFProcessor:
                         base_font_path, para.is_bold, para.is_italic
                     )
 
-                is_cid = self._needs_cid_font(text)
-                font_handle = self.load_font(actual_font_path, is_cid=is_cid)
+                font_handle = self.load_font(actual_font_path)
             else:
                 # Select standard font variant based on bold/italic flags
                 if para.is_bold and para.is_italic:
@@ -1227,27 +1222,6 @@ class PDFProcessor:
                 rotation=rotation_radians,
                 pdftext_rotation_degrees=para.rotation,
             )
-
-    def _needs_cid_font(self, text: str) -> bool:
-        """Check if text contains CJK characters requiring CID font.
-
-        Args:
-            text: Text to check
-
-        Returns:
-            True if CID font is needed
-        """
-        for char in text:
-            code = ord(char)
-            # CJK Unified Ideographs and common CJK ranges
-            if (
-                0x4E00 <= code <= 0x9FFF  # CJK Unified Ideographs
-                or 0x3040 <= code <= 0x309F  # Hiragana
-                or 0x30A0 <= code <= 0x30FF  # Katakana
-                or 0xAC00 <= code <= 0xD7AF  # Hangul Syllables
-            ):
-                return True
-        return False
 
     def _get_fallback_font(self, original_font: Font) -> Font:
         """Get appropriate fallback font for non-standard fonts.
