@@ -455,15 +455,6 @@ class TestTextLayerEdit:
 class TestPDFProcessorParagraphs:
     """Tests for paragraph-based PDF operations."""
 
-    def test_remove_text_in_bbox(self):
-        """Ensure text objects are removed within a bounding box."""
-        with PDFProcessor(SAMPLE_PDF) as processor:
-            doc = processor.extract_text_objects()
-            page = doc.pages[0]
-            bbox = BBox(0, 0, page.width, page.height)
-            removed = processor.remove_text_in_bbox(0, bbox, containment_threshold=0.5)
-            assert removed > 0
-
     def test_apply_paragraphs_and_to_bytes(self):
         """Apply paragraphs and ensure PDF bytes are returned."""
         with PDFProcessor(SAMPLE_PDF) as processor:
@@ -563,16 +554,15 @@ class TestPDFProcessorParagraphs:
 class TestSpacingPreservation:
     """Tests for Issue #47: spacing preservation during translation.
 
-    Verifies that cover_bbox_with_rect() preserves spacing in nearby text,
-    unlike remove_text_in_bbox() which can corrupt spacing via gen_content().
+    Verifies that cover_bbox_with_rect() preserves spacing in nearby text.
     """
 
     def test_cover_bbox_preserves_nearby_text_spacing(self):
         """Verify that covering a bbox does not corrupt spacing in nearby text.
 
-        This test covers the fix for Issue #47 where remove_text_in_bbox()
+        This test covers the fix for Issue #47 where pypdfium2's gen_content()
         caused "1 Introduction" to become "1Introduction" by corrupting
-        TJ operator spacing data during gen_content().
+        TJ operator spacing data.
         """
         from pdf_translator.core.paragraph_extractor import ParagraphExtractor
 

@@ -662,72 +662,6 @@ class PDFProcessor:
 
         return removed
 
-    def remove_text_in_bbox(
-        self,
-        page_num: int,
-        bbox: BBox,
-        containment_threshold: float = 0.5,
-    ) -> int:
-        """Remove text objects contained in a bounding box.
-
-        Args:
-            page_num: Page number (0-indexed).
-            bbox: Target bounding box (PDF coordinates).
-            containment_threshold: Ratio of text bbox area contained in bbox.
-
-        Returns:
-            Number of objects removed.
-        """
-        pdf = self._ensure_open()
-        if page_num < 0 or page_num >= len(pdf):
-            raise IndexError(f"Page number {page_num} out of range")
-
-        page = pdf[page_num]
-        removed = 0
-        objects_to_remove = []
-
-        def containment_ratio(text_bbox: BBox, target_bbox: BBox) -> float:
-            x0 = max(text_bbox.x0, target_bbox.x0)
-            y0 = max(text_bbox.y0, target_bbox.y0)
-            x1 = min(text_bbox.x1, target_bbox.x1)
-            y1 = min(text_bbox.y1, target_bbox.y1)
-            if x0 >= x1 or y0 >= y1:
-                return 0.0
-            inter_area = (x1 - x0) * (y1 - y0)
-            text_area = text_bbox.width * text_bbox.height
-            if text_area <= 0:
-                return 0.0
-            return inter_area / text_area
-
-        textpage = page.get_textpage()
-        try:
-            for obj in page.get_objects(filter=[FPDF_PAGEOBJ_TEXT]):
-                bounds = obj.get_bounds()
-                if bounds is None:
-                    continue
-
-                text = self._get_text_object_text_direct(obj, textpage)
-                text = text.strip() if text else ""
-                if not text:
-                    continue
-
-                left, bottom, right, top = bounds
-                text_bbox = BBox(x0=left, y0=bottom, x1=right, y1=top)
-                containment = containment_ratio(text_bbox, bbox)
-                if containment >= containment_threshold:
-                    objects_to_remove.append(obj)
-        finally:
-            textpage.close()
-
-        for obj in objects_to_remove:
-            page.remove_obj(obj)
-            removed += 1
-
-        if removed > 0:
-            page.gen_content()
-
-        return removed
-
     def remove_text_with_pikepdf(
         self,
         bboxes_by_page: dict[int, list[BBox]],
@@ -737,8 +671,8 @@ class PDFProcessor:
 
         This method uses pikepdf to directly edit PDF content streams,
         filtering out TJ/Tj operators that fall within the specified bounding boxes.
-        Unlike remove_text_in_bbox(), this approach preserves spacing information
-        in adjacent text because it doesn't trigger gen_content() regeneration.
+        This approach preserves spacing information in adjacent text because it
+        edits content streams directly without triggering gen_content() regeneration.
 
         Args:
             bboxes_by_page: Dictionary mapping page numbers to lists of bboxes to remove.
@@ -748,9 +682,9 @@ class PDFProcessor:
             Modified PDF as bytes.
 
         Note:
-            This is the recommended method for text removal when spacing preservation
-            is important (Issue #47). The returned bytes can be used to create a new
-            PDFProcessor instance for further manipulation (e.g., inserting translated text).
+            This is the standard method for text removal (Issue #47 fix).
+            The returned bytes can be used to create a new PDFProcessor instance
+            for further manipulation (e.g., inserting translated text).
         """
 
         def point_in_any_bbox(x: float, y: float, bboxes: list[BBox]) -> bool:
@@ -880,9 +814,7 @@ class PDFProcessor:
         """Cover a bounding box area with a filled rectangle.
 
         This method draws a filled rectangle over the specified area,
-        effectively hiding any content underneath. Unlike remove_text_in_bbox(),
-        this approach does not corrupt spacing information in nearby text objects
-        because it does not trigger the problematic gen_content() after deletion.
+        effectively hiding any content underneath.
 
         Args:
             page_num: Page number (0-indexed).
@@ -896,8 +828,7 @@ class PDFProcessor:
 
         Note:
             The original content remains in the PDF but is visually hidden
-            under the rectangle. This is intentional to preserve document
-            structure and avoid gen_content() corruption issues.
+            under the rectangle.
         """
         pdf = self._ensure_open()
         if page_num < 0 or page_num >= len(pdf):
