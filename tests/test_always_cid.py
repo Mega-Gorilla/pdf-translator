@@ -2,18 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Test that CID fonts work correctly for both ASCII and CJK text."""
 
+import ctypes
 from pathlib import Path
+
 import pypdfium2 as pdfium
 
+from pdf_translator.core.helpers import to_widestring
 from pdf_translator.core.pdf_processor import PDFProcessor
-from pdf_translator.core.models import BBox, Paragraph
 
 
 def test_cid_font_ascii_and_cjk():
     """Test ASCII and CJK text with CID font (always used now)."""
     # Create blank PDF
     doc = pdfium.PdfDocument.new()
-    page = doc.new_page(595, 842)
+    doc.new_page(595, 842)  # Create page (return value not used directly)
     temp_path = Path("tests/outputs/test_cid_font.pdf")
     with open(temp_path, "wb") as f:
         doc.save(f)
@@ -27,9 +29,6 @@ def test_cid_font_ascii_and_cjk():
         print(f"Font handle loaded: {font_handle is not None}")
 
         # Insert ASCII text
-        from pdf_translator.core.helpers import to_widestring
-        import ctypes
-
         page = processor._ensure_open()[0]
         doc_handle = processor._ensure_open().raw
         page_handle = page.raw

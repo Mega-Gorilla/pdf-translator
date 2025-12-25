@@ -1184,14 +1184,15 @@ class PDFProcessor:
                 font_handle = self.load_standard_font(font_name)
 
             if not font_handle:
-                # Fallback to old method if font loading fails
+                # Fallback to standard font if custom font loading fails
+                # Pass font_path=None to force standard font usage
                 font = Font(name="Helvetica", size=initial_font_size)
                 self.insert_text_object(
                     page_num=para.page_number,
                     text=text,
                     bbox=para.block_bbox,
                     font=font,
-                    font_path=font_path,
+                    font_path=None,  # Use standard font as fallback
                 )
                 continue
 
