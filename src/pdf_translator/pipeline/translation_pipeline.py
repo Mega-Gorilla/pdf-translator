@@ -265,7 +265,9 @@ class TranslationPipeline:
         total = len(texts)
 
         # Use semaphore to limit concurrent API requests
-        semaphore = asyncio.Semaphore(self._config.translation_max_concurrent)
+        # Ensure at least 1 to avoid Semaphore(0) causing infinite wait
+        max_concurrent = max(1, self._config.translation_max_concurrent)
+        semaphore = asyncio.Semaphore(max_concurrent)
         completed_count = 0
 
         async def translate_chunk(chunk: list[str], chunk_idx: int) -> tuple[int, list[str]]:
