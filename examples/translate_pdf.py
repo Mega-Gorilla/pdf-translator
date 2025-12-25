@@ -9,7 +9,7 @@ Usage:
     cd examples
     python translate_pdf.py
 
-環境変数:
+環境変数（.envファイルから自動読み込み）:
     OPENAI_API_KEY: OpenAI翻訳に必要
     DEEPL_API_KEY: DeepL翻訳に必要
     OPENAI_MODEL: OpenAIモデル指定（デフォルト: gpt-5-nano）
@@ -32,6 +32,41 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 
+def load_dotenv(dotenv_path: Path | None = None) -> None:
+    """Load environment variables from .env file.
+
+    Args:
+        dotenv_path: Path to .env file. If None, searches in project root.
+    """
+    if dotenv_path is None:
+        dotenv_path = PROJECT_ROOT / ".env"
+
+    if not dotenv_path.exists():
+        return
+
+    with open(dotenv_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            # Skip empty lines and comments
+            if not line or line.startswith("#"):
+                continue
+            # Parse KEY=VALUE
+            if "=" in line:
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                # Remove quotes if present
+                if value and value[0] in ('"', "'") and value[-1] == value[0]:
+                    value = value[1:-1]
+                # Only set if not already in environment
+                if key and key not in os.environ:
+                    os.environ[key] = value
+
+
+# Load .env file from project root
+load_dotenv()
+
+
 # =============================================================================
 # 設定変数 - ここを変更して動作をカスタマイズ
 # =============================================================================
@@ -40,7 +75,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 # - google: APIキー不要（無料、レート制限あり）
 # - openai: OPENAI_API_KEY 環境変数が必要
 # - deepl: DEEPL_API_KEY 環境変数が必要
-TRANSLATOR = "google"
+TRANSLATOR = "openai"
 
 # 言語設定
 SOURCE_LANG = "en"  # 原文の言語
