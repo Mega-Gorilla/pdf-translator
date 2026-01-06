@@ -87,6 +87,9 @@ MODEL_CONTEXT_SIZES: dict[str, int] = {
     "gpt-4-32k": 32_000,
     "gpt-4-turbo": 128_000,
     "gpt-4-turbo-preview": 128_000,
+    "gpt-4-1106-preview": 128_000,  # Nov 2023 preview (128K context)
+    "gpt-4-0125-preview": 128_000,  # Jan 2024 preview (128K context)
+    "gpt-4-vision-preview": 128_000,
     # GPT-3.5 series
     "gpt-3.5-turbo": 16_000,
     "gpt-3.5-turbo-16k": 16_000,
@@ -135,6 +138,9 @@ MODEL_TOKEN_LIMITS: dict[str, int] = {
     "gpt-4-32k": 8_000,  # 32K context → 8K safe
     "gpt-4-turbo": 32_000,  # 128K context → 32K safe
     "gpt-4-turbo-preview": 32_000,
+    "gpt-4-1106-preview": 32_000,  # 128K context → 32K safe
+    "gpt-4-0125-preview": 32_000,  # 128K context → 32K safe
+    "gpt-4-vision-preview": 32_000,
     # GPT-3.5 series
     "gpt-3.5-turbo": 4_000,  # 16K context → 4K safe
     "gpt-3.5-turbo-16k": 4_000,
