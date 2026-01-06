@@ -82,6 +82,14 @@ MODEL_CONTEXT_SIZES: dict[str, int] = {
     "o1": 200_000,
     "o1-mini": 200_000,
     "o1-pro": 200_000,
+    # GPT-4 legacy series
+    "gpt-4": 8_000,
+    "gpt-4-32k": 32_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4-turbo-preview": 128_000,
+    # GPT-3.5 series
+    "gpt-3.5-turbo": 16_000,
+    "gpt-3.5-turbo-16k": 16_000,
 }
 
 # Model-specific token limits for text splitting (per single text)
@@ -122,6 +130,14 @@ MODEL_TOKEN_LIMITS: dict[str, int] = {
     "o1": 50_000,
     "o1-mini": 50_000,
     "o1-pro": 50_000,
+    # GPT-4 legacy series
+    "gpt-4": 2_000,  # 8K context → 2K safe
+    "gpt-4-32k": 8_000,  # 32K context → 8K safe
+    "gpt-4-turbo": 32_000,  # 128K context → 32K safe
+    "gpt-4-turbo-preview": 32_000,
+    # GPT-3.5 series
+    "gpt-3.5-turbo": 4_000,  # 16K context → 4K safe
+    "gpt-3.5-turbo-16k": 4_000,
 }
 
 

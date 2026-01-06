@@ -387,6 +387,32 @@ class TestOpenAITranslatorUnit:
         translator2 = OpenAITranslator(api_key="test-key", model="gpt-5.1-chat-2025-01")
         assert translator2.max_text_length == 32_000
 
+    def test_max_text_length_gpt4_legacy(self) -> None:
+        """OpenAITranslator should use correct limits for GPT-4 legacy models."""
+        OpenAITranslator = get_openai_translator()
+        # gpt-4: 8K context → 2K safe
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4")
+        assert translator.max_text_length == 2_000
+
+        # gpt-4-32k: 32K context → 8K safe
+        translator2 = OpenAITranslator(api_key="test-key", model="gpt-4-32k")
+        assert translator2.max_text_length == 8_000
+
+        # gpt-4-turbo: 128K context → 32K safe
+        translator3 = OpenAITranslator(api_key="test-key", model="gpt-4-turbo")
+        assert translator3.max_text_length == 32_000
+
+    def test_max_text_length_gpt35_turbo(self) -> None:
+        """OpenAITranslator should use correct limits for GPT-3.5 models."""
+        OpenAITranslator = get_openai_translator()
+        # gpt-3.5-turbo: 16K context → 4K safe
+        translator = OpenAITranslator(api_key="test-key", model="gpt-3.5-turbo")
+        assert translator.max_text_length == 4_000
+
+        # gpt-3.5-turbo-16k: 16K context → 4K safe
+        translator2 = OpenAITranslator(api_key="test-key", model="gpt-3.5-turbo-16k")
+        assert translator2.max_text_length == 4_000
+
     def test_max_text_length_custom(self) -> None:
         """OpenAITranslator should accept custom max_tokens override."""
         OpenAITranslator = get_openai_translator()
