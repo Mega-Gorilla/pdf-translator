@@ -168,13 +168,16 @@ class TestRejoinTranslatedTexts:
         assert result == ["这是测试", "其他"]
 
     def test_rejoin_split_texts_korean(self) -> None:
-        """Split texts should be rejoined without space for Korean."""
+        """Split texts should be rejoined with space for Korean.
+
+        Korean uses spaces between words (unlike Japanese/Chinese).
+        """
         config = PipelineConfig(target_lang="ko")
         pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
         translated = ["이것은", "테스트입니다", "기타"]
         mapping = [(0, 2), (1, 1)]
         result = pipeline._rejoin_translated_texts(translated, mapping)
-        assert result == ["이것은테스트입니다", "기타"]
+        assert result == ["이것은 테스트입니다", "기타"]
 
     def test_multiple_splits(self) -> None:
         """Multiple texts split should all be rejoined correctly."""

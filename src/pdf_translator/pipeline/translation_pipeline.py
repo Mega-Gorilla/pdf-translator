@@ -611,8 +611,9 @@ class TranslationPipeline:
         """
         # Determine separator based on target language
         target_lang = self._config.target_lang.lower()
-        # CJK languages don't use spaces between words
-        separator = "" if target_lang in {"ja", "zh", "ko"} else " "
+        # Japanese and Chinese don't use spaces between words
+        # Korean uses spaces between words (unlike Japanese/Chinese)
+        separator = "" if target_lang in {"ja", "zh"} else " "
 
         result: list[str] = []
         offset = 0

@@ -114,11 +114,12 @@ class OpenAITranslator:
         2. Character-to-token ratio varies by language and content
         3. tiktoken dependency would add complexity
 
-        Token limit errors are handled by the pipeline's retry logic:
-        - TranslationError triggers retry with exponential backoff
-        - ArrayLengthMismatchError triggers batch splitting
-
-        For very long texts, consider using a model with larger context.
+        Note on error handling:
+        - Token limit errors will raise TranslationError
+        - The pipeline retries with exponential backoff, but does NOT
+          automatically split the text (unlike ArrayLengthMismatchError)
+        - For very long texts, consider using a model with larger context
+          or pre-splitting the input before calling the translator
         """
         return None
 
