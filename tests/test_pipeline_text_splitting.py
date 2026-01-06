@@ -87,6 +87,24 @@ class TestSplitLongText:
         # First parts should be exactly max_length
         assert len(result[0]) == 30
 
+    def test_whitespace_preservation(self) -> None:
+        """Whitespace should be preserved during split."""
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=50))
+        # Text with multiple spaces and newlines
+        text = "First sentence.  Second sentence.\n\nThird sentence."
+        result = pipeline._split_long_text(text, 20)
+        # Joining parts should reconstruct original text
+        assert "".join(result) == text
+
+    def test_trailing_space_in_word_split(self) -> None:
+        """Trailing space should be preserved in word boundary split."""
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=50))
+        text = "Hello world this is a test"
+        result = pipeline._split_long_text(text, 12)
+        # Each part (except possibly last) should end with space
+        # and joining should reconstruct original
+        assert "".join(result) == text
+
 
 class TestSplitTextsForApi:
     """Test _split_texts_for_api method."""

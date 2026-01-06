@@ -519,6 +519,7 @@ class TranslationPipeline:
         """Split a long text into parts that fit within max_length.
 
         Splits at sentence boundaries when possible, otherwise at word boundaries.
+        Preserves original whitespace to allow accurate reconstruction.
 
         Args:
             text: Text to split.
@@ -543,20 +544,21 @@ class TranslationPipeline:
             matches = list(sentence_end.finditer(chunk))
 
             if matches:
-                # Split at the last sentence boundary
+                # Split at the last sentence boundary (after trailing whitespace)
                 split_pos = matches[-1].end()
-                parts.append(remaining[:split_pos].strip())
-                remaining = remaining[split_pos:].strip()
+                parts.append(remaining[:split_pos])
+                remaining = remaining[split_pos:]
             else:
                 # No sentence boundary found, try word boundary
                 last_space = chunk.rfind(' ')
                 if last_space > max_length // 2:
-                    parts.append(remaining[:last_space].strip())
-                    remaining = remaining[last_space:].strip()
+                    # Include the space in the first part
+                    parts.append(remaining[:last_space + 1])
+                    remaining = remaining[last_space + 1:]
                 else:
                     # No good split point, force split at max_length
-                    parts.append(remaining[:max_length].strip())
-                    remaining = remaining[max_length:].strip()
+                    parts.append(remaining[:max_length])
+                    remaining = remaining[max_length:]
 
         if remaining:
             parts.append(remaining)
