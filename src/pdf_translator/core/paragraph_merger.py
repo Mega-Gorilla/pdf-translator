@@ -41,6 +41,10 @@ class MergeConfig:
         width_tolerance: Minimum width ratio (0.0 to 1.0) for merging.
             Calculated as min(width1, width2) / max(width1, width2).
             Paragraphs with significantly different widths won't merge.
+        max_merged_length: Maximum character length for merged text.
+            If merging would exceed this limit, the merge is skipped.
+            Default is 4000 (Google Translate limit is 5000, with buffer).
+            Set to 0 to disable length check.
     """
 
     gap_tolerance: float = 0.5
@@ -48,6 +52,7 @@ class MergeConfig:
     font_size_tolerance: float = 1.0
     translatable_categories: frozenset[str] | None = None
     width_tolerance: float = 0.95
+    max_merged_length: int = 4000
 
 
 def _detect_columns(
@@ -261,6 +266,7 @@ def _can_merge(
     6. X overlap >= threshold
     7. Same font size (within tolerance)
     8. Similar width (within tolerance)
+    9. Merged text length <= max_merged_length (if configured)
 
     Note: The following checks were intentionally removed:
     - Alignment check: _estimate_alignment() is unreliable for short paragraphs,
@@ -326,6 +332,14 @@ def _can_merge(
     if width1 > 0 and width2 > 0:
         width_ratio = min(width1, width2) / max(width1, width2)
         if width_ratio < config.width_tolerance:
+            return False
+
+    # 9. Merged text length check
+    # Prevents merged text from exceeding translation API limits (e.g., Google: 5000 chars)
+    if config.max_merged_length > 0:
+        # +1 for the space separator added during merge
+        merged_length = len(para1.text) + len(para2.text) + 1
+        if merged_length > config.max_merged_length:
             return False
 
     return True

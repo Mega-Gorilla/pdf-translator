@@ -83,6 +83,7 @@ class PipelineConfig:
     merge_x_overlap_threshold: float = 0.7  # X overlap >= 70%
     merge_font_size_tolerance: float = 1.0  # Font size difference <= 1pt
     merge_width_tolerance: float = 0.95  # Width ratio >= 95%
+    merge_max_length: int = 4000  # Max merged text length (Google limit: 5000)
 
     # Debug options
     debug_draw_bbox: bool = False
@@ -244,6 +245,7 @@ class TranslationPipeline:
             font_size_tolerance=self._config.merge_font_size_tolerance,
             translatable_categories=self._config.translatable_categories,
             width_tolerance=self._config.merge_width_tolerance,
+            max_merged_length=self._config.merge_max_length,
         )
 
         original_count = len(paragraphs)

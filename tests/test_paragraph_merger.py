@@ -302,6 +302,41 @@ class TestCanMerge:
         # Should merge even with Japanese sentence-ending punctuation
         assert _can_merge(para1, para2, config) is True
 
+    def test_cannot_merge_exceeds_max_length(self) -> None:
+        """Paragraphs should not merge if result exceeds max_merged_length."""
+        # Each paragraph has 50 chars, merged would be 101 chars (50 + 50 + 1 space)
+        long_text = "A" * 50
+        para1 = make_paragraph(text=long_text, y0=50, y1=100)
+        para2 = make_paragraph(text=long_text, y0=0, y1=48)
+        config = MergeConfig(max_merged_length=100)
+
+        assert _can_merge(para1, para2, config) is False
+
+    def test_can_merge_within_max_length(self) -> None:
+        """Paragraphs can merge if result is within max_merged_length."""
+        # Each paragraph has 50 chars, merged would be 101 chars
+        long_text = "A" * 50
+        para1 = make_paragraph(text=long_text, y0=50, y1=100)
+        para2 = make_paragraph(text=long_text, y0=0, y1=48)
+        config = MergeConfig(max_merged_length=101)  # Exactly fits
+
+        assert _can_merge(para1, para2, config) is True
+
+    def test_max_length_zero_disables_check(self) -> None:
+        """max_merged_length=0 should disable the length check."""
+        # Very long texts that would normally exceed any limit
+        very_long_text = "A" * 10000
+        para1 = make_paragraph(text=very_long_text, y0=50, y1=100)
+        para2 = make_paragraph(text=very_long_text, y0=0, y1=48)
+        config = MergeConfig(max_merged_length=0)  # Disabled
+
+        assert _can_merge(para1, para2, config) is True
+
+    def test_max_length_default_is_4000(self) -> None:
+        """Default max_merged_length should be 4000."""
+        config = MergeConfig()
+        assert config.max_merged_length == 4000
+
 
 # =============================================================================
 # Tests for _merge_two_paragraphs()
@@ -589,6 +624,36 @@ class TestMergeAdjacentParagraphs:
 
         assert len(result) == 1
         assert result[0].text == "Top paragraph middle bottom"
+
+    def test_merge_chain_stops_at_length_limit(self) -> None:
+        """Chain merging should stop when max_merged_length is reached."""
+        # Three paragraphs with 40 chars each
+        # Merged: para1 + para2 = 81 chars (40 + 40 + 1)
+        # Merged: para1+2 + para3 = 122 chars (81 + 40 + 1) > 100
+        text_40 = "A" * 40
+        para1 = make_paragraph(
+            id="para_p0_b0",
+            text=text_40,
+            y0=100, y1=150,
+        )
+        para2 = make_paragraph(
+            id="para_p0_b1",
+            text=text_40,
+            y0=50, y1=98,
+        )
+        para3 = make_paragraph(
+            id="para_p0_b2",
+            text=text_40,
+            y0=0, y1=48,
+        )
+
+        config = MergeConfig(max_merged_length=100)
+        result = merge_adjacent_paragraphs([para1, para2, para3], config)
+
+        # para1 and para2 merge (81 chars), but para3 cannot join (would be 122)
+        assert len(result) == 2
+        assert len(result[0].text) == 81  # para1 + " " + para2
+        assert len(result[1].text) == 40  # para3 alone
 
 
 # =============================================================================
