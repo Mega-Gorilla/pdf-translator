@@ -56,6 +56,21 @@ class TranslatorBackend(Protocol):
         """Backend name ("google", "deepl", "openai")."""
         ...
 
+    @property
+    def max_text_length(self) -> int | None:
+        """Maximum text length for a single translation request.
+
+        Returns:
+            Maximum character count, or None if unlimited.
+            The pipeline will split texts exceeding this limit.
+
+        Note:
+            - Google Translate: 5,000 characters
+            - DeepL: ~50,000 characters (128KB request limit)
+            - OpenAI: None (token-based, handled by model)
+        """
+        ...
+
     async def translate(
         self,
         text: str,

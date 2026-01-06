@@ -56,6 +56,11 @@ class TestGoogleTranslator:
         translator = GoogleTranslator()
         assert translator.name == "google"
 
+    def test_max_text_length(self) -> None:
+        """GoogleTranslator should have max_text_length of 5000."""
+        translator = GoogleTranslator()
+        assert translator.max_text_length == 5000
+
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:
         """Empty string should return as-is."""
@@ -210,6 +215,12 @@ class TestDeepLTranslatorUnit:
         )
         assert translator._api_url == "https://api.deepl.com/v2/translate"
 
+    def test_max_text_length(self) -> None:
+        """DeepLTranslator should have max_text_length of 50000."""
+        DeepLTranslator = get_deepl_translator()
+        translator = DeepLTranslator(api_key="test-key")
+        assert translator.max_text_length == 50000
+
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:
         """Empty string should return as-is."""
@@ -329,6 +340,12 @@ class TestOpenAITranslatorUnit:
             api_key="test-key", system_prompt=custom_prompt
         )
         assert translator._system_prompt == custom_prompt
+
+    def test_max_text_length(self) -> None:
+        """OpenAITranslator should have max_text_length of None (unlimited)."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+        assert translator.max_text_length is None
 
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:

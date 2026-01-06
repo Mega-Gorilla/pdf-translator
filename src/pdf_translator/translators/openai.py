@@ -104,6 +104,16 @@ class OpenAITranslator:
         """Return backend name."""
         return "openai"
 
+    @property
+    def max_text_length(self) -> None:
+        """Maximum text length for OpenAI.
+
+        OpenAI uses token-based limits, not character limits.
+        Token limits are handled by the model itself.
+        Returns None to indicate no character-based limit.
+        """
+        return None
+
     def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client exists.
 

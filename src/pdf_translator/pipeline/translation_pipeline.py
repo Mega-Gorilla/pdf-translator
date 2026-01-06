@@ -261,8 +261,12 @@ class TranslationPipeline:
             return []
 
         texts = [para.text for para in translatable]
-        chunks = self._chunk_texts(texts)
-        total = len(texts)
+
+        # Split texts that exceed the translator's max_text_length
+        split_texts, mapping = self._split_texts_for_api(texts)
+
+        chunks = self._chunk_texts(split_texts)
+        total = len(split_texts)
 
         # Use semaphore to limit concurrent API requests
         # Ensure at least 1 to avoid Semaphore(0) causing infinite wait
@@ -290,9 +294,12 @@ class TranslationPipeline:
 
         # Reconstruct translated_texts in original order
         results_sorted = sorted(results, key=lambda x: x[0])
-        translated_texts: list[str] = []
+        translated_split_texts: list[str] = []
         for _, chunk_translations in results_sorted:
-            translated_texts.extend(chunk_translations)
+            translated_split_texts.extend(chunk_translations)
+
+        # Rejoin split texts back to original structure
+        translated_texts = self._rejoin_translated_texts(translated_split_texts, mapping)
 
         for para, translated in zip(translatable, translated_texts):
             para.translated_text = translated
@@ -507,6 +514,110 @@ class TranslationPipeline:
     def _chunk_texts(self, texts: list[str]) -> list[list[str]]:
         batch_size = max(1, int(self._config.translation_batch_size))
         return [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+
+    def _split_long_text(self, text: str, max_length: int) -> list[str]:
+        """Split a long text into parts that fit within max_length.
+
+        Splits at sentence boundaries when possible, otherwise at word boundaries.
+
+        Args:
+            text: Text to split.
+            max_length: Maximum length for each part.
+
+        Returns:
+            List of text parts, each within max_length.
+        """
+        if len(text) <= max_length:
+            return [text]
+
+        parts: list[str] = []
+        remaining = text
+
+        # Sentence-ending patterns (including Japanese)
+        import re
+        sentence_end = re.compile(r'[.!?。！？]\s*')
+
+        while len(remaining) > max_length:
+            # Try to find a sentence boundary within the limit
+            chunk = remaining[:max_length]
+            matches = list(sentence_end.finditer(chunk))
+
+            if matches:
+                # Split at the last sentence boundary
+                split_pos = matches[-1].end()
+                parts.append(remaining[:split_pos].strip())
+                remaining = remaining[split_pos:].strip()
+            else:
+                # No sentence boundary found, try word boundary
+                last_space = chunk.rfind(' ')
+                if last_space > max_length // 2:
+                    parts.append(remaining[:last_space].strip())
+                    remaining = remaining[last_space:].strip()
+                else:
+                    # No good split point, force split at max_length
+                    parts.append(remaining[:max_length].strip())
+                    remaining = remaining[max_length:].strip()
+
+        if remaining:
+            parts.append(remaining)
+
+        return parts
+
+    def _split_texts_for_api(
+        self, texts: list[str]
+    ) -> tuple[list[str], list[tuple[int, int]]]:
+        """Split texts that exceed the translator's max_text_length.
+
+        Args:
+            texts: Original texts to translate.
+
+        Returns:
+            Tuple of:
+            - List of (possibly split) texts ready for translation
+            - List of (original_index, part_count) tuples for reconstruction
+        """
+        max_length = self._translator.max_text_length
+        if max_length is None:
+            # No limit, return as-is
+            return texts, [(i, 1) for i in range(len(texts))]
+
+        split_texts: list[str] = []
+        mapping: list[tuple[int, int]] = []
+
+        for i, text in enumerate(texts):
+            parts = self._split_long_text(text, max_length)
+            split_texts.extend(parts)
+            mapping.append((i, len(parts)))
+
+        return split_texts, mapping
+
+    def _rejoin_translated_texts(
+        self,
+        translated: list[str],
+        mapping: list[tuple[int, int]],
+    ) -> list[str]:
+        """Rejoin translated text parts back to original structure.
+
+        Args:
+            translated: List of translated text parts.
+            mapping: List of (original_index, part_count) from _split_texts_for_api.
+
+        Returns:
+            List of translated texts matching original structure.
+        """
+        result: list[str] = []
+        offset = 0
+
+        for _, part_count in mapping:
+            if part_count == 1:
+                result.append(translated[offset])
+            else:
+                # Rejoin multiple parts with space
+                parts = translated[offset : offset + part_count]
+                result.append(" ".join(parts))
+            offset += part_count
+
+        return result
 
     def _notify(self, stage: str, current: int, total: int, message: str = "") -> None:
         if self._progress_callback is None:
