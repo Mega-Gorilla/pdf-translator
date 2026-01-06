@@ -601,8 +601,8 @@ class TranslationPipeline:
         """Rejoin translated text parts back to original structure.
 
         Uses language-appropriate joining:
-        - CJK languages (ja, zh, ko): no separator (these languages don't use spaces)
-        - Other languages: space separator
+        - Japanese and Chinese (ja, zh): no separator (don't use spaces between words)
+        - Other languages (including Korean): space separator
 
         Args:
             translated: List of translated text parts.
