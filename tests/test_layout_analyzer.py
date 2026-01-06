@@ -138,7 +138,9 @@ class TestTranslatableCategories:
             "text",
             "vertical_text",
             "abstract",
+            "aside_text",
             "doc_title",
+            "paragraph_title",
             "figure_title",
         }
         assert DEFAULT_TRANSLATABLE_RAW_CATEGORIES == expected
@@ -148,10 +150,10 @@ class TestTranslatableCategories:
         assert "text" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
         assert "abstract" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
-    def test_aside_and_paragraph_title_not_translatable(self) -> None:
-        """aside_text and paragraph_title should not be translatable."""
-        assert "aside_text" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
-        assert "paragraph_title" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+    def test_aside_and_paragraph_title_are_translatable(self) -> None:
+        """aside_text and paragraph_title should be translatable."""
+        assert "aside_text" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+        assert "paragraph_title" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
     def test_formula_is_not_translatable(self) -> None:
         """Formula categories should not be translatable."""

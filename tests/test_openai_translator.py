@@ -205,6 +205,7 @@ class TestBatchSplittingFallback:
         """Create a mock translator."""
         translator = MagicMock()
         translator.name = "openai"
+        translator.max_text_length = 100000  # Default max text length for tests
         return translator
 
     @pytest.mark.asyncio
@@ -369,6 +370,10 @@ class TestParallelTranslation:
         """Create a mock translator."""
         translator = MagicMock()
         translator.name = "openai"
+        translator.max_text_length = 100000  # Default max text length for tests
+        # Disable token-aware chunking for these tests
+        translator.max_batch_tokens = None
+        translator.count_tokens = None
         return translator
 
     @pytest.mark.asyncio
