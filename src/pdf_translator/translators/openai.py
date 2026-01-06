@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pdf_translator.translators.base import (
@@ -15,6 +16,9 @@ from pdf_translator.translators.base import (
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
     from pydantic import BaseModel
+    from tiktoken import Encoding
+
+logger = logging.getLogger(__name__)
 
 
 # Language code to full name mapping for prompts
@@ -48,11 +52,21 @@ class OpenAITranslator:
 
     DEFAULT_MODEL = "gpt-5-nano"
 
+    # Default token limit for text splitting (conservative for most models)
+    # This is for input texts only, not including system prompt overhead
+    DEFAULT_MAX_TOKENS = 8000
+
+    # Conservative character-to-token ratio for estimation
+    # CJK: ~1-2 chars/token, English: ~4 chars/token
+    # Use 2.0 as a conservative middle ground
+    CHARS_PER_TOKEN = 2.0
+
     def __init__(
         self,
         api_key: str,
         model: str | None = None,
         system_prompt: str | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         """Initialize OpenAITranslator.
 
@@ -60,6 +74,8 @@ class OpenAITranslator:
             api_key: OpenAI API key.
             model: Model to use. Priority: argument > OPENAI_MODEL env > default.
             system_prompt: Custom system prompt for translation.
+            max_tokens: Maximum tokens for input texts (for splitting).
+                Defaults to 8000 tokens. Set to 0 to disable splitting.
 
         Raises:
             ConfigurationError: If API key is not provided.
@@ -93,10 +109,26 @@ class OpenAITranslator:
                 "Install with: pip install pdf-translator[openai]"
             ) from None
 
+        # Lazy import tiktoken (optional)
+        self._tiktoken_available = False
+        self._encoding: Encoding | None = None
+        self._tiktoken: Any = None  # Module or None
+        try:
+            import tiktoken
+
+            self._tiktoken = tiktoken
+            self._tiktoken_available = True
+        except ImportError:
+            logger.debug(
+                "tiktoken not installed, using character-based estimation. "
+                "Install with: pip install pdf-translator[openai]"
+            )
+
         self._api_key = api_key
         env_model = os.environ.get("OPENAI_MODEL")
         self._model = model or env_model or self.DEFAULT_MODEL
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._max_tokens = max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS
         self._client: AsyncOpenAI | None = None
 
     @property
@@ -105,23 +137,28 @@ class OpenAITranslator:
         return "openai"
 
     @property
-    def max_text_length(self) -> None:
-        """Maximum text length for OpenAI.
+    def max_text_length(self) -> int | None:
+        """Maximum text length for OpenAI (character-based approximation).
 
-        OpenAI uses token-based limits, not character limits.
-        Returns None because:
-        1. Token limits vary by model (GPT-4o: 128K, GPT-4.1: 1M tokens)
-        2. Character-to-token ratio varies by language and content
-        3. tiktoken dependency would add complexity
+        OpenAI uses token-based limits, not character limits. This property
+        returns a character-based approximation using a conservative ratio.
 
-        Note on error handling:
-        - Token limit errors will raise TranslationError
-        - The pipeline retries with exponential backoff, but does NOT
-          automatically split the text (unlike ArrayLengthMismatchError)
-        - For very long texts, consider using a model with larger context
-          or pre-splitting the input before calling the translator
+        The approximation uses CHARS_PER_TOKEN (default: 2.0) which is
+        conservative for both CJK (~1-2 chars/token) and English (~4 chars/token).
+
+        Token counting:
+        - If tiktoken is installed: accurate token counting is used for
+          better estimation during translation
+        - If tiktoken is not installed: falls back to character-based
+          approximation only
+
+        Returns:
+            Approximate character limit based on max_tokens setting.
+            Returns None if max_tokens is 0 (splitting disabled).
         """
-        return None
+        if self._max_tokens == 0:
+            return None
+        return int(self._max_tokens * self.CHARS_PER_TOKEN)
 
     def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client exists.
@@ -143,6 +180,48 @@ class OpenAITranslator:
             Full language name.
         """
         return LANGUAGE_NAMES.get(lang_code.lower(), lang_code)
+
+    def _get_encoding(self) -> "Encoding | None":
+        """Get tiktoken encoding for the current model.
+
+        Returns:
+            tiktoken Encoding object, or None if tiktoken is not available.
+        """
+        if not self._tiktoken_available or self._tiktoken is None:
+            return None
+
+        if self._encoding is not None:
+            return self._encoding
+
+        try:
+            # Try to get encoding for the specific model
+            self._encoding = self._tiktoken.encoding_for_model(self._model)
+        except KeyError:
+            # Fall back to cl100k_base (used by GPT-4, GPT-3.5-turbo, etc.)
+            logger.debug(
+                "No specific encoding for model '%s', using cl100k_base",
+                self._model,
+            )
+            self._encoding = self._tiktoken.get_encoding("cl100k_base")
+
+        return self._encoding
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in a text using tiktoken.
+
+        Args:
+            text: Text to count tokens for.
+
+        Returns:
+            Number of tokens. If tiktoken is not available, returns an
+            estimate based on character count and CHARS_PER_TOKEN ratio.
+        """
+        encoding = self._get_encoding()
+        if encoding is not None:
+            return len(encoding.encode(text))
+
+        # Fallback to character-based estimation
+        return int(len(text) / self.CHARS_PER_TOKEN)
 
     def _create_response_model(self, n: int) -> type["BaseModel"]:
         """Create a Pydantic model with fixed-length translations array.

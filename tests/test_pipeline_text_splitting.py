@@ -34,6 +34,32 @@ class MockTranslator:
         return [f"[translated]{t}" for t in texts]
 
 
+class MockOpenAITranslator:
+    """Mock OpenAI translator with token-based limits for testing."""
+
+    def __init__(self, max_tokens: int = 8000) -> None:
+        self._max_tokens = max_tokens
+        self.name = "openai"
+        # Same ratio as real OpenAITranslator
+        self.CHARS_PER_TOKEN = 2.0
+
+    @property
+    def max_text_length(self) -> int | None:
+        if self._max_tokens == 0:
+            return None
+        return int(self._max_tokens * self.CHARS_PER_TOKEN)
+
+    async def translate(
+        self, text: str, source_lang: str, target_lang: str
+    ) -> str:
+        return f"[translated]{text}"
+
+    async def translate_batch(
+        self, texts: list[str], source_lang: str, target_lang: str
+    ) -> list[str]:
+        return [f"[translated]{t}" for t in texts]
+
+
 class TestSplitLongText:
     """Test _split_long_text method."""
 
@@ -263,3 +289,51 @@ class TestIntegration:
         assert len(rejoined) == 2
         assert rejoined[0] == "[JA]短い"
         assert " " not in rejoined[1]  # No space for CJK languages
+
+
+class TestOpenAITokenBasedSplitting:
+    """Test OpenAI translator with token-based limits."""
+
+    def test_openai_max_text_length_default(self) -> None:
+        """OpenAI mock should have default max_text_length based on tokens."""
+        translator = MockOpenAITranslator()
+        # Default: 8000 tokens × 2.0 chars/token = 16000 characters
+        assert translator.max_text_length == 16000
+
+    def test_openai_max_text_length_custom(self) -> None:
+        """OpenAI mock should accept custom max_tokens."""
+        translator = MockOpenAITranslator(max_tokens=4000)
+        assert translator.max_text_length == 8000
+
+    def test_openai_max_text_length_disabled(self) -> None:
+        """OpenAI mock with max_tokens=0 should return None."""
+        translator = MockOpenAITranslator(max_tokens=0)
+        assert translator.max_text_length is None
+
+    def test_openai_splitting_with_pipeline(self) -> None:
+        """Pipeline should split texts based on OpenAI's token-derived limit."""
+        # Use small token limit for testing
+        translator = MockOpenAITranslator(max_tokens=25)  # 50 chars
+        config = PipelineConfig(target_lang="en")
+        pipeline = TranslationPipeline(translator, config)
+
+        # Text exceeding 50 chars should be split
+        texts = ["short", "a" * 100]
+        split_texts, mapping = pipeline._split_texts_for_api(texts)
+
+        assert len(split_texts) > 2
+        assert mapping[0] == (0, 1)  # First text not split
+        assert mapping[1][1] > 1  # Second text was split
+
+    def test_openai_no_splitting_when_disabled(self) -> None:
+        """Pipeline should not split when max_tokens=0 (unlimited)."""
+        translator = MockOpenAITranslator(max_tokens=0)
+        config = PipelineConfig(target_lang="en")
+        pipeline = TranslationPipeline(translator, config)
+
+        # Even very long text should not be split
+        texts = ["short", "a" * 100000]
+        split_texts, mapping = pipeline._split_texts_for_api(texts)
+
+        assert split_texts == texts
+        assert mapping == [(0, 1), (1, 1)]

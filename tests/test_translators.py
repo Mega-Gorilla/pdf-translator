@@ -341,11 +341,59 @@ class TestOpenAITranslatorUnit:
         )
         assert translator._system_prompt == custom_prompt
 
-    def test_max_text_length(self) -> None:
-        """OpenAITranslator should have max_text_length of None (unlimited)."""
+    def test_max_text_length_default(self) -> None:
+        """OpenAITranslator should have max_text_length based on default token limit."""
         OpenAITranslator = get_openai_translator()
         translator = OpenAITranslator(api_key="test-key")
+        # Default: 8000 tokens × 2.0 chars/token = 16000 characters
+        assert translator.max_text_length == 16000
+
+    def test_max_text_length_custom(self) -> None:
+        """OpenAITranslator should accept custom max_tokens."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", max_tokens=4000)
+        # 4000 tokens × 2.0 chars/token = 8000 characters
+        assert translator.max_text_length == 8000
+
+    def test_max_text_length_disabled(self) -> None:
+        """OpenAITranslator with max_tokens=0 should return None (unlimited)."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", max_tokens=0)
         assert translator.max_text_length is None
+
+    def test_count_tokens_with_tiktoken(self) -> None:
+        """count_tokens should use tiktoken when available."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+
+        # tiktoken should be available since openai extras are installed
+        if translator._tiktoken_available:
+            # "Hello, world!" should be around 4-5 tokens
+            count = translator.count_tokens("Hello, world!")
+            assert 3 <= count <= 6  # Reasonable range for this text
+
+            # Empty string should be 0 tokens
+            assert translator.count_tokens("") == 0
+
+            # Japanese text (higher token count per char)
+            jp_count = translator.count_tokens("こんにちは")
+            assert jp_count >= 1  # At least 1 token
+
+    def test_count_tokens_fallback(self) -> None:
+        """count_tokens should fall back to character estimation."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+
+        # Simulate tiktoken not available
+        original_available = translator._tiktoken_available
+        translator._tiktoken_available = False
+
+        try:
+            # Should use CHARS_PER_TOKEN (2.0) for estimation
+            count = translator.count_tokens("Hello, world!")  # 13 chars
+            assert count == 6  # 13 / 2.0 = 6.5 -> 6
+        finally:
+            translator._tiktoken_available = original_available
 
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:
