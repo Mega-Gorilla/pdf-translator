@@ -512,8 +512,74 @@ class TranslationPipeline:
         return left + right
 
     def _chunk_texts(self, texts: list[str]) -> list[list[str]]:
+        """Chunk texts for batch translation.
+
+        Uses batch_size from config, but also respects max_batch_tokens
+        if the translator provides it (e.g., OpenAI). This ensures batches
+        don't exceed the model's context window.
+
+        Args:
+            texts: List of texts to chunk.
+
+        Returns:
+            List of text chunks for batch processing.
+        """
         batch_size = max(1, int(self._config.translation_batch_size))
+
+        # Check if translator has max_batch_tokens (OpenAI-specific)
+        max_batch_tokens = getattr(self._translator, "max_batch_tokens", None)
+        count_tokens = getattr(self._translator, "count_tokens", None)
+
+        if max_batch_tokens is not None and count_tokens is not None:
+            # Token-aware chunking for OpenAI
+            return self._chunk_texts_by_tokens(texts, batch_size, max_batch_tokens, count_tokens)
+
+        # Default: simple size-based chunking
         return [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+
+    def _chunk_texts_by_tokens(
+        self,
+        texts: list[str],
+        max_batch_size: int,
+        max_batch_tokens: int,
+        count_tokens: Any,
+    ) -> list[list[str]]:
+        """Chunk texts considering both batch size and token limits.
+
+        Args:
+            texts: List of texts to chunk.
+            max_batch_size: Maximum number of texts per batch.
+            max_batch_tokens: Maximum total tokens per batch.
+            count_tokens: Function to count tokens in a text.
+
+        Returns:
+            List of text chunks.
+        """
+        chunks: list[list[str]] = []
+        current_chunk: list[str] = []
+        current_tokens = 0
+
+        for text in texts:
+            text_tokens = count_tokens(text)
+
+            # Check if adding this text would exceed limits
+            would_exceed_size = len(current_chunk) >= max_batch_size
+            would_exceed_tokens = current_tokens + text_tokens > max_batch_tokens
+
+            if current_chunk and (would_exceed_size or would_exceed_tokens):
+                # Start a new chunk
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_tokens = 0
+
+            current_chunk.append(text)
+            current_tokens += text_tokens
+
+        # Don't forget the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
 
     def _split_long_text(self, text: str, max_length: int) -> list[str]:
         """Split a long text into parts that fit within max_length.

@@ -37,7 +37,54 @@ DEFAULT_SYSTEM_PROMPT = (
     "Do not merge, split, or skip any texts."
 )
 
-# Model-specific token limits for text splitting
+# Model context sizes for calculating token limits
+#
+# Sources:
+# - OpenAI API documentation: https://platform.openai.com/docs/models
+# - Price comparison: https://pricepertoken.com (aggregated model data)
+#
+# These values may change as OpenAI updates their models.
+# Users can override limits using the `max_tokens` parameter.
+#
+# Last verified: 2026-01-06
+MODEL_CONTEXT_SIZES: dict[str, int] = {
+    # GPT-5 series (400K context)
+    "gpt-5": 400_000,
+    "gpt-5-nano": 400_000,
+    "gpt-5-mini": 400_000,
+    "gpt-5-codex": 400_000,
+    "gpt-5-image": 400_000,
+    "gpt-5-pro": 400_000,
+    # GPT-5 chat variants (128K context)
+    "gpt-5-chat": 128_000,
+    # GPT-5.1 series (400K context)
+    "gpt-5.1": 400_000,
+    "gpt-5.1-codex": 400_000,
+    "gpt-5.1-codex-mini": 400_000,
+    "gpt-5.1-codex-max": 400_000,
+    "gpt-5.1-chat": 128_000,
+    # GPT-5.2 series (400K context)
+    "gpt-5.2": 400_000,
+    "gpt-5.2-pro": 400_000,
+    "gpt-5.2-chat": 128_000,
+    # GPT-4.1 series (1M context)
+    "gpt-4.1": 1_000_000,
+    "gpt-4.1-mini": 1_000_000,
+    "gpt-4.1-nano": 1_000_000,
+    # GPT-4o series (128K context)
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    # o3 series (200K context)
+    "o3": 200_000,
+    "o3-mini": 200_000,
+    "o3-pro": 200_000,
+    # o1 series (200K context)
+    "o1": 200_000,
+    "o1-mini": 200_000,
+    "o1-pro": 200_000,
+}
+
+# Model-specific token limits for text splitting (per single text)
 # Uses context_size / 4 as safe buffer for translation (input + output + overhead)
 # Unknown models fall back to DEFAULT_MAX_TOKENS (conservative)
 MODEL_TOKEN_LIMITS: dict[str, int] = {
@@ -194,7 +241,9 @@ class OpenAITranslator:
 
         # Try base model name (e.g., "gpt-5-nano-2025-01" → "gpt-5-nano")
         # This handles dated model versions
-        for known_model in MODEL_TOKEN_LIMITS:
+        # Sort by key length descending to match longer (more specific) keys first
+        # e.g., "gpt-5-chat" should match before "gpt-5"
+        for known_model in sorted(MODEL_TOKEN_LIMITS.keys(), key=len, reverse=True):
             if self._model.startswith(known_model):
                 logger.debug(
                     "Using token limit for base model '%s' (matched from '%s')",
@@ -234,6 +283,46 @@ class OpenAITranslator:
         if self._max_tokens == 0:
             return None
         return int(self._max_tokens * self.CHARS_PER_TOKEN)
+
+    @property
+    def max_batch_tokens(self) -> int:
+        """Maximum total tokens for a single batch request.
+
+        This limit applies to the sum of all input texts in a batch,
+        ensuring the total request doesn't exceed the model's context window.
+
+        Uses context_size / 2 as the limit, reserving half for:
+        - Output translations (similar length to input)
+        - System prompt overhead
+        - Safety margin
+
+        The pipeline should use this to chunk texts by total tokens,
+        not just by count.
+
+        Returns:
+            Maximum tokens for a batch request.
+        """
+        context_size = self._get_model_context_size()
+        # Use half the context for input (other half for output + overhead)
+        return context_size // 2
+
+    def _get_model_context_size(self) -> int:
+        """Get context window size for the current model.
+
+        Returns:
+            Context size in tokens. Falls back to conservative 32K for unknown models.
+        """
+        # Direct lookup
+        if self._model in MODEL_CONTEXT_SIZES:
+            return MODEL_CONTEXT_SIZES[self._model]
+
+        # Try prefix matching (longer keys first)
+        for known_model in sorted(MODEL_CONTEXT_SIZES.keys(), key=len, reverse=True):
+            if self._model.startswith(known_model):
+                return MODEL_CONTEXT_SIZES[known_model]
+
+        # Conservative fallback (smallest common context size)
+        return 32_000
 
     def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client exists.

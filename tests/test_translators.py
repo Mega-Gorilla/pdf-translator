@@ -376,6 +376,17 @@ class TestOpenAITranslatorUnit:
         # Should match gpt-5-nano: 100K tokens
         assert translator.max_text_length == 100_000
 
+    def test_max_text_length_chat_dated_model(self) -> None:
+        """OpenAITranslator should match longer prefix first (gpt-5-chat before gpt-5)."""
+        OpenAITranslator = get_openai_translator()
+        # gpt-5-chat-2025-01 should match gpt-5-chat (32K), not gpt-5 (100K)
+        translator = OpenAITranslator(api_key="test-key", model="gpt-5-chat-2025-01")
+        assert translator.max_text_length == 32_000
+
+        # gpt-5.1-chat-2025-01 should match gpt-5.1-chat (32K), not gpt-5.1 (100K)
+        translator2 = OpenAITranslator(api_key="test-key", model="gpt-5.1-chat-2025-01")
+        assert translator2.max_text_length == 32_000
+
     def test_max_text_length_custom(self) -> None:
         """OpenAITranslator should accept custom max_tokens override."""
         OpenAITranslator = get_openai_translator()
@@ -388,6 +399,27 @@ class TestOpenAITranslatorUnit:
         OpenAITranslator = get_openai_translator()
         translator = OpenAITranslator(api_key="test-key", max_tokens=0)
         assert translator.max_text_length is None
+
+    def test_max_batch_tokens_default(self) -> None:
+        """OpenAITranslator should have max_batch_tokens based on context size."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+        # gpt-5-nano: 400K context / 2 = 200K batch tokens
+        assert translator.max_batch_tokens == 200_000
+
+    def test_max_batch_tokens_gpt4o(self) -> None:
+        """OpenAITranslator should have correct max_batch_tokens for gpt-4o."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4o")
+        # gpt-4o: 128K context / 2 = 64K batch tokens
+        assert translator.max_batch_tokens == 64_000
+
+    def test_max_batch_tokens_unknown_model(self) -> None:
+        """OpenAITranslator should have conservative max_batch_tokens for unknown models."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="unknown-model")
+        # Unknown: 32K context / 2 = 16K batch tokens
+        assert translator.max_batch_tokens == 16_000
 
     def test_count_tokens_with_tiktoken(self) -> None:
         """count_tokens should use tiktoken when available."""

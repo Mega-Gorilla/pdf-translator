@@ -37,13 +37,17 @@ class MockTranslator:
 class MockOpenAITranslator:
     """Mock OpenAI translator with token-based limits for testing."""
 
-    def __init__(self, max_tokens: int = 100_000) -> None:
+    def __init__(
+        self, max_tokens: int = 100_000, max_batch_tokens: int = 200_000
+    ) -> None:
         """Initialize mock translator.
 
         Args:
-            max_tokens: Token limit. Default 100K matches gpt-5-nano.
+            max_tokens: Token limit per text. Default 100K matches gpt-5-nano.
+            max_batch_tokens: Token limit per batch. Default 200K (400K/2).
         """
         self._max_tokens = max_tokens
+        self._max_batch_tokens = max_batch_tokens
         self.name = "openai"
         # Same ratio as real OpenAITranslator (conservative for CJK)
         self.CHARS_PER_TOKEN = 1.0
@@ -53,6 +57,14 @@ class MockOpenAITranslator:
         if self._max_tokens == 0:
             return None
         return int(self._max_tokens * self.CHARS_PER_TOKEN)
+
+    @property
+    def max_batch_tokens(self) -> int:
+        return self._max_batch_tokens
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens (1 char = 1 token for simplicity)."""
+        return len(text)
 
     async def translate(
         self, text: str, source_lang: str, target_lang: str
@@ -343,3 +355,35 @@ class TestOpenAITokenBasedSplitting:
 
         assert split_texts == texts
         assert mapping == [(0, 1), (1, 1)]
+
+    def test_openai_chunk_by_batch_tokens(self) -> None:
+        """Pipeline should chunk by max_batch_tokens for OpenAI."""
+        # Small batch token limit for testing
+        translator = MockOpenAITranslator(max_tokens=100, max_batch_tokens=50)
+        config = PipelineConfig(target_lang="en", translation_batch_size=10)
+        pipeline = TranslationPipeline(translator, config)
+
+        # 5 texts of 20 chars each = 100 tokens total
+        # With max_batch_tokens=50, should be split into chunks
+        texts = ["a" * 20 for _ in range(5)]
+        chunks = pipeline._chunk_texts(texts)
+
+        # Each chunk should have <= 50 tokens (2 texts of 20 each = 40 tokens)
+        assert len(chunks) >= 2
+        for chunk in chunks:
+            total_tokens = sum(len(t) for t in chunk)
+            assert total_tokens <= 50
+
+    def test_openai_chunk_respects_both_limits(self) -> None:
+        """Pipeline should respect both batch_size and max_batch_tokens."""
+        # Large token limit but small batch size
+        translator = MockOpenAITranslator(max_tokens=100, max_batch_tokens=1000)
+        config = PipelineConfig(target_lang="en", translation_batch_size=2)
+        pipeline = TranslationPipeline(translator, config)
+
+        # 6 short texts - should be chunked by batch_size (2), not tokens
+        texts = ["hi"] * 6
+        chunks = pipeline._chunk_texts(texts)
+
+        assert len(chunks) == 3
+        assert all(len(chunk) == 2 for chunk in chunks)
