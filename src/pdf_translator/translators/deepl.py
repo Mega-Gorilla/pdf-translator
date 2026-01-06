@@ -5,7 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pdf_translator.translators.base import ConfigurationError, TranslationError
+from pdf_translator.translators.base import (
+    ConfigurationError,
+    QuotaExceededError,
+    TranslationError,
+)
 
 if TYPE_CHECKING:
     import aiohttp
@@ -262,6 +266,11 @@ class DeepLTranslator:
                 elif response.status == 429:
                     raise TranslationError(
                         "DeepL rate limit exceeded, please retry later"
+                    )
+                elif response.status == 456:
+                    raise QuotaExceededError(
+                        "DeepL API quota exceeded. "
+                        "Please check your plan or wait for quota reset."
                     )
                 elif response.status >= 500:
                     raise TranslationError(

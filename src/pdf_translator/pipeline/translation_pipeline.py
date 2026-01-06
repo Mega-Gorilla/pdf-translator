@@ -36,6 +36,7 @@ from pdf_translator.pipeline.progress import ProgressCallback
 from pdf_translator.translators.base import (
     ArrayLengthMismatchError,
     ConfigurationError,
+    QuotaExceededError,
     TranslationError,
     TranslatorBackend,
 )
@@ -454,6 +455,9 @@ class TranslationPipeline:
                     self._config.target_lang,
                 )
             except ConfigurationError:
+                raise
+            except QuotaExceededError:
+                # Quota exceeded - not retryable within this session
                 raise
             except ArrayLengthMismatchError:
                 # Batch split fallback (do not retry with same input)

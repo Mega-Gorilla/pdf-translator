@@ -387,3 +387,105 @@ class TestOpenAITokenBasedSplitting:
 
         assert len(chunks) == 3
         assert all(len(chunk) == 2 for chunk in chunks)
+
+
+class TestQuotaExceededError:
+    """Test QuotaExceededError handling in pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_not_retried(self) -> None:
+        """QuotaExceededError should NOT be retried."""
+        from pdf_translator.translators.base import QuotaExceededError
+
+        call_count = 0
+
+        class QuotaExceededTranslator:
+            name = "test"
+            max_text_length = 10000
+
+            async def translate_batch(
+                self, texts: list[str], source_lang: str, target_lang: str
+            ) -> list[str]:
+                nonlocal call_count
+                call_count += 1
+                raise QuotaExceededError("Quota exceeded")
+
+            async def translate(
+                self, text: str, source_lang: str, target_lang: str
+            ) -> str:
+                raise QuotaExceededError("Quota exceeded")
+
+        config = PipelineConfig(max_retries=3)
+        pipeline = TranslationPipeline(QuotaExceededTranslator(), config)
+
+        with pytest.raises(QuotaExceededError):
+            await pipeline._translate_with_retry(["test text"])
+
+        # Should be called only once (no retry)
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_translation_error_is_retried(self) -> None:
+        """TranslationError should be retried (for comparison)."""
+        from pdf_translator.translators.base import TranslationError
+
+        call_count = 0
+
+        class FailingTranslator:
+            name = "test"
+            max_text_length = 10000
+
+            async def translate_batch(
+                self, texts: list[str], source_lang: str, target_lang: str
+            ) -> list[str]:
+                nonlocal call_count
+                call_count += 1
+                raise TranslationError("API error")
+
+            async def translate(
+                self, text: str, source_lang: str, target_lang: str
+            ) -> str:
+                raise TranslationError("API error")
+
+        config = PipelineConfig(max_retries=3, retry_delay=0.001)
+        pipeline = TranslationPipeline(FailingTranslator(), config)
+
+        from pdf_translator.pipeline.errors import PipelineError
+
+        with pytest.raises(PipelineError):
+            await pipeline._translate_with_retry(["test text"])
+
+        # Should be called 4 times (1 initial + 3 retries)
+        assert call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_configuration_error_not_retried(self) -> None:
+        """ConfigurationError should NOT be retried (for comparison)."""
+        from pdf_translator.translators.base import ConfigurationError
+
+        call_count = 0
+
+        class ConfigErrorTranslator:
+            name = "test"
+            max_text_length = 10000
+
+            async def translate_batch(
+                self, texts: list[str], source_lang: str, target_lang: str
+            ) -> list[str]:
+                nonlocal call_count
+                call_count += 1
+                raise ConfigurationError("Invalid config")
+
+            async def translate(
+                self, text: str, source_lang: str, target_lang: str
+            ) -> str:
+                raise ConfigurationError("Invalid config")
+
+        config = PipelineConfig(max_retries=3)
+        pipeline = TranslationPipeline(ConfigErrorTranslator(), config)
+
+        with pytest.raises(ConfigurationError):
+            await pipeline._translate_with_retry(["test text"])
+
+        # Should be called only once (no retry)
+        assert call_count == 1
