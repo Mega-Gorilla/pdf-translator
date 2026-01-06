@@ -9,6 +9,7 @@ import pytest
 from pdf_translator.translators import (
     ConfigurationError,
     GoogleTranslator,
+    QuotaExceededError,
     TranslationError,
     TranslatorBackend,
     TranslatorError,
@@ -42,6 +43,18 @@ class TestExceptions:
     def test_configuration_error_inherits_from_translator_error(self) -> None:
         """ConfigurationError should inherit from TranslatorError."""
         assert issubclass(ConfigurationError, TranslatorError)
+
+    def test_quota_exceeded_error_inherits_from_translator_error(self) -> None:
+        """QuotaExceededError should inherit from TranslatorError."""
+        assert issubclass(QuotaExceededError, TranslatorError)
+
+    def test_quota_exceeded_error_not_translation_error(self) -> None:
+        """QuotaExceededError should NOT inherit from TranslationError.
+
+        This is important because TranslationError is retryable, but
+        QuotaExceededError is NOT retryable.
+        """
+        assert not issubclass(QuotaExceededError, TranslationError)
 
     def test_translator_error_inherits_from_exception(self) -> None:
         """TranslatorError should inherit from Exception."""
@@ -304,6 +317,60 @@ class TestDeepLTranslatorUnit:
         assert result[1] == ""  # Empty preserved
         assert result[2] == "  "  # Whitespace preserved
         assert result[3] == "世界"
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_raises_quota_exceeded_error(self) -> None:
+        """HTTP 456 should raise QuotaExceededError (not TranslationError).
+
+        QuotaExceededError is NOT retryable, unlike TranslationError.
+        """
+        DeepLTranslator = get_deepl_translator()
+        translator = DeepLTranslator(api_key="test-key")
+
+        # Mock HTTP 456 response (quota exceeded)
+        mock_response = AsyncMock()
+        mock_response.status = 456
+        mock_response.text = AsyncMock(return_value="Quota exceeded")
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=AsyncMock())
+        mock_session.post.return_value.__aenter__ = AsyncMock(
+            return_value=mock_response
+        )
+        mock_session.post.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        translator._session = mock_session
+
+        with pytest.raises(QuotaExceededError) as exc_info:
+            await translator.translate_batch(["Hello"], "en", "ja")
+
+        assert "quota exceeded" in str(exc_info.value).lower()
+        assert "check your plan" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_raises_translation_error(self) -> None:
+        """HTTP 429 should raise TranslationError (retryable)."""
+        DeepLTranslator = get_deepl_translator()
+        translator = DeepLTranslator(api_key="test-key")
+
+        # Mock HTTP 429 response (rate limit)
+        mock_response = AsyncMock()
+        mock_response.status = 429
+        mock_response.text = AsyncMock(return_value="Rate limit exceeded")
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=AsyncMock())
+        mock_session.post.return_value.__aenter__ = AsyncMock(
+            return_value=mock_response
+        )
+        mock_session.post.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        translator._session = mock_session
+
+        with pytest.raises(TranslationError) as exc_info:
+            await translator.translate_batch(["Hello"], "en", "ja")
+
+        assert "rate limit" in str(exc_info.value).lower()
 
 
 @pytest.mark.skipif(not _has_openai(), reason="openai not installed")

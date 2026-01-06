@@ -25,6 +25,7 @@ Usage:
 
 from pdf_translator.translators.base import (
     ConfigurationError,
+    QuotaExceededError,
     TranslationError,
     TranslatorBackend,
     TranslatorError,
@@ -37,6 +38,7 @@ __all__ = [
     "TranslatorError",
     "TranslationError",
     "ConfigurationError",
+    "QuotaExceededError",
     # Always available
     "GoogleTranslator",
     # Lazy import functions

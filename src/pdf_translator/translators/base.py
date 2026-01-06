@@ -28,6 +28,21 @@ class ConfigurationError(TranslatorError):
     pass
 
 
+class QuotaExceededError(TranslatorError):
+    """Raised when translation API quota is exceeded.
+
+    This error type is NOT retryable - waiting will not help within
+    the same session. User needs to check their plan or wait for
+    quota reset (typically daily/monthly).
+
+    Examples:
+        - DeepL HTTP 456: Quota exceeded
+        - OpenAI HTTP 429 with quota message (future support)
+    """
+
+    pass
+
+
 class ArrayLengthMismatchError(TranslationError):
     """Raised when API returns wrong number of translations.
 
