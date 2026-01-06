@@ -67,8 +67,8 @@ class TranslatorBackend(Protocol):
         Note:
             - Google Translate: 5,000 characters
             - DeepL: 30,000 characters (plus 128KB total request limit)
-            - OpenAI: ~16,000 characters (8,000 tokens × 2 chars/token estimate)
-              Uses tiktoken for accurate counting when available.
+            - OpenAI: 8,000 characters (8,000 tokens × 1 char/token conservative)
+              Uses worst-case CJK ratio to avoid token limit errors.
         """
         ...
 

@@ -40,8 +40,8 @@ class MockOpenAITranslator:
     def __init__(self, max_tokens: int = 8000) -> None:
         self._max_tokens = max_tokens
         self.name = "openai"
-        # Same ratio as real OpenAITranslator
-        self.CHARS_PER_TOKEN = 2.0
+        # Same ratio as real OpenAITranslator (conservative for CJK)
+        self.CHARS_PER_TOKEN = 1.0
 
     @property
     def max_text_length(self) -> int | None:
@@ -297,13 +297,13 @@ class TestOpenAITokenBasedSplitting:
     def test_openai_max_text_length_default(self) -> None:
         """OpenAI mock should have default max_text_length based on tokens."""
         translator = MockOpenAITranslator()
-        # Default: 8000 tokens × 2.0 chars/token = 16000 characters
-        assert translator.max_text_length == 16000
+        # Default: 8000 tokens × 1.0 chars/token = 8000 characters (conservative for CJK)
+        assert translator.max_text_length == 8000
 
     def test_openai_max_text_length_custom(self) -> None:
         """OpenAI mock should accept custom max_tokens."""
         translator = MockOpenAITranslator(max_tokens=4000)
-        assert translator.max_text_length == 8000
+        assert translator.max_text_length == 4000
 
     def test_openai_max_text_length_disabled(self) -> None:
         """OpenAI mock with max_tokens=0 should return None."""
@@ -312,12 +312,12 @@ class TestOpenAITokenBasedSplitting:
 
     def test_openai_splitting_with_pipeline(self) -> None:
         """Pipeline should split texts based on OpenAI's token-derived limit."""
-        # Use small token limit for testing
-        translator = MockOpenAITranslator(max_tokens=25)  # 50 chars
+        # Use small token limit for testing (25 tokens × 1.0 = 25 chars)
+        translator = MockOpenAITranslator(max_tokens=25)
         config = PipelineConfig(target_lang="en")
         pipeline = TranslationPipeline(translator, config)
 
-        # Text exceeding 50 chars should be split
+        # Text exceeding 25 chars should be split
         texts = ["short", "a" * 100]
         split_texts, mapping = pipeline._split_texts_for_api(texts)
 

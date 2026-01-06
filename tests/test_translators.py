@@ -345,15 +345,15 @@ class TestOpenAITranslatorUnit:
         """OpenAITranslator should have max_text_length based on default token limit."""
         OpenAITranslator = get_openai_translator()
         translator = OpenAITranslator(api_key="test-key")
-        # Default: 8000 tokens × 2.0 chars/token = 16000 characters
-        assert translator.max_text_length == 16000
+        # Default: 8000 tokens × 1.0 chars/token = 8000 characters (conservative for CJK)
+        assert translator.max_text_length == 8000
 
     def test_max_text_length_custom(self) -> None:
         """OpenAITranslator should accept custom max_tokens."""
         OpenAITranslator = get_openai_translator()
         translator = OpenAITranslator(api_key="test-key", max_tokens=4000)
-        # 4000 tokens × 2.0 chars/token = 8000 characters
-        assert translator.max_text_length == 8000
+        # 4000 tokens × 1.0 chars/token = 4000 characters
+        assert translator.max_text_length == 4000
 
     def test_max_text_length_disabled(self) -> None:
         """OpenAITranslator with max_tokens=0 should return None (unlimited)."""
@@ -389,9 +389,15 @@ class TestOpenAITranslatorUnit:
         translator._tiktoken_available = False
 
         try:
-            # Should use CHARS_PER_TOKEN (2.0) for estimation
+            # Should use CHARS_PER_TOKEN (1.0) for estimation
             count = translator.count_tokens("Hello, world!")  # 13 chars
-            assert count == 6  # 13 / 2.0 = 6.5 -> 6
+            assert count == 13  # 13 / 1.0 = 13
+
+            # Single character should return at least 1 (max(1, ...) safeguard)
+            assert translator.count_tokens("a") == 1
+
+            # Empty string should return 0
+            assert translator.count_tokens("") == 0
         finally:
             translator._tiktoken_available = original_available
 

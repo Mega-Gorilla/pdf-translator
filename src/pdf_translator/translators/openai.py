@@ -58,8 +58,9 @@ class OpenAITranslator:
 
     # Conservative character-to-token ratio for estimation
     # CJK: ~1-2 chars/token, English: ~4 chars/token
-    # Use 2.0 as a conservative middle ground
-    CHARS_PER_TOKEN = 2.0
+    # Use 1.0 for worst-case CJK handling (1 char = 1 token)
+    # This is intentionally conservative to avoid token limit errors
+    CHARS_PER_TOKEN = 1.0
 
     def __init__(
         self,
@@ -141,16 +142,16 @@ class OpenAITranslator:
         """Maximum text length for OpenAI (character-based approximation).
 
         OpenAI uses token-based limits, not character limits. This property
-        returns a character-based approximation using a conservative ratio.
+        returns a character-based approximation for pipeline text splitting.
 
-        The approximation uses CHARS_PER_TOKEN (default: 2.0) which is
-        conservative for both CJK (~1-2 chars/token) and English (~4 chars/token).
+        Important: The pipeline splits texts based on this character limit,
+        NOT actual token counts. The count_tokens() method provides accurate
+        token counting via tiktoken, but is not used for split decisions.
 
-        Token counting:
-        - If tiktoken is installed: accurate token counting is used for
-          better estimation during translation
-        - If tiktoken is not installed: falls back to character-based
-          approximation only
+        The approximation uses CHARS_PER_TOKEN (1.0) which is intentionally
+        conservative to handle worst-case CJK scenarios where 1 char ≈ 1 token.
+        For English (~4 chars/token), this results in more splits than
+        strictly necessary, but ensures we never exceed token limits.
 
         Returns:
             Approximate character limit based on max_tokens setting.
@@ -215,13 +216,18 @@ class OpenAITranslator:
         Returns:
             Number of tokens. If tiktoken is not available, returns an
             estimate based on character count and CHARS_PER_TOKEN ratio.
+            Returns 0 for empty text, otherwise at least 1.
         """
+        if not text:
+            return 0
+
         encoding = self._get_encoding()
         if encoding is not None:
             return len(encoding.encode(text))
 
         # Fallback to character-based estimation
-        return int(len(text) / self.CHARS_PER_TOKEN)
+        # Use max(1, ...) to avoid underestimation for short texts
+        return max(1, int(len(text) / self.CHARS_PER_TOKEN))
 
     def _create_response_model(self, n: int) -> type["BaseModel"]:
         """Create a Pydantic model with fixed-length translations array.
