@@ -598,6 +598,10 @@ class TranslationPipeline:
     ) -> list[str]:
         """Rejoin translated text parts back to original structure.
 
+        Uses language-appropriate joining:
+        - CJK languages (ja, zh, ko): no separator (these languages don't use spaces)
+        - Other languages: space separator
+
         Args:
             translated: List of translated text parts.
             mapping: List of (original_index, part_count) from _split_texts_for_api.
@@ -605,6 +609,11 @@ class TranslationPipeline:
         Returns:
             List of translated texts matching original structure.
         """
+        # Determine separator based on target language
+        target_lang = self._config.target_lang.lower()
+        # CJK languages don't use spaces between words
+        separator = "" if target_lang in {"ja", "zh", "ko"} else " "
+
         result: list[str] = []
         offset = 0
 
@@ -612,9 +621,9 @@ class TranslationPipeline:
             if part_count == 1:
                 result.append(translated[offset])
             else:
-                # Rejoin multiple parts with space
+                # Rejoin multiple parts with language-appropriate separator
                 parts = translated[offset : offset + part_count]
-                result.append(" ".join(parts))
+                result.append(separator.join(parts))
             offset += part_count
 
         return result

@@ -69,10 +69,11 @@ class DeepLTranslator:
     def max_text_length(self) -> int:
         """Maximum text length for DeepL.
 
-        DeepL has a 128KB request limit. With UTF-8 encoding,
-        this allows approximately 50,000 characters safely.
+        DeepL has a 30,000 character limit per text according to
+        official documentation. The 128KB request limit is handled
+        separately by _chunk_texts which uses UTF-8 byte length.
         """
-        return 50000
+        return 30000
 
     async def __aenter__(self) -> DeepLTranslator:
         """Enter async context manager."""

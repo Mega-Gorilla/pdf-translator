@@ -109,8 +109,16 @@ class OpenAITranslator:
         """Maximum text length for OpenAI.
 
         OpenAI uses token-based limits, not character limits.
-        Token limits are handled by the model itself.
-        Returns None to indicate no character-based limit.
+        Returns None because:
+        1. Token limits vary by model (GPT-4o: 128K, GPT-4.1: 1M tokens)
+        2. Character-to-token ratio varies by language and content
+        3. tiktoken dependency would add complexity
+
+        Token limit errors are handled by the pipeline's retry logic:
+        - TranslationError triggers retry with exponential backoff
+        - ArrayLengthMismatchError triggers batch splitting
+
+        For very long texts, consider using a model with larger context.
         """
         return None
 

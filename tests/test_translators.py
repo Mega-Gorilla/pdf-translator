@@ -216,10 +216,10 @@ class TestDeepLTranslatorUnit:
         assert translator._api_url == "https://api.deepl.com/v2/translate"
 
     def test_max_text_length(self) -> None:
-        """DeepLTranslator should have max_text_length of 50000."""
+        """DeepLTranslator should have max_text_length of 30000."""
         DeepLTranslator = get_deepl_translator()
         translator = DeepLTranslator(api_key="test-key")
-        assert translator.max_text_length == 50000
+        assert translator.max_text_length == 30000
 
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:

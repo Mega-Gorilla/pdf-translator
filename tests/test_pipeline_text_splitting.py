@@ -133,23 +133,53 @@ class TestRejoinTranslatedTexts:
 
     def test_no_split_passthrough(self) -> None:
         """Non-split texts should pass through."""
-        pipeline = TranslationPipeline(MockTranslator(max_text_length=100))
+        config = PipelineConfig(target_lang="en")
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
         translated = ["text1", "text2", "text3"]
         mapping = [(0, 1), (1, 1), (2, 1)]
         result = pipeline._rejoin_translated_texts(translated, mapping)
         assert result == ["text1", "text2", "text3"]
 
-    def test_rejoin_split_texts(self) -> None:
-        """Split texts should be rejoined with space."""
-        pipeline = TranslationPipeline(MockTranslator(max_text_length=100))
+    def test_rejoin_split_texts_english(self) -> None:
+        """Split texts should be rejoined with space for English."""
+        config = PipelineConfig(target_lang="en")
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
         translated = ["part1", "part2", "other"]
         mapping = [(0, 2), (1, 1)]  # First text was split into 2 parts
         result = pipeline._rejoin_translated_texts(translated, mapping)
         assert result == ["part1 part2", "other"]
 
+    def test_rejoin_split_texts_japanese(self) -> None:
+        """Split texts should be rejoined without space for Japanese."""
+        config = PipelineConfig(target_lang="ja")
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
+        translated = ["これは", "テストです", "他"]
+        mapping = [(0, 2), (1, 1)]
+        result = pipeline._rejoin_translated_texts(translated, mapping)
+        assert result == ["これはテストです", "他"]
+
+    def test_rejoin_split_texts_chinese(self) -> None:
+        """Split texts should be rejoined without space for Chinese."""
+        config = PipelineConfig(target_lang="zh")
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
+        translated = ["这是", "测试", "其他"]
+        mapping = [(0, 2), (1, 1)]
+        result = pipeline._rejoin_translated_texts(translated, mapping)
+        assert result == ["这是测试", "其他"]
+
+    def test_rejoin_split_texts_korean(self) -> None:
+        """Split texts should be rejoined without space for Korean."""
+        config = PipelineConfig(target_lang="ko")
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
+        translated = ["이것은", "테스트입니다", "기타"]
+        mapping = [(0, 2), (1, 1)]
+        result = pipeline._rejoin_translated_texts(translated, mapping)
+        assert result == ["이것은테스트입니다", "기타"]
+
     def test_multiple_splits(self) -> None:
         """Multiple texts split should all be rejoined correctly."""
-        pipeline = TranslationPipeline(MockTranslator(max_text_length=100))
+        config = PipelineConfig(target_lang="en")
+        pipeline = TranslationPipeline(MockTranslator(max_text_length=100), config)
         translated = ["a1", "a2", "b", "c1", "c2", "c3"]
         mapping = [(0, 2), (1, 1), (2, 3)]
         result = pipeline._rejoin_translated_texts(translated, mapping)
@@ -160,28 +190,43 @@ class TestIntegration:
     """Integration tests for text splitting in pipeline."""
 
     @pytest.mark.asyncio
-    async def test_split_and_rejoin_in_translation(self) -> None:
-        """Test that split texts are rejoined after translation."""
-        # Create a mock translator that has a small max_text_length
+    async def test_split_and_rejoin_in_translation_english(self) -> None:
+        """Test that split texts are rejoined with space for English."""
         mock_translator = MagicMock()
         mock_translator.name = "mock"
         mock_translator.max_text_length = 50
 
-        # Track translated texts
-        translated_texts: list[str] = []
-
-        async def mock_translate_batch(
-            texts: list[str], source_lang: str, target_lang: str
-        ) -> list[str]:
-            results = [f"[JA]{t}" for t in texts]
-            translated_texts.extend(texts)
-            return results
-
-        mock_translator.translate_batch = AsyncMock(side_effect=mock_translate_batch)
-
-        pipeline = TranslationPipeline(mock_translator)
+        config = PipelineConfig(target_lang="en")
+        pipeline = TranslationPipeline(mock_translator, config)
 
         texts = ["short", "a" * 100]  # Second text exceeds 50 chars
+        split_texts, mapping = pipeline._split_texts_for_api(texts)
+
+        # Verify splitting occurred
+        assert len(split_texts) > 2
+        assert mapping[0] == (0, 1)
+        assert mapping[1][1] > 1
+
+        # Simulate translation of split texts
+        translated_split = [f"[EN]{t}" for t in split_texts]
+        rejoined = pipeline._rejoin_translated_texts(translated_split, mapping)
+
+        # Verify rejoining with space for English
+        assert len(rejoined) == 2
+        assert rejoined[0] == "[EN]short"
+        assert " " in rejoined[1]  # Split parts are rejoined with space
+
+    @pytest.mark.asyncio
+    async def test_split_and_rejoin_in_translation_japanese(self) -> None:
+        """Test that split texts are rejoined without space for Japanese."""
+        mock_translator = MagicMock()
+        mock_translator.name = "mock"
+        mock_translator.max_text_length = 50
+
+        config = PipelineConfig(target_lang="ja")
+        pipeline = TranslationPipeline(mock_translator, config)
+
+        texts = ["短い", "あ" * 100]  # Second text exceeds 50 chars
         split_texts, mapping = pipeline._split_texts_for_api(texts)
 
         # Verify splitting occurred
@@ -193,7 +238,7 @@ class TestIntegration:
         translated_split = [f"[JA]{t}" for t in split_texts]
         rejoined = pipeline._rejoin_translated_texts(translated_split, mapping)
 
-        # Verify rejoining
+        # Verify rejoining without space for Japanese
         assert len(rejoined) == 2
-        assert rejoined[0] == "[JA]short"
-        assert " " in rejoined[1]  # Split parts are rejoined with space
+        assert rejoined[0] == "[JA]短い"
+        assert " " not in rejoined[1]  # No space for CJK languages
