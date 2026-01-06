@@ -376,9 +376,91 @@ export OPENAI_MODEL=gpt-4o-mini
 
 ---
 
+## 追加実装: モデル固有トークン制限 (Issue #50)
+
+Issue #50 で、OpenAI translator にモデル固有のトークン制限が実装された。
+
+### 実装されたコンポーネント
+
+#### 1. MODEL_TOKEN_LIMITS / MODEL_CONTEXT_SIZES
+
+```python
+# モデルコンテキストサイズ（ソース付きで文書化）
+MODEL_CONTEXT_SIZES: dict[str, int] = {
+    "gpt-5-nano": 400_000,
+    "gpt-4.1-mini": 1_000_000,
+    "gpt-4o": 128_000,
+    ...
+}
+
+# テキスト分割用トークン制限（context_size / 4）
+MODEL_TOKEN_LIMITS: dict[str, int] = {
+    "gpt-5-nano": 100_000,
+    "gpt-4.1-mini": 250_000,
+    "gpt-4o": 32_000,
+    ...
+}
+```
+
+#### 2. max_batch_tokens プロパティ
+
+```python
+@property
+def max_batch_tokens(self) -> int:
+    """バッチリクエストの最大トークン数（context_size / 2）"""
+    context_size = self._get_model_context_size()
+    return context_size // 2
+```
+
+#### 3. トークンカウント（tiktoken）
+
+```python
+def count_tokens(self, text: str) -> int:
+    """tiktoken を使用した正確なトークンカウント"""
+    encoding = self._get_encoding()
+    if encoding is not None:
+        return len(encoding.encode(text))
+    # フォールバック: 文字ベース推定
+    return max(1, int(len(text) / self.CHARS_PER_TOKEN))
+```
+
+#### 4. パイプラインのトークン認識バッチ分割
+
+```python
+def _chunk_texts_by_tokens(
+    self,
+    texts: list[str],
+    max_batch_size: int,
+    max_batch_tokens: int,
+    count_tokens: Callable[[str], int],
+) -> list[list[str]]:
+    """バッチサイズとトークン制限の両方を考慮した分割"""
+```
+
+### モデル別トークン制限一覧
+
+| モデル | コンテキスト | テキスト制限 | バッチ制限 |
+|--------|-------------|-------------|-----------|
+| gpt-5-nano | 400K | 100K | 200K |
+| gpt-5 / gpt-5-mini | 400K | 100K | 200K |
+| gpt-5-chat | 128K | 32K | 64K |
+| gpt-4.1 / gpt-4.1-mini | 1M | 250K | 500K |
+| gpt-4o / gpt-4o-mini | 128K | 32K | 64K |
+| o1 / o3 シリーズ | 200K | 50K | 100K |
+| 未知のモデル | 32K（推定） | 8K | 16K |
+
+### 設計判断
+
+1. **プレフィックスマッチング順序**: 長いキーから先にマッチ（例: `gpt-5-chat` を `gpt-5` より優先）
+2. **保守的な文字/トークン比**: CJK 最悪ケース（1文字=1トークン）を想定
+3. **ソース文書化**: MODEL_CONTEXT_SIZES にソースURLと最終確認日を記載
+
+---
+
 ## 参考リンク
 
 - [Issue #35](https://github.com/Mega-Gorilla/pdf-translator/issues/35)
+- [Issue #50](https://github.com/Mega-Gorilla/pdf-translator/issues/50)
 - [GPT-5 nano Model | OpenAI API](https://platform.openai.com/docs/models/gpt-5-nano)
 - [GPT-5 mini Model | OpenAI API](https://platform.openai.com/docs/models/gpt-5-mini)
 - [Structured Outputs not reliable with GPT-4o-mini](https://community.openai.com/t/structured-outputs-not-reliable-with-gpt-4o-mini-and-gpt-4o/918735)

@@ -56,6 +56,11 @@ class TestGoogleTranslator:
         translator = GoogleTranslator()
         assert translator.name == "google"
 
+    def test_max_text_length(self) -> None:
+        """GoogleTranslator should have max_text_length of 5000."""
+        translator = GoogleTranslator()
+        assert translator.max_text_length == 5000
+
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:
         """Empty string should return as-is."""
@@ -210,6 +215,12 @@ class TestDeepLTranslatorUnit:
         )
         assert translator._api_url == "https://api.deepl.com/v2/translate"
 
+    def test_max_text_length(self) -> None:
+        """DeepLTranslator should have max_text_length of 30000."""
+        DeepLTranslator = get_deepl_translator()
+        translator = DeepLTranslator(api_key="test-key")
+        assert translator.max_text_length == 30000
+
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:
         """Empty string should return as-is."""
@@ -329,6 +340,152 @@ class TestOpenAITranslatorUnit:
             api_key="test-key", system_prompt=custom_prompt
         )
         assert translator._system_prompt == custom_prompt
+
+    def test_max_text_length_default_model(self) -> None:
+        """OpenAITranslator should auto-detect max_tokens from MODEL_TOKEN_LIMITS."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+        # Default model is gpt-5-nano: 100K tokens × 1.0 chars/token = 100K characters
+        assert translator.max_text_length == 100_000
+
+    def test_max_text_length_gpt4o(self) -> None:
+        """OpenAITranslator should use correct limit for gpt-4o."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4o")
+        # gpt-4o: 32K tokens × 1.0 chars/token = 32K characters
+        assert translator.max_text_length == 32_000
+
+    def test_max_text_length_gpt41(self) -> None:
+        """OpenAITranslator should use correct limit for gpt-4.1."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4.1")
+        # gpt-4.1: 250K tokens × 1.0 chars/token = 250K characters
+        assert translator.max_text_length == 250_000
+
+    def test_max_text_length_unknown_model(self) -> None:
+        """OpenAITranslator should use conservative default for unknown models."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="unknown-model")
+        # Unknown model: DEFAULT_MAX_TOKENS (8K) × 1.0 = 8K characters
+        assert translator.max_text_length == 8_000
+
+    def test_max_text_length_dated_model(self) -> None:
+        """OpenAITranslator should match base model for dated versions."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-5-nano-2025-01-15")
+        # Should match gpt-5-nano: 100K tokens
+        assert translator.max_text_length == 100_000
+
+    def test_max_text_length_chat_dated_model(self) -> None:
+        """OpenAITranslator should match longer prefix first (gpt-5-chat before gpt-5)."""
+        OpenAITranslator = get_openai_translator()
+        # gpt-5-chat-2025-01 should match gpt-5-chat (32K), not gpt-5 (100K)
+        translator = OpenAITranslator(api_key="test-key", model="gpt-5-chat-2025-01")
+        assert translator.max_text_length == 32_000
+
+        # gpt-5.1-chat-2025-01 should match gpt-5.1-chat (32K), not gpt-5.1 (100K)
+        translator2 = OpenAITranslator(api_key="test-key", model="gpt-5.1-chat-2025-01")
+        assert translator2.max_text_length == 32_000
+
+    def test_max_text_length_gpt4_legacy(self) -> None:
+        """OpenAITranslator should use correct limits for GPT-4 legacy models."""
+        OpenAITranslator = get_openai_translator()
+        # gpt-4: 8K context → 2K safe
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4")
+        assert translator.max_text_length == 2_000
+
+        # gpt-4-32k: 32K context → 8K safe
+        translator2 = OpenAITranslator(api_key="test-key", model="gpt-4-32k")
+        assert translator2.max_text_length == 8_000
+
+        # gpt-4-turbo: 128K context → 32K safe
+        translator3 = OpenAITranslator(api_key="test-key", model="gpt-4-turbo")
+        assert translator3.max_text_length == 32_000
+
+    def test_max_text_length_gpt35_turbo(self) -> None:
+        """OpenAITranslator should use correct limits for GPT-3.5 models."""
+        OpenAITranslator = get_openai_translator()
+        # gpt-3.5-turbo: 16K context → 4K safe
+        translator = OpenAITranslator(api_key="test-key", model="gpt-3.5-turbo")
+        assert translator.max_text_length == 4_000
+
+        # gpt-3.5-turbo-16k: 16K context → 4K safe
+        translator2 = OpenAITranslator(api_key="test-key", model="gpt-3.5-turbo-16k")
+        assert translator2.max_text_length == 4_000
+
+    def test_max_text_length_custom(self) -> None:
+        """OpenAITranslator should accept custom max_tokens override."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", max_tokens=4000)
+        # Custom override: 4000 tokens × 1.0 chars/token = 4000 characters
+        assert translator.max_text_length == 4000
+
+    def test_max_text_length_disabled(self) -> None:
+        """OpenAITranslator with max_tokens=0 should return None (unlimited)."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", max_tokens=0)
+        assert translator.max_text_length is None
+
+    def test_max_batch_tokens_default(self) -> None:
+        """OpenAITranslator should have max_batch_tokens based on context size."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+        # gpt-5-nano: 400K context / 2 = 200K batch tokens
+        assert translator.max_batch_tokens == 200_000
+
+    def test_max_batch_tokens_gpt4o(self) -> None:
+        """OpenAITranslator should have correct max_batch_tokens for gpt-4o."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4o")
+        # gpt-4o: 128K context / 2 = 64K batch tokens
+        assert translator.max_batch_tokens == 64_000
+
+    def test_max_batch_tokens_unknown_model(self) -> None:
+        """OpenAITranslator should have conservative max_batch_tokens for unknown models."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="unknown-model")
+        # Unknown: 32K context / 2 = 16K batch tokens
+        assert translator.max_batch_tokens == 16_000
+
+    def test_count_tokens_with_tiktoken(self) -> None:
+        """count_tokens should use tiktoken when available."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+
+        # tiktoken should be available since openai extras are installed
+        if translator._tiktoken_available:
+            # "Hello, world!" should be around 4-5 tokens
+            count = translator.count_tokens("Hello, world!")
+            assert 3 <= count <= 6  # Reasonable range for this text
+
+            # Empty string should be 0 tokens
+            assert translator.count_tokens("") == 0
+
+            # Japanese text (higher token count per char)
+            jp_count = translator.count_tokens("こんにちは")
+            assert jp_count >= 1  # At least 1 token
+
+    def test_count_tokens_fallback(self) -> None:
+        """count_tokens should fall back to character estimation."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key")
+
+        # Simulate tiktoken not available
+        original_available = translator._tiktoken_available
+        translator._tiktoken_available = False
+
+        try:
+            # Should use CHARS_PER_TOKEN (1.0) for estimation
+            count = translator.count_tokens("Hello, world!")  # 13 chars
+            assert count == 13  # 13 / 1.0 = 13
+
+            # Single character should return at least 1 (max(1, ...) safeguard)
+            assert translator.count_tokens("a") == 1
+
+            # Empty string should return 0
+            assert translator.count_tokens("") == 0
+        finally:
+            translator._tiktoken_available = original_available
 
     @pytest.mark.asyncio
     async def test_translate_empty_string(self) -> None:

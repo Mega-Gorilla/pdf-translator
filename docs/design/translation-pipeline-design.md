@@ -1028,8 +1028,8 @@ PP-DocLayoutV2 が検出するカテゴリは `RawLayoutCategory` として定�
 | raw_category | 翻訳対象 |
 |--------------|---------|
 | `text`, `vertical_text`, `abstract`, `aside_text` | ✅ Yes |
-| `paragraph_title`, `doc_title` | ✅ Yes |
-| `figure_title` | ✅ Yes |
+| `paragraph_title`, `doc_title` | ❌ No（タイトルは原文保持）|
+| `figure_title` | ❌ No（キャプションは原文保持）|
 | `footnote`, `vision_footnote` | ❌ No |
 | `inline_formula`, `display_formula`, `formula_number` | ❌ No |
 | `algorithm` | ❌ No |
@@ -1044,9 +1044,12 @@ PP-DocLayoutV2 が検出するカテゴリは `RawLayoutCategory` として定�
 ```python
 DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset({
     "text", "vertical_text", "abstract", "aside_text",
-    "paragraph_title", "doc_title", "figure_title",
 })
 ```
+
+> **NOTE**: タイトル系カテゴリ（`doc_title`, `paragraph_title`, `figure_title`）は
+> 原文のまま保持する設計に変更。翻訳が必要な場合は `PipelineConfig.translatable_categories`
+> でカスタマイズ可能。
 
 > **NOTE**: `Paragraph.is_translatable()` と `LayoutBlock.is_translatable` は
 > 同じ `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` を参照する。

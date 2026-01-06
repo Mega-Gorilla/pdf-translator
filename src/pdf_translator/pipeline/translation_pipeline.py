@@ -261,8 +261,12 @@ class TranslationPipeline:
             return []
 
         texts = [para.text for para in translatable]
-        chunks = self._chunk_texts(texts)
-        total = len(texts)
+
+        # Split texts that exceed the translator's max_text_length
+        split_texts, mapping = self._split_texts_for_api(texts)
+
+        chunks = self._chunk_texts(split_texts)
+        total = len(split_texts)
 
         # Use semaphore to limit concurrent API requests
         # Ensure at least 1 to avoid Semaphore(0) causing infinite wait
@@ -290,9 +294,12 @@ class TranslationPipeline:
 
         # Reconstruct translated_texts in original order
         results_sorted = sorted(results, key=lambda x: x[0])
-        translated_texts: list[str] = []
+        translated_split_texts: list[str] = []
         for _, chunk_translations in results_sorted:
-            translated_texts.extend(chunk_translations)
+            translated_split_texts.extend(chunk_translations)
+
+        # Rejoin split texts back to original structure
+        translated_texts = self._rejoin_translated_texts(translated_split_texts, mapping)
 
         for para, translated in zip(translatable, translated_texts):
             para.translated_text = translated
@@ -505,8 +512,190 @@ class TranslationPipeline:
         return left + right
 
     def _chunk_texts(self, texts: list[str]) -> list[list[str]]:
+        """Chunk texts for batch translation.
+
+        Uses batch_size from config, but also respects max_batch_tokens
+        if the translator provides it (e.g., OpenAI). This ensures batches
+        don't exceed the model's context window.
+
+        Args:
+            texts: List of texts to chunk.
+
+        Returns:
+            List of text chunks for batch processing.
+        """
         batch_size = max(1, int(self._config.translation_batch_size))
+
+        # Check if translator has max_batch_tokens (OpenAI-specific)
+        max_batch_tokens = getattr(self._translator, "max_batch_tokens", None)
+        count_tokens = getattr(self._translator, "count_tokens", None)
+
+        if max_batch_tokens is not None and count_tokens is not None:
+            # Token-aware chunking for OpenAI
+            return self._chunk_texts_by_tokens(texts, batch_size, max_batch_tokens, count_tokens)
+
+        # Default: simple size-based chunking
         return [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+
+    def _chunk_texts_by_tokens(
+        self,
+        texts: list[str],
+        max_batch_size: int,
+        max_batch_tokens: int,
+        count_tokens: Any,
+    ) -> list[list[str]]:
+        """Chunk texts considering both batch size and token limits.
+
+        Args:
+            texts: List of texts to chunk.
+            max_batch_size: Maximum number of texts per batch.
+            max_batch_tokens: Maximum total tokens per batch.
+            count_tokens: Function to count tokens in a text.
+
+        Returns:
+            List of text chunks.
+        """
+        chunks: list[list[str]] = []
+        current_chunk: list[str] = []
+        current_tokens = 0
+
+        for text in texts:
+            text_tokens = count_tokens(text)
+
+            # Check if adding this text would exceed limits
+            would_exceed_size = len(current_chunk) >= max_batch_size
+            would_exceed_tokens = current_tokens + text_tokens > max_batch_tokens
+
+            if current_chunk and (would_exceed_size or would_exceed_tokens):
+                # Start a new chunk
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_tokens = 0
+
+            current_chunk.append(text)
+            current_tokens += text_tokens
+
+        # Don't forget the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
+
+    def _split_long_text(self, text: str, max_length: int) -> list[str]:
+        """Split a long text into parts that fit within max_length.
+
+        Splits at sentence boundaries when possible, otherwise at word boundaries.
+        Preserves original whitespace to allow accurate reconstruction.
+
+        Args:
+            text: Text to split.
+            max_length: Maximum length for each part.
+
+        Returns:
+            List of text parts, each within max_length.
+        """
+        if len(text) <= max_length:
+            return [text]
+
+        parts: list[str] = []
+        remaining = text
+
+        # Sentence-ending patterns (including Japanese)
+        import re
+        sentence_end = re.compile(r'[.!?。！？]\s*')
+
+        while len(remaining) > max_length:
+            # Try to find a sentence boundary within the limit
+            chunk = remaining[:max_length]
+            matches = list(sentence_end.finditer(chunk))
+
+            if matches:
+                # Split at the last sentence boundary (after trailing whitespace)
+                split_pos = matches[-1].end()
+                parts.append(remaining[:split_pos])
+                remaining = remaining[split_pos:]
+            else:
+                # No sentence boundary found, try word boundary
+                last_space = chunk.rfind(' ')
+                if last_space > max_length // 2:
+                    # Include the space in the first part
+                    parts.append(remaining[:last_space + 1])
+                    remaining = remaining[last_space + 1:]
+                else:
+                    # No good split point, force split at max_length
+                    parts.append(remaining[:max_length])
+                    remaining = remaining[max_length:]
+
+        if remaining:
+            parts.append(remaining)
+
+        return parts
+
+    def _split_texts_for_api(
+        self, texts: list[str]
+    ) -> tuple[list[str], list[tuple[int, int]]]:
+        """Split texts that exceed the translator's max_text_length.
+
+        Args:
+            texts: Original texts to translate.
+
+        Returns:
+            Tuple of:
+            - List of (possibly split) texts ready for translation
+            - List of (original_index, part_count) tuples for reconstruction
+        """
+        max_length = self._translator.max_text_length
+        if max_length is None:
+            # No limit, return as-is
+            return texts, [(i, 1) for i in range(len(texts))]
+
+        split_texts: list[str] = []
+        mapping: list[tuple[int, int]] = []
+
+        for i, text in enumerate(texts):
+            parts = self._split_long_text(text, max_length)
+            split_texts.extend(parts)
+            mapping.append((i, len(parts)))
+
+        return split_texts, mapping
+
+    def _rejoin_translated_texts(
+        self,
+        translated: list[str],
+        mapping: list[tuple[int, int]],
+    ) -> list[str]:
+        """Rejoin translated text parts back to original structure.
+
+        Uses language-appropriate joining:
+        - Japanese and Chinese (ja, zh): no separator (don't use spaces between words)
+        - Other languages (including Korean): space separator
+
+        Args:
+            translated: List of translated text parts.
+            mapping: List of (original_index, part_count) from _split_texts_for_api.
+
+        Returns:
+            List of translated texts matching original structure.
+        """
+        # Determine separator based on target language
+        target_lang = self._config.target_lang.lower()
+        # Japanese and Chinese don't use spaces between words
+        # Korean uses spaces between words (unlike Japanese/Chinese)
+        separator = "" if target_lang in {"ja", "zh"} else " "
+
+        result: list[str] = []
+        offset = 0
+
+        for _, part_count in mapping:
+            if part_count == 1:
+                result.append(translated[offset])
+            else:
+                # Rejoin multiple parts with language-appropriate separator
+                parts = translated[offset : offset + part_count]
+                result.append(separator.join(parts))
+            offset += part_count
+
+        return result
 
     def _notify(self, stage: str, current: int, total: int, message: str = "") -> None:
         if self._progress_callback is None:

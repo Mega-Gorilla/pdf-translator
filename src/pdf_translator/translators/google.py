@@ -31,6 +31,14 @@ class GoogleTranslator:
         """Return backend name."""
         return "google"
 
+    @property
+    def max_text_length(self) -> int:
+        """Maximum text length for Google Translate.
+
+        Google Translate web API has a 5,000 character limit.
+        """
+        return 5000
+
     async def translate(
         self,
         text: str,

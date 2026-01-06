@@ -65,6 +65,16 @@ class DeepLTranslator:
         """Return backend name."""
         return "deepl"
 
+    @property
+    def max_text_length(self) -> int:
+        """Maximum text length for DeepL.
+
+        DeepL has a 30,000 character limit per text according to
+        official documentation. The 128KB request limit is handled
+        separately by _chunk_texts which uses UTF-8 byte length.
+        """
+        return 30000
+
     async def __aenter__(self) -> DeepLTranslator:
         """Enter async context manager."""
         self._session = self._aiohttp.ClientSession()

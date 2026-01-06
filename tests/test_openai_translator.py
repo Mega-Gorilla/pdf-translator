@@ -98,9 +98,17 @@ class TestOpenAITranslatorErrorHandling:
         self, mock_translator: OpenAITranslator
     ) -> None:
         """Should raise ArrayLengthMismatchError on length mismatch."""
-        # Create mock response with wrong number of translations
+        # Create mock response with wrong number of indexed translations
+        mock_item1 = MagicMock()
+        mock_item1.index = 0
+        mock_item1.translation = "translation1"
+
+        mock_item2 = MagicMock()
+        mock_item2.index = 1
+        mock_item2.translation = "translation2"
+
         mock_result = MagicMock()
-        mock_result.translations = ["translation1", "translation2"]  # 2 instead of 3
+        mock_result.translations = [mock_item1, mock_item2]  # 2 instead of 3
 
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -197,6 +205,153 @@ class TestOpenAITranslatorErrorHandling:
         assert "not available" in result_msg
 
 
+class TestOrderPreservation:
+    """Tests for order preservation with large batches (> 9 items).
+
+    These tests verify the fix for the string key sorting issue where
+    dictionary keys like "10" sort before "2" in lexicographic order,
+    causing translation misalignment.
+    """
+
+    @pytest.fixture
+    def mock_translator(self) -> OpenAITranslator:
+        """Create a translator with mocked OpenAI client."""
+        with patch("openai.AsyncOpenAI"):
+            translator = OpenAITranslator(api_key="test-key")
+            translator._client = AsyncMock()
+            return translator
+
+    @pytest.mark.asyncio
+    async def test_order_preserved_with_15_items(
+        self, mock_translator: OpenAITranslator
+    ) -> None:
+        """Order should be preserved for 15 items (tests index > 9)."""
+        # Create 15 indexed translation items in shuffled order
+        # This simulates the model returning items out of order
+        indices = list(range(15))
+        import random
+
+        random.seed(42)  # Reproducible shuffle
+        shuffled = indices.copy()
+        random.shuffle(shuffled)
+
+        mock_items = []
+        for idx in shuffled:
+            item = MagicMock()
+            item.index = idx
+            item.translation = f"翻訳テキスト{idx}"
+            mock_items.append(item)
+
+        mock_result = MagicMock()
+        mock_result.translations = mock_items
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.parsed = mock_result
+
+        mock_translator._client.beta.chat.completions.parse = AsyncMock(
+            return_value=mock_response
+        )
+
+        texts = [f"text{i}" for i in range(15)]
+        result = await mock_translator.translate_batch(texts, "en", "ja")
+
+        # Verify order is preserved (sorted by index, not insertion order)
+        assert len(result) == 15
+        for i, translation in enumerate(result):
+            assert translation == f"翻訳テキスト{i}", f"Index {i} mismatch"
+
+    @pytest.mark.asyncio
+    async def test_order_preserved_with_25_items(
+        self, mock_translator: OpenAITranslator
+    ) -> None:
+        """Order should be preserved for 25 items (tests indices 10-24)."""
+        # Create 25 indexed translation items in reverse order
+        mock_items = []
+        for idx in reversed(range(25)):
+            item = MagicMock()
+            item.index = idx
+            item.translation = f"翻訳{idx}"
+            mock_items.append(item)
+
+        mock_result = MagicMock()
+        mock_result.translations = mock_items
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.parsed = mock_result
+
+        mock_translator._client.beta.chat.completions.parse = AsyncMock(
+            return_value=mock_response
+        )
+
+        texts = [f"text{i}" for i in range(25)]
+        result = await mock_translator.translate_batch(texts, "en", "ja")
+
+        # Verify order is preserved
+        assert len(result) == 25
+        for i, translation in enumerate(result):
+            assert translation == f"翻訳{i}", f"Index {i} mismatch"
+
+    @pytest.mark.asyncio
+    async def test_missing_index_raises_error(
+        self, mock_translator: OpenAITranslator
+    ) -> None:
+        """Missing index should raise ArrayLengthMismatchError."""
+        # Create items with a gap (missing index 1)
+        mock_items = []
+        for idx in [0, 2]:  # Skip index 1
+            item = MagicMock()
+            item.index = idx
+            item.translation = f"翻訳{idx}"
+            mock_items.append(item)
+
+        mock_result = MagicMock()
+        mock_result.translations = mock_items
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.parsed = mock_result
+
+        mock_translator._client.beta.chat.completions.parse = AsyncMock(
+            return_value=mock_response
+        )
+
+        with pytest.raises(ArrayLengthMismatchError):
+            await mock_translator.translate_batch(
+                ["text0", "text1", "text2"], "en", "ja"
+            )
+
+    @pytest.mark.asyncio
+    async def test_duplicate_index_raises_error(
+        self, mock_translator: OpenAITranslator
+    ) -> None:
+        """Duplicate index should raise ArrayLengthMismatchError."""
+        # Create items with duplicate index 0
+        mock_items = []
+        for idx in [0, 0, 2]:  # Duplicate index 0
+            item = MagicMock()
+            item.index = idx
+            item.translation = f"翻訳{idx}"
+            mock_items.append(item)
+
+        mock_result = MagicMock()
+        mock_result.translations = mock_items
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.parsed = mock_result
+
+        mock_translator._client.beta.chat.completions.parse = AsyncMock(
+            return_value=mock_response
+        )
+
+        with pytest.raises(ArrayLengthMismatchError):
+            await mock_translator.translate_batch(
+                ["text0", "text1", "text2"], "en", "ja"
+            )
+
+
 class TestBatchSplittingFallback:
     """Tests for batch splitting fallback in translation pipeline."""
 
@@ -205,6 +360,7 @@ class TestBatchSplittingFallback:
         """Create a mock translator."""
         translator = MagicMock()
         translator.name = "openai"
+        translator.max_text_length = 100000  # Default max text length for tests
         return translator
 
     @pytest.mark.asyncio
@@ -369,6 +525,10 @@ class TestParallelTranslation:
         """Create a mock translator."""
         translator = MagicMock()
         translator.name = "openai"
+        translator.max_text_length = 100000  # Default max text length for tests
+        # Disable token-aware chunking for these tests
+        translator.max_batch_tokens = None
+        translator.count_tokens = None
         return translator
 
     @pytest.mark.asyncio

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pdf_translator.translators.base import (
@@ -15,6 +16,9 @@ from pdf_translator.translators.base import (
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
     from pydantic import BaseModel
+    from tiktoken import Encoding
+
+logger = logging.getLogger(__name__)
 
 
 # Language code to full name mapping for prompts
@@ -33,6 +37,115 @@ DEFAULT_SYSTEM_PROMPT = (
     "Do not merge, split, or skip any texts."
 )
 
+# Model context sizes for calculating token limits
+#
+# Sources:
+# - OpenAI API documentation: https://platform.openai.com/docs/models
+# - Price comparison: https://pricepertoken.com (aggregated model data)
+#
+# These values may change as OpenAI updates their models.
+# Users can override limits using the `max_tokens` parameter.
+#
+# Last verified: 2026-01-06
+MODEL_CONTEXT_SIZES: dict[str, int] = {
+    # GPT-5 series (400K context)
+    "gpt-5": 400_000,
+    "gpt-5-nano": 400_000,
+    "gpt-5-mini": 400_000,
+    "gpt-5-codex": 400_000,
+    "gpt-5-image": 400_000,
+    "gpt-5-pro": 400_000,
+    # GPT-5 chat variants (128K context)
+    "gpt-5-chat": 128_000,
+    # GPT-5.1 series (400K context)
+    "gpt-5.1": 400_000,
+    "gpt-5.1-codex": 400_000,
+    "gpt-5.1-codex-mini": 400_000,
+    "gpt-5.1-codex-max": 400_000,
+    "gpt-5.1-chat": 128_000,
+    # GPT-5.2 series (400K context)
+    "gpt-5.2": 400_000,
+    "gpt-5.2-pro": 400_000,
+    "gpt-5.2-chat": 128_000,
+    # GPT-4.1 series (1M context)
+    "gpt-4.1": 1_000_000,
+    "gpt-4.1-mini": 1_000_000,
+    "gpt-4.1-nano": 1_000_000,
+    # GPT-4o series (128K context)
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    # o3 series (200K context)
+    "o3": 200_000,
+    "o3-mini": 200_000,
+    "o3-pro": 200_000,
+    # o1 series (200K context)
+    "o1": 200_000,
+    "o1-mini": 200_000,
+    "o1-pro": 200_000,
+    # GPT-4 legacy series
+    "gpt-4": 8_000,
+    "gpt-4-32k": 32_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4-turbo-preview": 128_000,
+    "gpt-4-1106-preview": 128_000,  # Nov 2023 preview (128K context)
+    "gpt-4-0125-preview": 128_000,  # Jan 2024 preview (128K context)
+    "gpt-4-vision-preview": 128_000,
+    # GPT-3.5 series
+    "gpt-3.5-turbo": 16_000,
+    "gpt-3.5-turbo-16k": 16_000,
+}
+
+# Model-specific token limits for text splitting (per single text)
+# Uses context_size / 4 as safe buffer for translation (input + output + overhead)
+# Unknown models fall back to DEFAULT_MAX_TOKENS (conservative)
+MODEL_TOKEN_LIMITS: dict[str, int] = {
+    # GPT-5 series (400K context → 100K safe for translation)
+    "gpt-5": 100_000,
+    "gpt-5-nano": 100_000,
+    "gpt-5-mini": 100_000,
+    "gpt-5-codex": 100_000,
+    "gpt-5-image": 100_000,
+    "gpt-5-pro": 100_000,
+    # GPT-5 chat variants (128K context → 32K safe)
+    "gpt-5-chat": 32_000,
+    # GPT-5.1 series (400K context → 100K safe)
+    "gpt-5.1": 100_000,
+    "gpt-5.1-codex": 100_000,
+    "gpt-5.1-codex-mini": 100_000,
+    "gpt-5.1-codex-max": 100_000,
+    "gpt-5.1-chat": 32_000,
+    # GPT-5.2 series (400K context → 100K safe)
+    "gpt-5.2": 100_000,
+    "gpt-5.2-pro": 100_000,
+    "gpt-5.2-chat": 32_000,
+    # GPT-4.1 series (1M context → 250K safe)
+    "gpt-4.1": 250_000,
+    "gpt-4.1-mini": 250_000,
+    "gpt-4.1-nano": 250_000,
+    # GPT-4o series (128K context → 32K safe)
+    "gpt-4o": 32_000,
+    "gpt-4o-mini": 32_000,
+    # o3 series (200K context → 50K safe)
+    "o3": 50_000,
+    "o3-mini": 50_000,
+    "o3-pro": 50_000,
+    # o1 series (200K context → 50K safe)
+    "o1": 50_000,
+    "o1-mini": 50_000,
+    "o1-pro": 50_000,
+    # GPT-4 legacy series
+    "gpt-4": 2_000,  # 8K context → 2K safe
+    "gpt-4-32k": 8_000,  # 32K context → 8K safe
+    "gpt-4-turbo": 32_000,  # 128K context → 32K safe
+    "gpt-4-turbo-preview": 32_000,
+    "gpt-4-1106-preview": 32_000,  # 128K context → 32K safe
+    "gpt-4-0125-preview": 32_000,  # 128K context → 32K safe
+    "gpt-4-vision-preview": 32_000,
+    # GPT-3.5 series
+    "gpt-3.5-turbo": 4_000,  # 16K context → 4K safe
+    "gpt-3.5-turbo-16k": 4_000,
+}
+
 
 class OpenAITranslator:
     """OpenAI GPT translation backend.
@@ -48,11 +161,21 @@ class OpenAITranslator:
 
     DEFAULT_MODEL = "gpt-5-nano"
 
+    # Fallback token limit for unknown models (conservative)
+    # Known models use MODEL_TOKEN_LIMITS for optimal settings
+    DEFAULT_MAX_TOKENS = 8_000
+
+    # Conservative character-to-token ratio for estimation
+    # CJK: ~1-2 chars/token, English: ~4 chars/token
+    # Use 1.0 for worst-case CJK handling (1 char = 1 token)
+    CHARS_PER_TOKEN = 1.0
+
     def __init__(
         self,
         api_key: str,
         model: str | None = None,
         system_prompt: str | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         """Initialize OpenAITranslator.
 
@@ -60,6 +183,9 @@ class OpenAITranslator:
             api_key: OpenAI API key.
             model: Model to use. Priority: argument > OPENAI_MODEL env > default.
             system_prompt: Custom system prompt for translation.
+            max_tokens: Maximum tokens for input texts (for splitting).
+                If None, auto-detected from MODEL_TOKEN_LIMITS based on model.
+                Set to 0 to disable splitting.
 
         Raises:
             ConfigurationError: If API key is not provided.
@@ -93,16 +219,132 @@ class OpenAITranslator:
                 "Install with: pip install pdf-translator[openai]"
             ) from None
 
+        # Lazy import tiktoken (optional)
+        self._tiktoken_available = False
+        self._encoding: Encoding | None = None
+        self._tiktoken: Any = None  # Module or None
+        try:
+            import tiktoken
+
+            self._tiktoken = tiktoken
+            self._tiktoken_available = True
+        except ImportError:
+            logger.debug(
+                "tiktoken not installed, using character-based estimation. "
+                "Install with: pip install pdf-translator[openai]"
+            )
+
         self._api_key = api_key
         env_model = os.environ.get("OPENAI_MODEL")
         self._model = model or env_model or self.DEFAULT_MODEL
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._max_tokens = (
+            max_tokens if max_tokens is not None else self._get_model_max_tokens()
+        )
         self._client: AsyncOpenAI | None = None
 
     @property
     def name(self) -> str:
         """Return backend name."""
         return "openai"
+
+    def _get_model_max_tokens(self) -> int:
+        """Get max tokens limit for the current model.
+
+        Looks up MODEL_TOKEN_LIMITS for known models, falls back to
+        DEFAULT_MAX_TOKENS for unknown models.
+
+        Returns:
+            Token limit for text splitting.
+        """
+        # Direct lookup
+        if self._model in MODEL_TOKEN_LIMITS:
+            return MODEL_TOKEN_LIMITS[self._model]
+
+        # Try base model name (e.g., "gpt-5-nano-2025-01" → "gpt-5-nano")
+        # This handles dated model versions
+        # Sort by key length descending to match longer (more specific) keys first
+        # e.g., "gpt-5-chat" should match before "gpt-5"
+        for known_model in sorted(MODEL_TOKEN_LIMITS.keys(), key=len, reverse=True):
+            if self._model.startswith(known_model):
+                logger.debug(
+                    "Using token limit for base model '%s' (matched from '%s')",
+                    known_model,
+                    self._model,
+                )
+                return MODEL_TOKEN_LIMITS[known_model]
+
+        # Fallback to conservative default
+        logger.debug(
+            "Unknown model '%s', using conservative default %d tokens",
+            self._model,
+            self.DEFAULT_MAX_TOKENS,
+        )
+        return self.DEFAULT_MAX_TOKENS
+
+    @property
+    def max_text_length(self) -> int | None:
+        """Maximum text length for OpenAI (character-based approximation).
+
+        OpenAI uses token-based limits, not character limits. This property
+        returns a character-based approximation for pipeline text splitting.
+
+        Important: The pipeline splits texts based on this character limit,
+        NOT actual token counts. The count_tokens() method provides accurate
+        token counting via tiktoken, but is not used for split decisions.
+
+        The approximation uses CHARS_PER_TOKEN (1.0) which is intentionally
+        conservative to handle worst-case CJK scenarios where 1 char ≈ 1 token.
+        For English (~4 chars/token), this results in more splits than
+        strictly necessary, but ensures we never exceed token limits.
+
+        Returns:
+            Approximate character limit based on max_tokens setting.
+            Returns None if max_tokens is 0 (splitting disabled).
+        """
+        if self._max_tokens == 0:
+            return None
+        return int(self._max_tokens * self.CHARS_PER_TOKEN)
+
+    @property
+    def max_batch_tokens(self) -> int:
+        """Maximum total tokens for a single batch request.
+
+        This limit applies to the sum of all input texts in a batch,
+        ensuring the total request doesn't exceed the model's context window.
+
+        Uses context_size / 2 as the limit, reserving half for:
+        - Output translations (similar length to input)
+        - System prompt overhead
+        - Safety margin
+
+        The pipeline should use this to chunk texts by total tokens,
+        not just by count.
+
+        Returns:
+            Maximum tokens for a batch request.
+        """
+        context_size = self._get_model_context_size()
+        # Use half the context for input (other half for output + overhead)
+        return context_size // 2
+
+    def _get_model_context_size(self) -> int:
+        """Get context window size for the current model.
+
+        Returns:
+            Context size in tokens. Falls back to conservative 32K for unknown models.
+        """
+        # Direct lookup
+        if self._model in MODEL_CONTEXT_SIZES:
+            return MODEL_CONTEXT_SIZES[self._model]
+
+        # Try prefix matching (longer keys first)
+        for known_model in sorted(MODEL_CONTEXT_SIZES.keys(), key=len, reverse=True):
+            if self._model.startswith(known_model):
+                return MODEL_CONTEXT_SIZES[known_model]
+
+        # Conservative fallback (smallest common context size)
+        return 32_000
 
     def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client exists.
@@ -125,21 +367,84 @@ class OpenAITranslator:
         """
         return LANGUAGE_NAMES.get(lang_code.lower(), lang_code)
 
-    def _create_response_model(self, n: int) -> type["BaseModel"]:
-        """Create a Pydantic model with fixed-length translations array.
+    def _get_encoding(self) -> "Encoding | None":
+        """Get tiktoken encoding for the current model.
 
-        This ensures OpenAI Structured Outputs enforces the exact array length,
-        preventing ArrayLengthMismatchError.
+        Returns:
+            tiktoken Encoding object, or None if tiktoken is not available.
+        """
+        if not self._tiktoken_available or self._tiktoken is None:
+            return None
+
+        if self._encoding is not None:
+            return self._encoding
+
+        try:
+            # Try to get encoding for the specific model
+            self._encoding = self._tiktoken.encoding_for_model(self._model)
+        except KeyError:
+            # Fall back to cl100k_base (used by GPT-4, GPT-3.5-turbo, etc.)
+            logger.debug(
+                "No specific encoding for model '%s', using cl100k_base",
+                self._model,
+            )
+            self._encoding = self._tiktoken.get_encoding("cl100k_base")
+
+        return self._encoding
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in a text using tiktoken.
+
+        Args:
+            text: Text to count tokens for.
+
+        Returns:
+            Number of tokens. If tiktoken is not available, returns an
+            estimate based on character count and CHARS_PER_TOKEN ratio.
+            Returns 0 for empty text, otherwise at least 1.
+        """
+        if not text:
+            return 0
+
+        encoding = self._get_encoding()
+        if encoding is not None:
+            return len(encoding.encode(text))
+
+        # Fallback to character-based estimation
+        # Use max(1, ...) to avoid underestimation for short texts
+        return max(1, int(len(text) / self.CHARS_PER_TOKEN))
+
+    def _create_response_model(self, n: int) -> type["BaseModel"]:
+        """Create a Pydantic model with indexed translations array.
+
+        Uses index-based format to ensure order preservation, avoiding issues
+        with LLMs misinterpreting dictionary key order (e.g., "10" < "2" in
+        string sort order causes misalignment for batches > 9 items).
+
+        The response format is:
+        {
+            "translations": [
+                {"index": 0, "translation": "..."},
+                {"index": 1, "translation": "..."},
+                ...
+            ]
+        }
 
         Args:
             n: Expected number of translations.
 
         Returns:
-            Pydantic model class with length-constrained translations field.
+            Pydantic model class with indexed translation items.
         """
 
+        class IndexedTranslation(self._BaseModel):  # type: ignore[misc, name-defined]
+            index: int = self._Field(ge=0, lt=n, description="Index of the original text")
+            translation: str = self._Field(description="Translated text")
+
         class TranslationResult(self._BaseModel):  # type: ignore[misc, name-defined]
-            translations: Annotated[list[str], self._Field(min_length=n, max_length=n)]
+            translations: Annotated[
+                list[IndexedTranslation], self._Field(min_length=n, max_length=n)
+            ]
 
         return TranslationResult
 
@@ -225,10 +530,14 @@ class OpenAITranslator:
         source_lang: str,
         target_lang: str,
     ) -> list[str]:
-        """Translate texts using Structured Outputs with fixed-length schema.
+        """Translate texts using Structured Outputs with indexed format.
 
-        Uses dynamic Pydantic schema with min_length/max_length constraints
-        and JSON-formatted input to ensure reliable array-length matching.
+        Uses indexed array format for both input and output to ensure order
+        preservation, avoiding issues with LLMs misinterpreting dictionary
+        key order (e.g., "10" < "2" causes misalignment for batches > 9).
+
+        Input format: [{"index": 0, "text": "..."}, ...]
+        Output format: [{"index": 0, "translation": "..."}, ...]
 
         Args:
             texts: List of non-empty texts to translate.
@@ -236,11 +545,12 @@ class OpenAITranslator:
             target_lang: Target language code.
 
         Returns:
-            List of translated texts.
+            List of translated texts in original order.
 
         Raises:
             TranslationError: On translation failure.
             ConfigurationError: On authentication failure.
+            ArrayLengthMismatchError: On missing/duplicate indices.
         """
         client = self._ensure_client()
         n = len(texts)
@@ -248,18 +558,20 @@ class OpenAITranslator:
         source_name = self._get_language_name(source_lang)
         target_name = self._get_language_name(target_lang)
 
-        # Create dynamic response model with fixed array length
+        # Create dynamic response model with indexed format
         response_model = self._create_response_model(n)
 
-        # Use indexed JSON format for clear text boundaries (compact for token efficiency)
-        indexed_texts = {str(i): text for i, text in enumerate(texts)}
+        # Use indexed array format for unambiguous order preservation
+        # Array format avoids string key sorting issues (e.g., "10" < "2")
+        indexed_texts = [{"index": i, "text": text} for i, text in enumerate(texts)]
         texts_json = json.dumps(indexed_texts, ensure_ascii=False)
 
         user_content = (
             f"Translate {n} texts from {source_name} to {target_name}.\n"
-            f"CRITICAL: Return exactly {n} translations, one for each indexed input.\n\n"
-            f"Input texts (indexed JSON):\n{texts_json}\n\n"
-            f"Return translations array with {n} elements in index order (0 to {n - 1})."
+            f"CRITICAL: Return exactly {n} translations with matching indices.\n\n"
+            f"Input texts:\n{texts_json}\n\n"
+            f"Return translations array with {n} objects, "
+            f"each containing 'index' and 'translation' fields."
         )
 
         try:
@@ -276,13 +588,24 @@ class OpenAITranslator:
             if result is None:
                 raise TranslationError("OpenAI returned empty response")
 
-            # Validate response length (should be guaranteed by schema, but verify)
-            translations: list[str] = result.translations  # type: ignore[attr-defined]
-            if len(translations) != n:
+            # Extract and validate indexed translations
+            indexed_translations = result.translations  # type: ignore[attr-defined]
+            if len(indexed_translations) != n:
                 raise ArrayLengthMismatchError(
                     expected=n,
-                    actual=len(translations),
+                    actual=len(indexed_translations),
                 )
+
+            # Sort by index and validate all indices are present (0 to n-1)
+            sorted_translations = sorted(indexed_translations, key=lambda x: x.index)
+            translations: list[str] = []
+            for expected_idx, item in enumerate(sorted_translations):
+                if item.index != expected_idx:
+                    raise ArrayLengthMismatchError(
+                        expected=n,
+                        actual=len(indexed_translations),
+                    )
+                translations.append(item.translation)
 
             return translations
 

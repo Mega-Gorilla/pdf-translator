@@ -390,8 +390,8 @@ class LayoutBlock:
 | raw_category | 翻訳対象 |
 |--------------|:--------:|
 | `text`, `vertical_text`, `abstract`, `aside_text` | ✅ ON |
-| `paragraph_title`, `doc_title` | ✅ ON |
-| `figure_title` | ✅ ON |
+| `paragraph_title`, `doc_title` | ❌ OFF（タイトルは原文保持）|
+| `figure_title` | ❌ OFF（キャプションは原文保持）|
 | `footnote`, `vision_footnote` | ❌ OFF |
 | `inline_formula`, `display_formula`, `formula_number` | ❌ OFF |
 | `algorithm` | ❌ OFF |
@@ -401,6 +401,11 @@ class LayoutBlock:
 | `header`, `header_image`, `footer`, `footer_image`, `number` | ❌ OFF |
 | `reference`, `reference_content` | ❌ OFF |
 | `seal`, `content`, `unknown` | ❌ OFF |
+
+> **注意**: `category=None`（レイアウト解析でマッチしなかったテキスト）は
+> デフォルトで翻訳対象として扱われます。これは意図的な設計で、レイアウト解析が
+> 検出できなかった本文テキストが翻訳されないことを防ぎます。
+> 詳細は `Paragraph.is_translatable()` を参照。
 
 ---
 

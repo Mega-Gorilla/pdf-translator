@@ -56,6 +56,24 @@ TRANSLATOR = "openai"
 export OPENAI_MODEL='gpt-4o'
 ```
 
+##### サポートされているモデルとトークン制限
+
+各モデルに最適化されたトークン制限が自動設定されます：
+
+| モデル | コンテキスト | テキスト制限 | バッチ制限 |
+|--------|-------------|-------------|-----------|
+| gpt-5-nano (デフォルト) | 400K | 100K tokens | 200K tokens |
+| gpt-5 / gpt-5-mini | 400K | 100K tokens | 200K tokens |
+| gpt-5-chat | 128K | 32K tokens | 64K tokens |
+| gpt-4.1 / gpt-4.1-mini | 1M | 250K tokens | 500K tokens |
+| gpt-4o / gpt-4o-mini | 128K | 32K tokens | 64K tokens |
+| gpt-4-turbo / gpt-4-*-preview | 128K | 32K tokens | 64K tokens |
+| gpt-4 | 8K | 2K tokens | 4K tokens |
+| gpt-4-32k | 32K | 8K tokens | 16K tokens |
+| gpt-3.5-turbo | 16K | 4K tokens | 8K tokens |
+
+未知のモデルは保守的なデフォルト（8K tokens）が適用されます。
+
 #### DeepL
 
 環境変数 `DEEPL_API_KEY` が必要です。
