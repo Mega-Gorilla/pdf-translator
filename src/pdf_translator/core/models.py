@@ -69,6 +69,7 @@ class RawLayoutCategory(str, Enum):
 # Note: category=None の場合も翻訳対象として扱う (Paragraph.is_translatable() 参照)
 #
 # 翻訳対象外:
+#   - doc_title, paragraph_title, figure_title: タイトルは原文のまま保持
 #   - inline_formula, display_formula, algorithm: 数式は翻訳しない
 #   - chart: グラフ内テキストは翻訳しない
 #   - reference, reference_content: 参考文献は翻訳しない
@@ -77,16 +78,11 @@ class RawLayoutCategory(str, Enum):
 #   - table, image: 図表は翻訳しない
 DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset(
     {
-        # テキスト系
+        # テキスト系（本文）
         "text",
         "vertical_text",
         "abstract",
         "aside_text",
-        # タイトル系
-        "doc_title",
-        "paragraph_title",
-        # 図表キャプション
-        "figure_title",
     }
 )
 
