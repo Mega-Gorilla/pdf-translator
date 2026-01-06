@@ -67,8 +67,8 @@ class TranslatorBackend(Protocol):
         Note:
             - Google Translate: 5,000 characters
             - DeepL: 30,000 characters (plus 128KB total request limit)
-            - OpenAI: 8,000 characters (8,000 tokens × 1 char/token conservative)
-              Uses worst-case CJK ratio to avoid token limit errors.
+            - OpenAI: Model-dependent (auto-detected from MODEL_TOKEN_LIMITS)
+              e.g., gpt-5-nano: 100K tokens → 100K chars (1:1 CJK ratio)
         """
         ...
 

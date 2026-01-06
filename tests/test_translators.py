@@ -341,18 +341,46 @@ class TestOpenAITranslatorUnit:
         )
         assert translator._system_prompt == custom_prompt
 
-    def test_max_text_length_default(self) -> None:
-        """OpenAITranslator should have max_text_length based on default token limit."""
+    def test_max_text_length_default_model(self) -> None:
+        """OpenAITranslator should auto-detect max_tokens from MODEL_TOKEN_LIMITS."""
         OpenAITranslator = get_openai_translator()
         translator = OpenAITranslator(api_key="test-key")
-        # Default: 8000 tokens × 1.0 chars/token = 8000 characters (conservative for CJK)
-        assert translator.max_text_length == 8000
+        # Default model is gpt-5-nano: 100K tokens × 1.0 chars/token = 100K characters
+        assert translator.max_text_length == 100_000
+
+    def test_max_text_length_gpt4o(self) -> None:
+        """OpenAITranslator should use correct limit for gpt-4o."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4o")
+        # gpt-4o: 32K tokens × 1.0 chars/token = 32K characters
+        assert translator.max_text_length == 32_000
+
+    def test_max_text_length_gpt41(self) -> None:
+        """OpenAITranslator should use correct limit for gpt-4.1."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-4.1")
+        # gpt-4.1: 250K tokens × 1.0 chars/token = 250K characters
+        assert translator.max_text_length == 250_000
+
+    def test_max_text_length_unknown_model(self) -> None:
+        """OpenAITranslator should use conservative default for unknown models."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="unknown-model")
+        # Unknown model: DEFAULT_MAX_TOKENS (8K) × 1.0 = 8K characters
+        assert translator.max_text_length == 8_000
+
+    def test_max_text_length_dated_model(self) -> None:
+        """OpenAITranslator should match base model for dated versions."""
+        OpenAITranslator = get_openai_translator()
+        translator = OpenAITranslator(api_key="test-key", model="gpt-5-nano-2025-01-15")
+        # Should match gpt-5-nano: 100K tokens
+        assert translator.max_text_length == 100_000
 
     def test_max_text_length_custom(self) -> None:
-        """OpenAITranslator should accept custom max_tokens."""
+        """OpenAITranslator should accept custom max_tokens override."""
         OpenAITranslator = get_openai_translator()
         translator = OpenAITranslator(api_key="test-key", max_tokens=4000)
-        # 4000 tokens × 1.0 chars/token = 4000 characters
+        # Custom override: 4000 tokens × 1.0 chars/token = 4000 characters
         assert translator.max_text_length == 4000
 
     def test_max_text_length_disabled(self) -> None:

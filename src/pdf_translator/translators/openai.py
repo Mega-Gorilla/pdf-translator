@@ -37,6 +37,46 @@ DEFAULT_SYSTEM_PROMPT = (
     "Do not merge, split, or skip any texts."
 )
 
+# Model-specific token limits for text splitting
+# Uses context_size / 4 as safe buffer for translation (input + output + overhead)
+# Unknown models fall back to DEFAULT_MAX_TOKENS (conservative)
+MODEL_TOKEN_LIMITS: dict[str, int] = {
+    # GPT-5 series (400K context → 100K safe for translation)
+    "gpt-5": 100_000,
+    "gpt-5-nano": 100_000,
+    "gpt-5-mini": 100_000,
+    "gpt-5-codex": 100_000,
+    "gpt-5-image": 100_000,
+    "gpt-5-pro": 100_000,
+    # GPT-5 chat variants (128K context → 32K safe)
+    "gpt-5-chat": 32_000,
+    # GPT-5.1 series (400K context → 100K safe)
+    "gpt-5.1": 100_000,
+    "gpt-5.1-codex": 100_000,
+    "gpt-5.1-codex-mini": 100_000,
+    "gpt-5.1-codex-max": 100_000,
+    "gpt-5.1-chat": 32_000,
+    # GPT-5.2 series (400K context → 100K safe)
+    "gpt-5.2": 100_000,
+    "gpt-5.2-pro": 100_000,
+    "gpt-5.2-chat": 32_000,
+    # GPT-4.1 series (1M context → 250K safe)
+    "gpt-4.1": 250_000,
+    "gpt-4.1-mini": 250_000,
+    "gpt-4.1-nano": 250_000,
+    # GPT-4o series (128K context → 32K safe)
+    "gpt-4o": 32_000,
+    "gpt-4o-mini": 32_000,
+    # o3 series (200K context → 50K safe)
+    "o3": 50_000,
+    "o3-mini": 50_000,
+    "o3-pro": 50_000,
+    # o1 series (200K context → 50K safe)
+    "o1": 50_000,
+    "o1-mini": 50_000,
+    "o1-pro": 50_000,
+}
+
 
 class OpenAITranslator:
     """OpenAI GPT translation backend.
@@ -52,14 +92,13 @@ class OpenAITranslator:
 
     DEFAULT_MODEL = "gpt-5-nano"
 
-    # Default token limit for text splitting (conservative for most models)
-    # This is for input texts only, not including system prompt overhead
-    DEFAULT_MAX_TOKENS = 8000
+    # Fallback token limit for unknown models (conservative)
+    # Known models use MODEL_TOKEN_LIMITS for optimal settings
+    DEFAULT_MAX_TOKENS = 8_000
 
     # Conservative character-to-token ratio for estimation
     # CJK: ~1-2 chars/token, English: ~4 chars/token
     # Use 1.0 for worst-case CJK handling (1 char = 1 token)
-    # This is intentionally conservative to avoid token limit errors
     CHARS_PER_TOKEN = 1.0
 
     def __init__(
@@ -76,7 +115,8 @@ class OpenAITranslator:
             model: Model to use. Priority: argument > OPENAI_MODEL env > default.
             system_prompt: Custom system prompt for translation.
             max_tokens: Maximum tokens for input texts (for splitting).
-                Defaults to 8000 tokens. Set to 0 to disable splitting.
+                If None, auto-detected from MODEL_TOKEN_LIMITS based on model.
+                Set to 0 to disable splitting.
 
         Raises:
             ConfigurationError: If API key is not provided.
@@ -129,13 +169,47 @@ class OpenAITranslator:
         env_model = os.environ.get("OPENAI_MODEL")
         self._model = model or env_model or self.DEFAULT_MODEL
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
-        self._max_tokens = max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS
+        self._max_tokens = (
+            max_tokens if max_tokens is not None else self._get_model_max_tokens()
+        )
         self._client: AsyncOpenAI | None = None
 
     @property
     def name(self) -> str:
         """Return backend name."""
         return "openai"
+
+    def _get_model_max_tokens(self) -> int:
+        """Get max tokens limit for the current model.
+
+        Looks up MODEL_TOKEN_LIMITS for known models, falls back to
+        DEFAULT_MAX_TOKENS for unknown models.
+
+        Returns:
+            Token limit for text splitting.
+        """
+        # Direct lookup
+        if self._model in MODEL_TOKEN_LIMITS:
+            return MODEL_TOKEN_LIMITS[self._model]
+
+        # Try base model name (e.g., "gpt-5-nano-2025-01" → "gpt-5-nano")
+        # This handles dated model versions
+        for known_model in MODEL_TOKEN_LIMITS:
+            if self._model.startswith(known_model):
+                logger.debug(
+                    "Using token limit for base model '%s' (matched from '%s')",
+                    known_model,
+                    self._model,
+                )
+                return MODEL_TOKEN_LIMITS[known_model]
+
+        # Fallback to conservative default
+        logger.debug(
+            "Unknown model '%s', using conservative default %d tokens",
+            self._model,
+            self.DEFAULT_MAX_TOKENS,
+        )
+        return self.DEFAULT_MAX_TOKENS
 
     @property
     def max_text_length(self) -> int | None:

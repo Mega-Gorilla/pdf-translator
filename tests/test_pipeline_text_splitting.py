@@ -37,7 +37,12 @@ class MockTranslator:
 class MockOpenAITranslator:
     """Mock OpenAI translator with token-based limits for testing."""
 
-    def __init__(self, max_tokens: int = 8000) -> None:
+    def __init__(self, max_tokens: int = 100_000) -> None:
+        """Initialize mock translator.
+
+        Args:
+            max_tokens: Token limit. Default 100K matches gpt-5-nano.
+        """
         self._max_tokens = max_tokens
         self.name = "openai"
         # Same ratio as real OpenAITranslator (conservative for CJK)
@@ -295,15 +300,16 @@ class TestOpenAITokenBasedSplitting:
     """Test OpenAI translator with token-based limits."""
 
     def test_openai_max_text_length_default(self) -> None:
-        """OpenAI mock should have default max_text_length based on tokens."""
+        """OpenAI mock should have default max_text_length matching gpt-5-nano."""
         translator = MockOpenAITranslator()
-        # Default: 8000 tokens × 1.0 chars/token = 8000 characters (conservative for CJK)
-        assert translator.max_text_length == 8000
+        # Default: 100K tokens × 1.0 chars/token = 100K characters (gpt-5-nano)
+        assert translator.max_text_length == 100_000
 
     def test_openai_max_text_length_custom(self) -> None:
         """OpenAI mock should accept custom max_tokens."""
-        translator = MockOpenAITranslator(max_tokens=4000)
-        assert translator.max_text_length == 4000
+        translator = MockOpenAITranslator(max_tokens=32_000)
+        # gpt-4o equivalent: 32K tokens
+        assert translator.max_text_length == 32_000
 
     def test_openai_max_text_length_disabled(self) -> None:
         """OpenAI mock with max_tokens=0 should return None."""
