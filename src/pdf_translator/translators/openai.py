@@ -415,20 +415,36 @@ class OpenAITranslator:
         return max(1, int(len(text) / self.CHARS_PER_TOKEN))
 
     def _create_response_model(self, n: int) -> type["BaseModel"]:
-        """Create a Pydantic model with fixed-length translations array.
+        """Create a Pydantic model with indexed translations array.
 
-        This ensures OpenAI Structured Outputs enforces the exact array length,
-        preventing ArrayLengthMismatchError.
+        Uses index-based format to ensure order preservation, avoiding issues
+        with LLMs misinterpreting dictionary key order (e.g., "10" < "2" in
+        string sort order causes misalignment for batches > 9 items).
+
+        The response format is:
+        {
+            "translations": [
+                {"index": 0, "translation": "..."},
+                {"index": 1, "translation": "..."},
+                ...
+            ]
+        }
 
         Args:
             n: Expected number of translations.
 
         Returns:
-            Pydantic model class with length-constrained translations field.
+            Pydantic model class with indexed translation items.
         """
 
+        class IndexedTranslation(self._BaseModel):  # type: ignore[misc, name-defined]
+            index: int = self._Field(ge=0, lt=n, description="Index of the original text")
+            translation: str = self._Field(description="Translated text")
+
         class TranslationResult(self._BaseModel):  # type: ignore[misc, name-defined]
-            translations: Annotated[list[str], self._Field(min_length=n, max_length=n)]
+            translations: Annotated[
+                list[IndexedTranslation], self._Field(min_length=n, max_length=n)
+            ]
 
         return TranslationResult
 
@@ -514,10 +530,14 @@ class OpenAITranslator:
         source_lang: str,
         target_lang: str,
     ) -> list[str]:
-        """Translate texts using Structured Outputs with fixed-length schema.
+        """Translate texts using Structured Outputs with indexed format.
 
-        Uses dynamic Pydantic schema with min_length/max_length constraints
-        and JSON-formatted input to ensure reliable array-length matching.
+        Uses indexed array format for both input and output to ensure order
+        preservation, avoiding issues with LLMs misinterpreting dictionary
+        key order (e.g., "10" < "2" causes misalignment for batches > 9).
+
+        Input format: [{"index": 0, "text": "..."}, ...]
+        Output format: [{"index": 0, "translation": "..."}, ...]
 
         Args:
             texts: List of non-empty texts to translate.
@@ -525,11 +545,12 @@ class OpenAITranslator:
             target_lang: Target language code.
 
         Returns:
-            List of translated texts.
+            List of translated texts in original order.
 
         Raises:
             TranslationError: On translation failure.
             ConfigurationError: On authentication failure.
+            ArrayLengthMismatchError: On missing/duplicate indices.
         """
         client = self._ensure_client()
         n = len(texts)
@@ -537,18 +558,20 @@ class OpenAITranslator:
         source_name = self._get_language_name(source_lang)
         target_name = self._get_language_name(target_lang)
 
-        # Create dynamic response model with fixed array length
+        # Create dynamic response model with indexed format
         response_model = self._create_response_model(n)
 
-        # Use indexed JSON format for clear text boundaries (compact for token efficiency)
-        indexed_texts = {str(i): text for i, text in enumerate(texts)}
+        # Use indexed array format for unambiguous order preservation
+        # Array format avoids string key sorting issues (e.g., "10" < "2")
+        indexed_texts = [{"index": i, "text": text} for i, text in enumerate(texts)]
         texts_json = json.dumps(indexed_texts, ensure_ascii=False)
 
         user_content = (
             f"Translate {n} texts from {source_name} to {target_name}.\n"
-            f"CRITICAL: Return exactly {n} translations, one for each indexed input.\n\n"
-            f"Input texts (indexed JSON):\n{texts_json}\n\n"
-            f"Return translations array with {n} elements in index order (0 to {n - 1})."
+            f"CRITICAL: Return exactly {n} translations with matching indices.\n\n"
+            f"Input texts:\n{texts_json}\n\n"
+            f"Return translations array with {n} objects, "
+            f"each containing 'index' and 'translation' fields."
         )
 
         try:
@@ -565,13 +588,24 @@ class OpenAITranslator:
             if result is None:
                 raise TranslationError("OpenAI returned empty response")
 
-            # Validate response length (should be guaranteed by schema, but verify)
-            translations: list[str] = result.translations  # type: ignore[attr-defined]
-            if len(translations) != n:
+            # Extract and validate indexed translations
+            indexed_translations = result.translations  # type: ignore[attr-defined]
+            if len(indexed_translations) != n:
                 raise ArrayLengthMismatchError(
                     expected=n,
-                    actual=len(translations),
+                    actual=len(indexed_translations),
                 )
+
+            # Sort by index and validate all indices are present (0 to n-1)
+            sorted_translations = sorted(indexed_translations, key=lambda x: x.index)
+            translations: list[str] = []
+            for expected_idx, item in enumerate(sorted_translations):
+                if item.index != expected_idx:
+                    raise ArrayLengthMismatchError(
+                        expected=n,
+                        actual=len(indexed_translations),
+                    )
+                translations.append(item.translation)
 
             return translations
 
