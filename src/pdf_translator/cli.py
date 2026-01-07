@@ -214,7 +214,11 @@ Environment Variables:
         "--table-mode",
         default="heuristic",
         choices=["heuristic", "pdfplumber", "image"],
-        help="Table extraction mode (default: heuristic)",
+        help=(
+            "Table extraction mode (default: heuristic). "
+            "Note: heuristic mode currently falls back to pdfplumber/image "
+            "as TextObject integration is not yet implemented."
+        ),
     )
 
     # Intermediate data options

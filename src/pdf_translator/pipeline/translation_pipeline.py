@@ -553,6 +553,12 @@ class TranslationPipeline:
             # See Issue for proper TextObject integration.
             text_objects: list[Any] = []
 
+            if self._config.table_mode == "heuristic":
+                logger.warning(
+                    "Table heuristic mode requires TextObject integration (not yet implemented). "
+                    "Falling back to pdfplumber or image extraction for tables."
+                )
+
             for page_num, blocks in layout_blocks.items():
                 table_blocks = [
                     b for b in blocks if b.raw_category.value == "table"
