@@ -1304,16 +1304,104 @@ class TestImageIntegration:
 
 ### 10.1 表のMarkdown変換
 
+**優先度**: 低（画像抽出より後）
+
 ```markdown
-| Column 1 | Column 2 |
-|----------|----------|
-| Data 1   | Data 2   |
+| Aspect | AutoGen | CAMEL | BabyAGI |
+|--------|---------|-------|---------|
+| Infrastructure | ✓ | ✓ | ✗ |
+| Execution-capable | ✓ | ✗ | ✗ |
 ```
 
+#### 10.1.1 課題分析
+
+実データ分析結果（sample_autogen_paper.pdf Page 14）:
+- PP-DocLayoutで検出: bbox, confidence（0.98）
+- 表タイプ: ボーダーレス（線なし）
+- 課題: pdftext出力ではセル内容が結合される（`"✓ ✗ ✓ ✗ ✗"` 等）
+
+```
+検出データ:
+- 行検出: Y座標クラスタリングで可能（y≈290, 300, 310, ...）
+- 列検出: X座標が不規則、セル境界の推定が困難
+```
+
+#### 10.1.2 実装アプローチ
+
+**推奨: pdfplumber + 画像フォールバック**
+
+| 手法 | 対象 | 精度 | 依存関係 |
+|------|------|------|----------|
+| pdfplumber | 有線テーブル | 高 | pdfplumber (MIT) |
+| 画像化フォールバック | 検出困難な表 | - | pypdfium2 (既存) |
+
 **実装方針**:
-- `table` カテゴリの領域からセル構造を解析
-- OCR または構造解析で表データを抽出
-- Markdown表形式に変換
+1. pdfplumber で表構造抽出を試行
+2. 失敗時（セル検出不可）→ 表領域を画像として抽出
+3. 画像抽出は既存の ImageExtractor を再利用
+
+#### 10.1.3 データ構造
+
+```python
+@dataclass
+class TableCell:
+    """表のセル"""
+    text: str
+    row: int
+    col: int
+    rowspan: int = 1
+    colspan: int = 1
+
+@dataclass
+class ExtractedTable:
+    """抽出された表"""
+    id: str
+    page_number: int
+    rows: list[list[TableCell]]
+    header_rows: int = 1
+    caption: Optional[str] = None
+
+    def to_markdown(self) -> str:
+        """Markdown表形式に変換"""
+        ...
+
+class TableExtractor:
+    """表抽出器"""
+
+    def extract(
+        self,
+        pdf_path: Path,
+        table_block: LayoutBlock,
+    ) -> ExtractedTable | ExtractedImage:
+        """表を抽出、失敗時は画像にフォールバック"""
+        try:
+            return self._extract_with_pdfplumber(pdf_path, table_block)
+        except TableExtractionError:
+            # フォールバック: 表領域を画像として抽出
+            return self._extract_as_image(pdf_path, table_block)
+```
+
+#### 10.1.4 カテゴリマッピング更新
+
+```python
+DEFAULT_CATEGORY_MAPPING = {
+    "table": "table",  # 現在: "p" → 将来: "table"
+}
+```
+
+#### 10.1.5 依存関係
+
+```toml
+[project.optional-dependencies]
+table = ["pdfplumber>=0.10.0"]  # MIT license
+```
+
+#### 10.1.6 実装フェーズ
+
+1. **TableExtractor基本実装** - pdfplumberによる表抽出
+2. **画像フォールバック** - 検出失敗時の画像化
+3. **MarkdownWriter統合** - `"table"` 要素タイプの処理
+4. **キャプション関連付け** - `figure_title` との紐付け
 
 ### 10.2 数式のLaTeX変換
 
