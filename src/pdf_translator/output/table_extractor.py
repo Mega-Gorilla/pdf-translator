@@ -603,30 +603,97 @@ class TableExtractor:
         Returns:
             ExtractedImage.
         """
+        import pypdfium2 as pdfium
+
         from pdf_translator.output.image_extractor import (
+            ExtractedImage,
             ImageExtractionConfig,
-            extract_image_as_fallback,
         )
 
         if output_dir is None:
             output_dir = pdf_path.parent / "images"
 
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         config = ImageExtractionConfig()
-        result = extract_image_as_fallback(pdf_path, table_block, output_dir, config)
+        bbox = table_block.bbox
+        page_num = table_block.page_num
 
-        if result is None:
-            # Create a placeholder ExtractedImage
-            from pdf_translator.output.image_extractor import ExtractedImage
+        try:
+            pdf = pdfium.PdfDocument(pdf_path)
+            try:
+                page = pdf[page_num]
+                page_width, page_height = page.get_size()
 
+                # Calculate scale factor for DPI
+                scale = config.dpi / 72.0
+
+                # Render the specific region
+                bitmap = page.render(
+                    scale=scale,
+                    crop=(bbox.x0, bbox.y0, page_width - bbox.x1, page_height - bbox.y1),
+                )
+
+                # Check minimum size
+                width, height = bitmap.width, bitmap.height
+                if width < config.min_size[0] or height < config.min_size[1]:
+                    return ExtractedImage(
+                        id=table_id,
+                        path=Path(""),
+                        relative_path="",
+                        layout_block_id=table_block.id,
+                        page_number=page_num,
+                        bbox=bbox,
+                        category="table",
+                        caption=None,
+                    )
+
+                # Convert to PIL Image and save
+                pil_image = bitmap.to_pil()
+
+                # Use table_id for filename
+                ext = config.format.lower()
+                if ext not in ("png", "jpeg", "jpg"):
+                    ext = "png"
+                if ext == "jpg":
+                    ext = "jpeg"
+
+                image_path = output_dir / f"{table_id}.{ext}"
+
+                # Save image
+                save_kwargs = {}
+                if ext == "jpeg":
+                    save_kwargs["quality"] = config.quality
+                    if pil_image.mode == "RGBA":
+                        pil_image = pil_image.convert("RGB")
+
+                pil_image.save(image_path, **save_kwargs)
+
+                rel_path = f"images/{table_id}.{ext}"
+
+                return ExtractedImage(
+                    id=table_id,
+                    path=image_path,
+                    relative_path=rel_path,
+                    layout_block_id=table_block.id,
+                    page_number=page_num,
+                    bbox=bbox,
+                    category="table",
+                    caption=None,
+                )
+
+            finally:
+                pdf.close()
+
+        except Exception:
+            # Create a placeholder ExtractedImage on failure
             return ExtractedImage(
                 id=table_id,
                 path=Path(""),
                 relative_path="",
                 layout_block_id=table_block.id,
-                page_number=table_block.page_num,
-                bbox=table_block.bbox,
+                page_number=page_num,
+                bbox=bbox,
                 category="table",
                 caption=None,
             )
-
-        return result

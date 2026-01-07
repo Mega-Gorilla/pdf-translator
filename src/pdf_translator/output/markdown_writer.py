@@ -117,6 +117,9 @@ class MarkdownWriter:
         image_map = self._build_image_map(extracted_images)
         table_map = self._build_table_map(extracted_tables)
 
+        # Track emitted images/tables to avoid duplicates
+        emitted_keys: set[str] = set()
+
         # Process paragraphs
         current_page: int | None = None
         for paragraph in paragraphs:
@@ -129,7 +132,9 @@ class MarkdownWriter:
                 current_page = paragraph.page_number
 
             # Convert paragraph to markdown
-            md = self._paragraph_to_markdown(paragraph, image_map, table_map)
+            md = self._paragraph_to_markdown(
+                paragraph, image_map, table_map, emitted_keys
+            )
             if md:
                 parts.append(md)
 
@@ -247,6 +252,7 @@ class MarkdownWriter:
         paragraph: Paragraph,
         image_map: dict[str, ExtractedImage] | None = None,
         table_map: dict[str, ExtractedTable] | None = None,
+        emitted_keys: set[str] | None = None,
     ) -> str:
         """Convert single paragraph to Markdown.
 
@@ -254,6 +260,7 @@ class MarkdownWriter:
             paragraph: Paragraph to convert.
             image_map: Key -> ExtractedImage map.
             table_map: Key -> ExtractedTable map.
+            emitted_keys: Set of already emitted image/table keys.
 
         Returns:
             Markdown string.
@@ -278,8 +285,13 @@ class MarkdownWriter:
 
         # Handle special element types
         if element_type == "image":
+            # Skip if already emitted
+            if emitted_keys is not None and key in emitted_keys:
+                return ""
             # For image category, look up in image_map
             if image_map and key in image_map:
+                if emitted_keys is not None:
+                    emitted_keys.add(key)
                 img = image_map[key]
                 alt = getattr(img, "caption", None) or "Image"
                 path = getattr(img, "relative_path", "")
@@ -288,13 +300,20 @@ class MarkdownWriter:
             return ""
 
         if element_type == "table":
+            # Skip if already emitted
+            if emitted_keys is not None and key in emitted_keys:
+                return ""
             # For table category, look up in table_map first
             if table_map and key in table_map:
+                if emitted_keys is not None:
+                    emitted_keys.add(key)
                 table = table_map[key]
                 if hasattr(table, "to_markdown"):
                     return str(table.to_markdown()) + "\n"
             # Fallback to image_map for table image
             if image_map and key in image_map:
+                if emitted_keys is not None:
+                    emitted_keys.add(key)
                 img = image_map[key]
                 alt = "Table"
                 path = getattr(img, "relative_path", "")
