@@ -2,8 +2,9 @@
 
 Issue: #5
 
-**スコープ拡張**: 本設計書では Issue #5 の基本要件に加え、画像抽出機能を必須実装として含める。
-画像抽出はMarkdown出力の品質向上に不可欠であり、Phase 4 として実装する。
+**スコープ拡張**: 本設計書では Issue #5 の基本要件に加え、以下を必須実装として含める:
+- **画像抽出**: Markdown出力の品質向上に不可欠（Phase 4）
+- **表抽出**: PDF内の表をMarkdown形式で出力（Phase 5）
 
 ## 1. 概要
 
@@ -17,10 +18,10 @@ Issue: #5
 - レイアウト解析結果を活用した構造化出力
 - 複数の出力オプションをサポート
 - **PDFから画像を抽出し、Markdownに埋め込み**（本設計書で追加）
+- **PDFから表を抽出し、Markdown形式で出力**（本設計書で追加）
 
 ### 1.3 スコープ外
 
-- 表のMarkdown変換（将来の拡張）
 - 数式のLaTeX変換（将来の拡張）
 - リスト・箇条書きの自動検出（将来の拡張）
   - Issue #5 に記載あり、現時点では段落として出力
@@ -41,7 +42,7 @@ PDF
  ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ TranslationPipeline._translate_impl()                        │
-│  ├─ _stage_extract() → Paragraph[]                          │
+│  ├─ _stage_extract() → Paragraph[], TextObject[]            │
 │  ├─ _stage_analyze() → LayoutBlock[]                        │
 │  ├─ _stage_categorize()                                     │
 │  ├─ _stage_merge()                                          │
@@ -51,7 +52,8 @@ PDF
 │  │                                                          │
 │  └─ if markdown_output:                                     │
 │       ├─ ImageExtractor.extract() → images/ (画像抽出)       │
-│       └─ MarkdownWriter.write(paragraphs) → markdown        │
+│       ├─ TableExtractor.extract() → tables (表抽出)         │
+│       └─ MarkdownWriter.write(paragraphs, images, tables)   │
 └─────────────────────────────────────────────────────────────┘
  │
  │ TranslationResult (単一オブジェクト)
@@ -66,7 +68,8 @@ PDF
 │  ├─ output.json        (save_intermediate=True時)            │
 │  └─ images/            (extract_images=True時)               │
 │       ├─ figure_001.png                                      │
-│       └─ figure_002.png                                      │
+│       ├─ figure_002.png                                      │
+│       └─ table_001.png  (表の画像フォールバック時)            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -75,6 +78,7 @@ PDF
 - `paragraphs`を保持することで、同一の翻訳結果から複数形式を生成
 - ファイル出力は`output_path`から自動的に`.md`/`.json`/`images/`パスを決定
 - 画像抽出は `image`, `chart` カテゴリの LayoutBlock を使用
+- 表抽出は `table` カテゴリの LayoutBlock と TextObject を使用
 
 ### 2.2 再生成フロー（中間データからMarkdown生成）
 
@@ -163,12 +167,14 @@ class MarkdownWriter:
         self,
         paragraphs: list[Paragraph],
         extracted_images: list[ExtractedImage] | None = None,
+        extracted_tables: list[ExtractedTable] | None = None,
     ) -> str:
         """ParagraphリストからMarkdown文字列を生成
 
         Args:
             paragraphs: 翻訳済みParagraphリスト
             extracted_images: 抽出済み画像リスト（Section 5参照）
+            extracted_tables: 抽出済み表リスト（Section 6参照）
 
         Returns:
             Markdown文字列
@@ -247,6 +253,10 @@ class PipelineConfig:
     image_output_dir: Path | None = None      # 画像保存先（Noneで自動: output_dir/images/）
     image_format: str = "png"                 # 画像フォーマット（png/jpeg）
     image_quality: int = 95                   # JPEG品質（1-100）
+
+    # 表抽出オプション（markdown_output=True時のみ有効）
+    extract_tables: bool = True               # 表抽出を有効化（デフォルト有効）
+    table_mode: str = "heuristic"             # 抽出モード: heuristic/pdfplumber/image
 ```
 
 ### 3.3.1 _translate_impl での実装イメージ
@@ -265,6 +275,7 @@ async def _translate_impl(
     # Markdown生成（有効時）
     markdown: str | None = None
     extracted_images: list[ExtractedImage] = []
+    extracted_tables: list[ExtractedTable] = []
 
     if self._config.markdown_output:
         # 画像抽出（有効時）
@@ -283,6 +294,22 @@ async def _translate_impl(
                 pdf_path, layout_blocks, image_output_dir
             )
 
+        # 表抽出（有効時）
+        if self._config.extract_tables:
+            table_extractor = TableExtractor(TableExtractionConfig(
+                mode=self._config.table_mode,
+            ))
+            # table カテゴリの LayoutBlock を抽出
+            table_blocks = [b for b in layout_blocks if b.category == "table"]
+            for table_block in table_blocks:
+                result = table_extractor.extract(
+                    pdf_path, table_block, text_objects
+                )
+                if isinstance(result, ExtractedTable):
+                    extracted_tables.append(result)
+                else:  # ExtractedImage（画像フォールバック）
+                    extracted_images.append(result)
+
         # Markdown生成
         writer = MarkdownWriter(MarkdownConfig(
             output_mode=self._config.markdown_mode,
@@ -292,7 +319,7 @@ async def _translate_impl(
             target_lang=self._config.target_lang,
             source_filename=pdf_path.name,
         ))
-        markdown = writer.write(paragraphs, extracted_images)
+        markdown = writer.write(paragraphs, extracted_images, extracted_tables)
 
     # ファイル出力
     if output_path is not None:
@@ -951,9 +978,316 @@ translate-pdf input.pdf --markdown \
 
 ---
 
-## 6. 出力フォーマット例
+## 6. 表抽出
 
-### 6.1 訳文のみ (`TRANSLATED_ONLY`)
+PDFから表を抽出し、Markdown形式で出力する機能。
+
+```markdown
+| Aspect | AutoGen | CAMEL | BabyAGI |
+|--------|---------|-------|---------|
+| Infrastructure | ✓ | ✓ | ✗ |
+| Execution-capable | ✓ | ✗ | ✗ |
+```
+
+### 6.1 課題分析
+
+実データ分析結果（sample_autogen_paper.pdf Page 14）:
+- PP-DocLayoutで検出: bbox, confidence（0.98）
+- 表タイプ: **ボーダーレス（線なし）** ← 学術論文では主流
+- 課題: pdftext出力ではセル内容が結合される（`"✓ ✗ ✓ ✗ ✗"` 等）
+
+```
+検出データ:
+- 行検出: Y座標クラスタリングで可能（y≈290, 300, 310, ...）
+- 列検出: X座標が不規則、セル境界の推定が困難
+```
+
+**重要な前提**:
+- `ParagraphExtractor` は pdftext の block 単位でテキストを結合するため、セル情報は保持されない
+- 表抽出は**完全に新規の処理経路**が必要
+- pdfplumber は「有線テーブル」前提が強く、**線なし表には不向き**
+
+### 6.2 データソース
+
+表抽出の主要データソースは `TextObject`（`PDFProcessor` から取得）:
+
+```python
+# src/pdf_translator/core/pdf_processor.py
+@dataclass
+class TextObject:
+    id: str
+    text: str
+    bbox: BBox      # ← セル境界推定に使用
+    font: Font
+    color: Color
+    transform: Transform
+```
+
+`TextObject` は個別テキストの bbox を保持しており、セル単位の位置推定が可能。
+
+### 6.3 実装アプローチ（3段階フォールバック）
+
+| 優先度 | 手法 | 対象 | 依存関係 |
+|--------|------|------|----------|
+| 1 | TextObject ヒューリスティクス | **線なし表（主流）** | なし（既存） |
+| 2 | pdfplumber | 有線テーブル | pdfplumber (MIT) |
+| 3 | 画像フォールバック | 検出困難な表 | pypdfium2 (既存) |
+
+**処理フロー**:
+```
+1. TextObject ベースのヒューリスティクス抽出を試行
+   ├─ 成功 → Markdown 表を生成
+   └─ 失敗 → 2へ
+
+2. pdfplumber による抽出を試行（有線表向け）
+   ├─ 成功 → Markdown 表を生成
+   └─ 失敗 → 3へ
+
+3. 画像フォールバック
+   └─ 表領域を画像として抽出（ImageExtractor 再利用）
+```
+
+### 6.4 TextObject ヒューリスティクス（主アプローチ）
+
+線なし表に対応するためのアルゴリズム:
+
+```python
+def _extract_with_heuristics(
+    self,
+    text_objects: list[TextObject],
+    table_bbox: BBox,
+) -> ExtractedTable:
+    """TextObject の位置情報から表構造を推定"""
+
+    # 1. 表領域内の TextObject をフィルタ
+    table_texts = [t for t in text_objects if t.bbox.overlaps(table_bbox)]
+
+    # 2. Y座標クラスタリング → 行グループ化
+    rows = self._cluster_by_y(table_texts, tolerance=5.0)
+
+    # 3. 各行内で X座標クラスタリング → 列境界推定
+    col_boundaries = self._detect_column_boundaries(rows)
+
+    # 4. 列数正規化（最頻列数に合わせて空セル補完）
+    normalized_rows = self._normalize_columns(rows, col_boundaries)
+
+    # 5. ヘッダー行の推定（フォントサイズ、太字等）
+    header_rows = self._detect_header_rows(normalized_rows)
+
+    return ExtractedTable(
+        rows=normalized_rows,
+        header_rows=header_rows,
+    )
+
+def _cluster_by_y(
+    self,
+    texts: list[TextObject],
+    tolerance: float,
+) -> list[list[TextObject]]:
+    """Y座標でクラスタリングして行を検出"""
+    # Y座標を tolerance 範囲でグループ化
+    ...
+
+def _detect_column_boundaries(
+    self,
+    rows: list[list[TextObject]],
+) -> list[float]:
+    """全行の X座標から列境界を推定"""
+    # 各行の X 開始位置を集約
+    # ギャップが大きい箇所を列境界とする
+    ...
+
+def _normalize_columns(
+    self,
+    rows: list[list[TextObject]],
+    col_boundaries: list[float],
+) -> list[list[TableCell]]:
+    """列数が揃わない場合、空セルで補完"""
+    # 最頻列数を基準に正規化
+    ...
+```
+
+### 6.5 座標変換
+
+`LayoutBlock` と pdfplumber では座標系が異なる:
+
+```python
+# LayoutBlock (PDF座標系: 原点=左下)
+block.bbox.y0  # 下端
+block.bbox.y1  # 上端
+
+# pdfplumber (ページ座標系: 原点=左上)
+# 変換が必要:
+def pdf_to_pdfplumber(bbox: BBox, page_height: float) -> tuple:
+    """PDF座標 → pdfplumber座標に変換"""
+    return (
+        bbox.x0,                    # left
+        page_height - bbox.y1,      # top (PDF y1 → pdfplumber top)
+        bbox.x1,                    # right
+        page_height - bbox.y0,      # bottom (PDF y0 → pdfplumber bottom)
+    )
+
+# 使用例
+cropped = page.within_bbox(pdf_to_pdfplumber(block.bbox, page.height))
+```
+
+### 6.6 Markdown 表の限界と変換ルール
+
+Markdown は `rowspan`/`colspan` を表現できない。変換ルール:
+
+| セル結合状況 | 変換方法 |
+|--------------|----------|
+| 結合なし | Markdown 表 (`\| col \| col \|`) |
+| colspan あり | フラット化（結合セルを最初の列に配置、残りは空） |
+| rowspan あり | フラット化（結合セルを最初の行に配置、残りは空） |
+| 複雑な結合 | HTML table にフォールバック |
+
+```python
+def to_markdown(self) -> str:
+    """Markdown表形式に変換
+
+    Note:
+        - colspan/rowspan はフラット化される
+        - 列幅は自動調整（Markdownの制限）
+        - 複雑な結合がある場合は to_html() を使用
+    """
+    if self._has_complex_merge():
+        raise ComplexTableError("Use to_html() for complex tables")
+    ...
+
+def to_html(self) -> str:
+    """HTML表形式に変換（colspan/rowspan対応）"""
+    ...
+```
+
+**Markdown 表の制限（許容事項）**:
+- 列幅は制御不可（レンダラ依存）
+- セル内改行は `<br>` で代替
+- 整列は `:---`, `:---:`, `---:` で指定可能
+
+### 6.7 TableExtractor クラス
+
+```python
+# src/pdf_translator/output/table_extractor.py
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from pdf_translator.core.models import LayoutBlock, BBox
+from pdf_translator.core.pdf_processor import TextObject
+
+
+@dataclass
+class TableExtractionConfig:
+    """表抽出設定"""
+    mode: str = "heuristic"  # heuristic, pdfplumber, image
+
+
+@dataclass
+class TableCell:
+    """表のセル"""
+    text: str
+    row: int
+    col: int
+    rowspan: int = 1
+    colspan: int = 1
+    is_header: bool = False
+    alignment: str = "left"  # left, center, right
+
+
+@dataclass
+class ExtractedTable:
+    """抽出された表"""
+    id: str
+    page_number: int
+    rows: list[list[TableCell]]
+    header_rows: int = 1
+    caption: Optional[str] = None
+    extraction_method: str = "heuristic"  # heuristic, pdfplumber, image
+
+    def to_markdown(self) -> str:
+        """Markdown表形式に変換"""
+        ...
+
+    def to_html(self) -> str:
+        """HTML表形式に変換（複雑な表用）"""
+        ...
+
+    def has_complex_merge(self) -> bool:
+        """複雑なセル結合があるか判定"""
+        ...
+
+
+class TableExtractor:
+    """表抽出器"""
+
+    def __init__(self, config: TableExtractionConfig) -> None:
+        self._config = config
+        self._pdfplumber_available = self._check_pdfplumber()
+
+    def extract(
+        self,
+        pdf_path: Path,
+        table_block: LayoutBlock,
+        text_objects: list[TextObject],
+    ) -> ExtractedTable | ExtractedImage:
+        """表を抽出（3段階フォールバック）"""
+        # 1. TextObject ヒューリスティクス
+        try:
+            return self._extract_with_heuristics(text_objects, table_block.bbox)
+        except TableExtractionError:
+            pass
+
+        # 2. pdfplumber（有線表向け）
+        if self._pdfplumber_available:
+            try:
+                return self._extract_with_pdfplumber(pdf_path, table_block)
+            except TableExtractionError:
+                pass
+
+        # 3. 画像フォールバック
+        return self._extract_as_image(pdf_path, table_block)
+```
+
+### 6.8 依存関係と CLI
+
+```toml
+# pyproject.toml
+[project.optional-dependencies]
+table = ["pdfplumber>=0.10.0"]  # MIT license, optional
+```
+
+**CLI オプション**:
+```bash
+# 表抽出を有効化（デフォルト有効だがモード指定可能）
+translate-pdf input.pdf --markdown
+
+# 表抽出を無効化
+translate-pdf input.pdf --markdown --no-extract-tables
+
+# 表抽出モード指定
+translate-pdf input.pdf --markdown \
+    --table-mode heuristic  # heuristic (default), pdfplumber, image
+```
+
+**理由**: pdfplumber は pdfminer.six を含む重い依存のため、pdfplumber モードはオプション依存とする。
+
+### 6.9 カテゴリマッピング
+
+```python
+DEFAULT_CATEGORY_MAPPING = {
+    "table": "table",  # 表として処理（extract_tables=True時）
+}
+```
+
+`extract_tables=False` の場合、`"table"` → `"p"`（段落）にフォールバック。
+
+---
+
+## 7. 出力フォーマット例
+
+### 7.1 訳文のみ (`TRANSLATED_ONLY`)
 
 ```markdown
 ---
@@ -980,7 +1314,7 @@ source_file: sample.pdf
 次のセクションの内容...
 ```
 
-### 6.2 並列出力 (`PARALLEL`)
+### 7.2 並列出力 (`PARALLEL`)
 
 ```markdown
 ---
@@ -1004,7 +1338,7 @@ This is a body paragraph. The translated text appears here.
 
 ---
 
-## 7. ファイル構成
+## 8. ファイル構成
 
 ```
 src/pdf_translator/
@@ -1012,6 +1346,7 @@ src/pdf_translator/
 │   ├── __init__.py
 │   ├── markdown_writer.py           # MarkdownWriter, MarkdownConfig
 │   ├── image_extractor.py           # ImageExtractor, ImageExtractionConfig
+│   ├── table_extractor.py           # TableExtractor, TableExtractionConfig
 │   └── translated_document.py       # TranslatedDocument (中間データ)
 ├── pipeline/
 │   └── translation_pipeline.py      # 変更: TranslationResult拡張
@@ -1021,12 +1356,13 @@ src/pdf_translator/
 tests/
 ├── test_markdown_writer.py          # NEW
 ├── test_image_extractor.py          # NEW
+├── test_table_extractor.py          # NEW
 └── test_translated_document.py      # NEW
 ```
 
 ---
 
-## 8. 実装ステップ
+## 9. 実装ステップ
 
 ### Phase 0: 中間データ形式（前提条件）
 
@@ -1111,9 +1447,36 @@ tests/
     - キャプション関連付け
     - 出力パスカスタマイズ
 
-### Phase 5: CLI統合
+### Phase 5: 表抽出
 
-17. **CLIオプション追加**
+17. **TableCell / ExtractedTable 実装**
+    - データクラス定義
+    - `to_markdown()`, `to_html()` メソッド
+
+18. **TextObject ヒューリスティクス実装**
+    - Y座標クラスタリング（行検出）
+    - X座標クラスタリング（列境界推定）
+    - 列数正規化、ヘッダー検出
+
+19. **pdfplumber 統合（オプション）**
+    - 座標変換ロジック
+    - 有線表の抽出
+
+20. **画像フォールバック**
+    - `ImageExtractor` との連携
+
+21. **MarkdownWriter 統合**
+    - `"table"` 要素タイプの処理
+    - HTML フォールバック
+
+22. **表抽出テスト**
+    - ボーダーレス表の抽出
+    - pdfplumber抽出
+    - 画像フォールバック
+
+### Phase 6: CLI統合
+
+23. **CLIオプション追加**
     - `--markdown` フラグ（Markdown出力を有効化）
     - `--markdown-mode` オプション（translated_only / parallel）
     - `--heading-offset` オプション（見出しレベル一括オフセット）
@@ -1125,6 +1488,8 @@ tests/
     - `--image-relative-path` オプション（相対パス）
     - `--image-format` オプション（png/jpeg）
     - `--image-quality` オプション（JPEG品質 1-100、デフォルト95）
+    - `--no-extract-tables` フラグ（表抽出を無効化）
+    - `--table-mode` オプション（heuristic/pdfplumber/image）
 
     **CLIオプション使用例**:
     ```bash
@@ -1147,9 +1512,9 @@ tests/
 
 ---
 
-## 9. テスト計画
+## 10. テスト計画
 
-### 9.1 中間データ形式テスト
+### 10.1 中間データ形式テスト
 
 ```python
 class TestParagraphSerialization:
@@ -1166,7 +1531,7 @@ class TestTranslatedDocument:
     def test_version_mismatch_raises_error(self): ...
 ```
 
-### 9.2 Markdown Writer テスト
+### 10.2 Markdown Writer テスト
 
 ```python
 class TestMarkdownWriter:
@@ -1218,7 +1583,7 @@ class TestCategoryMapping:
         ...
 ```
 
-### 9.3 統合テスト
+### 10.3 統合テスト
 
 ```python
 class TestMarkdownIntegration:
@@ -1247,7 +1612,7 @@ class TestMarkdownIntegration:
         ...
 ```
 
-### 9.4 画像抽出テスト
+### 10.4 画像抽出テスト
 
 ```python
 class TestImageExtractor:
@@ -1358,322 +1723,7 @@ class TestImageIntegration:
         ...
 ```
 
----
-
-## 10. 将来の拡張
-
-### 10.1 表のMarkdown変換
-
-**優先度**: 低（画像抽出より後）
-**有効化**: CLI フラグ `--enable-table-extraction` で明示的に有効化（デフォルト無効）
-
-```markdown
-| Aspect | AutoGen | CAMEL | BabyAGI |
-|--------|---------|-------|---------|
-| Infrastructure | ✓ | ✓ | ✗ |
-| Execution-capable | ✓ | ✗ | ✗ |
-```
-
-#### 10.1.1 課題分析
-
-実データ分析結果（sample_autogen_paper.pdf Page 14）:
-- PP-DocLayoutで検出: bbox, confidence（0.98）
-- 表タイプ: **ボーダーレス（線なし）** ← 学術論文では主流
-- 課題: pdftext出力ではセル内容が結合される（`"✓ ✗ ✓ ✗ ✗"` 等）
-
-```
-検出データ:
-- 行検出: Y座標クラスタリングで可能（y≈290, 300, 310, ...）
-- 列検出: X座標が不規則、セル境界の推定が困難
-```
-
-**重要な前提**:
-- `ParagraphExtractor` は pdftext の block 単位でテキストを結合するため、セル情報は保持されない
-- 表抽出は**完全に新規の処理経路**が必要
-- pdfplumber は「有線テーブル」前提が強く、**線なし表には不向き**
-
-#### 10.1.2 データソース
-
-表抽出の主要データソースは `TextObject`（`PDFProcessor` から取得）:
-
-```python
-# src/pdf_translator/core/pdf_processor.py
-@dataclass
-class TextObject:
-    id: str
-    text: str
-    bbox: BBox      # ← セル境界推定に使用
-    font: Font
-    color: Color
-    transform: Transform
-```
-
-`TextObject` は個別テキストの bbox を保持しており、セル単位の位置推定が可能。
-
-#### 10.1.3 実装アプローチ（3段階フォールバック）
-
-| 優先度 | 手法 | 対象 | 依存関係 |
-|--------|------|------|----------|
-| 1 | TextObject ヒューリスティクス | **線なし表（主流）** | なし（既存） |
-| 2 | pdfplumber | 有線テーブル | pdfplumber (MIT) |
-| 3 | 画像フォールバック | 検出困難な表 | pypdfium2 (既存) |
-
-**処理フロー**:
-```
-1. TextObject ベースのヒューリスティクス抽出を試行
-   ├─ 成功 → Markdown 表を生成
-   └─ 失敗 → 2へ
-
-2. pdfplumber による抽出を試行（有線表向け）
-   ├─ 成功 → Markdown 表を生成
-   └─ 失敗 → 3へ
-
-3. 画像フォールバック
-   └─ 表領域を画像として抽出（ImageExtractor 再利用）
-```
-
-#### 10.1.4 TextObject ヒューリスティクス（主アプローチ）
-
-線なし表に対応するためのアルゴリズム:
-
-```python
-def _extract_with_heuristics(
-    self,
-    text_objects: list[TextObject],
-    table_bbox: BBox,
-) -> ExtractedTable:
-    """TextObject の位置情報から表構造を推定"""
-
-    # 1. 表領域内の TextObject をフィルタ
-    table_texts = [t for t in text_objects if t.bbox.overlaps(table_bbox)]
-
-    # 2. Y座標クラスタリング → 行グループ化
-    rows = self._cluster_by_y(table_texts, tolerance=5.0)
-
-    # 3. 各行内で X座標クラスタリング → 列境界推定
-    col_boundaries = self._detect_column_boundaries(rows)
-
-    # 4. 列数正規化（最頻列数に合わせて空セル補完）
-    normalized_rows = self._normalize_columns(rows, col_boundaries)
-
-    # 5. ヘッダー行の推定（フォントサイズ、太字等）
-    header_rows = self._detect_header_rows(normalized_rows)
-
-    return ExtractedTable(
-        rows=normalized_rows,
-        header_rows=header_rows,
-    )
-
-def _cluster_by_y(
-    self,
-    texts: list[TextObject],
-    tolerance: float,
-) -> list[list[TextObject]]:
-    """Y座標でクラスタリングして行を検出"""
-    # Y座標を tolerance 範囲でグループ化
-    ...
-
-def _detect_column_boundaries(
-    self,
-    rows: list[list[TextObject]],
-) -> list[float]:
-    """全行の X座標から列境界を推定"""
-    # 各行の X 開始位置を集約
-    # ギャップが大きい箇所を列境界とする
-    ...
-
-def _normalize_columns(
-    self,
-    rows: list[list[TextObject]],
-    col_boundaries: list[float],
-) -> list[list[TableCell]]:
-    """列数が揃わない場合、空セルで補完"""
-    # 最頻列数を基準に正規化
-    ...
-```
-
-#### 10.1.5 座標変換
-
-`LayoutBlock` と pdfplumber では座標系が異なる:
-
-```python
-# LayoutBlock (PDF座標系: 原点=左下)
-block.bbox.y0  # 下端
-block.bbox.y1  # 上端
-
-# pdfplumber (ページ座標系: 原点=左上)
-# 変換が必要:
-def pdf_to_pdfplumber(bbox: BBox, page_height: float) -> tuple:
-    """PDF座標 → pdfplumber座標に変換"""
-    return (
-        bbox.x0,                    # left
-        page_height - bbox.y1,      # top (PDF y1 → pdfplumber top)
-        bbox.x1,                    # right
-        page_height - bbox.y0,      # bottom (PDF y0 → pdfplumber bottom)
-    )
-
-# 使用例
-cropped = page.within_bbox(pdf_to_pdfplumber(block.bbox, page.height))
-```
-
-#### 10.1.6 Markdown 表の限界と変換ルール
-
-Markdown は `rowspan`/`colspan` を表現できない。変換ルール:
-
-| セル結合状況 | 変換方法 |
-|--------------|----------|
-| 結合なし | Markdown 表 (`\| col \| col \|`) |
-| colspan あり | フラット化（結合セルを最初の列に配置、残りは空） |
-| rowspan あり | フラット化（結合セルを最初の行に配置、残りは空） |
-| 複雑な結合 | HTML table にフォールバック |
-
-```python
-def to_markdown(self) -> str:
-    """Markdown表形式に変換
-
-    Note:
-        - colspan/rowspan はフラット化される
-        - 列幅は自動調整（Markdownの制限）
-        - 複雑な結合がある場合は to_html() を使用
-    """
-    if self._has_complex_merge():
-        raise ComplexTableError("Use to_html() for complex tables")
-    ...
-
-def to_html(self) -> str:
-    """HTML表形式に変換（colspan/rowspan対応）"""
-    ...
-```
-
-**Markdown 表の制限（許容事項）**:
-- 列幅は制御不可（レンダラ依存）
-- セル内改行は `<br>` で代替
-- 整列は `:---`, `:---:`, `---:` で指定可能
-
-#### 10.1.7 データ構造
-
-```python
-@dataclass
-class TableCell:
-    """表のセル"""
-    text: str
-    row: int
-    col: int
-    rowspan: int = 1
-    colspan: int = 1
-    is_header: bool = False
-    alignment: str = "left"  # left, center, right
-
-@dataclass
-class ExtractedTable:
-    """抽出された表"""
-    id: str
-    page_number: int
-    rows: list[list[TableCell]]
-    header_rows: int = 1
-    caption: Optional[str] = None
-    extraction_method: str = "heuristic"  # heuristic, pdfplumber, image
-
-    def to_markdown(self) -> str:
-        """Markdown表形式に変換"""
-        ...
-
-    def to_html(self) -> str:
-        """HTML表形式に変換（複雑な表用）"""
-        ...
-
-    def has_complex_merge(self) -> bool:
-        """複雑なセル結合があるか判定"""
-        ...
-
-class TableExtractor:
-    """表抽出器"""
-
-    def __init__(self, config: TableExtractionConfig) -> None:
-        self._config = config
-        self._pdfplumber_available = self._check_pdfplumber()
-
-    def extract(
-        self,
-        pdf_path: Path,
-        table_block: LayoutBlock,
-        text_objects: list[TextObject],
-    ) -> ExtractedTable | ExtractedImage:
-        """表を抽出（3段階フォールバック）"""
-        # 1. TextObject ヒューリスティクス
-        try:
-            return self._extract_with_heuristics(text_objects, table_block.bbox)
-        except TableExtractionError:
-            pass
-
-        # 2. pdfplumber（有線表向け）
-        if self._pdfplumber_available:
-            try:
-                return self._extract_with_pdfplumber(pdf_path, table_block)
-            except TableExtractionError:
-                pass
-
-        # 3. 画像フォールバック
-        return self._extract_as_image(pdf_path, table_block)
-```
-
-#### 10.1.8 依存関係と CLI
-
-```toml
-# pyproject.toml
-[project.optional-dependencies]
-table = ["pdfplumber>=0.10.0"]  # MIT license, optional
-```
-
-**CLI オプション**:
-```bash
-# 表抽出を有効化（デフォルト無効）
-translate-pdf input.pdf --markdown --enable-table-extraction
-
-# 表抽出モード指定
-translate-pdf input.pdf --markdown --enable-table-extraction \
-    --table-mode heuristic  # heuristic (default), pdfplumber, image
-```
-
-**理由**: pdfplumber は pdfminer.six を含む重い依存のため、デフォルト無効とする。
-
-#### 10.1.9 カテゴリマッピング
-
-```python
-DEFAULT_CATEGORY_MAPPING = {
-    "table": "table",  # 現在: "p" → 将来: "table"（--enable-table-extraction 時）
-}
-```
-
-`--enable-table-extraction` が無効の場合、`"table"` → `"p"`（段落）のまま。
-
-#### 10.1.10 実装フェーズ
-
-1. **TableCell / ExtractedTable 実装**
-   - データクラス定義
-   - `to_markdown()`, `to_html()` メソッド
-
-2. **TextObject ヒューリスティクス実装**
-   - Y座標クラスタリング（行検出）
-   - X座標クラスタリング（列境界推定）
-   - 列数正規化、ヘッダー検出
-
-3. **pdfplumber 統合（オプション）**
-   - 座標変換ロジック
-   - 有線表の抽出
-
-4. **画像フォールバック**
-   - `ImageExtractor` との連携
-
-5. **MarkdownWriter 統合**
-   - `"table"` 要素タイプの処理
-   - HTML フォールバック
-
-6. **CLI オプション追加**
-   - `--enable-table-extraction`
-   - `--table-mode`
-
-#### 10.1.11 テスト計画
+### 10.5 表抽出テスト
 
 ```python
 class TestTableHeuristics:
@@ -1684,20 +1734,25 @@ class TestTableHeuristics:
     def test_normalize_columns_with_padding(self): ...
     def test_detect_header_row_by_font(self): ...
 
+
 class TestTableExtractor:
     """表抽出器のテスト"""
     def test_borderless_table_extraction(self):
         """線なし表の抽出（主要ユースケース）"""
         ...
+
     def test_lined_table_with_pdfplumber(self):
         """有線表の pdfplumber 抽出"""
         ...
+
     def test_fallback_to_image(self):
         """抽出失敗時の画像フォールバック"""
         ...
+
     def test_row_column_count_accuracy(self):
         """行数・列数の精度検証"""
         ...
+
 
 class TestExtractedTable:
     """ExtractedTable のテスト"""
@@ -1707,13 +1762,37 @@ class TestExtractedTable:
     def test_to_html_with_rowspan(self): ...
     def test_has_complex_merge_detection(self): ...
 
+
 class TestCoordinateTransform:
     """座標変換のテスト"""
     def test_pdf_to_pdfplumber_coords(self): ...
     def test_pdfplumber_to_pdf_coords(self): ...
+
+
+class TestTableIntegration:
+    """表抽出の統合テスト"""
+    def test_pipeline_extracts_tables(self):
+        """パイプライン実行で表が抽出されること"""
+        ...
+
+    def test_markdown_contains_table(self):
+        """Markdownに表が含まれること"""
+        ...
+
+    def test_table_fallback_to_image(self):
+        """抽出失敗時に画像フォールバックされること"""
+        ...
+
+    def test_no_extract_tables_flag(self):
+        """--no-extract-tables フラグで表抽出がスキップされること"""
+        ...
 ```
 
-### 10.2 数式のLaTeX変換
+---
+
+## 11. 将来の拡張
+
+### 11.1 数式のLaTeX変換
 
 ```markdown
 $$E = mc^2$$
@@ -1734,7 +1813,7 @@ DEFAULT_CATEGORY_MAPPING = {
 
 ---
 
-## 11. 参考
+## 12. 参考
 
 - Issue #5: feat: Markdown出力機能の実装
 - Issue #4: 翻訳パイプライン（依存Issue、完了済み）
