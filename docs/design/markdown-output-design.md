@@ -127,6 +127,8 @@ class MarkdownConfig:
     source_lang: Optional[str] = None        # 原文言語
     target_lang: Optional[str] = None        # 翻訳先言語
     source_filename: Optional[str] = None    # 元PDFファイル名
+    # カテゴリマッピングのオーバーライド（詳細は Section 4.3 参照）
+    category_mapping_overrides: Optional[dict[str, str]] = None
 
 
 class MarkdownWriter:
@@ -155,8 +157,8 @@ class MarkdownWriter:
         """単一のParagraphをMarkdownに変換"""
         ...
 
-    def _category_to_heading_level(self, category: Optional[str]) -> Optional[int]:
-        """カテゴリから見出しレベルを決定"""
+    def _get_element_type(self, category: Optional[str]) -> str:
+        """カテゴリからMarkdown要素タイプを取得（Section 4.4 参照）"""
         ...
 ```
 
@@ -483,30 +485,167 @@ Path("output/sample_ja_parallel.md").write_text(markdown, encoding="utf-8")
 
 ## 4. カテゴリ → Markdown マッピング
 
-### 4.1 見出しレベル
+### 4.1 要素タイプ文字列
 
-| RawLayoutCategory | Markdown | 説明 |
-|-------------------|----------|------|
-| `doc_title` | `# H1` | 文書タイトル |
-| `paragraph_title` | `## H2` | セクション見出し |
-| `abstract` | `> blockquote` | 概要（引用形式） |
-| `text` | paragraph | 本文 |
-| `vertical_text` | paragraph | 縦書きテキスト |
-| `aside_text` | `> blockquote` | 補足テキスト |
-| `figure_title` | `*italic*` | 図キャプション |
-| `footnote` | paragraph (※prefix) | 脚注（後述） |
-| `reference` | paragraph (small) | 参考文献 |
+カテゴリから Markdown 要素へのマッピングは文字列で指定する。
+
+| 要素タイプ | 文字列 | Markdown出力 |
+|------------|--------|--------------|
+| 見出し1 | `"h1"` | `# テキスト` |
+| 見出し2 | `"h2"` | `## テキスト` |
+| 見出し3 | `"h3"` | `### テキスト` |
+| 見出し4 | `"h4"` | `#### テキスト` |
+| 見出し5 | `"h5"` | `##### テキスト` |
+| 見出し6 | `"h6"` | `###### テキスト` |
+| 段落 | `"p"` | `テキスト` |
+| 引用 | `"blockquote"` | `> テキスト` |
+| コード(インライン) | `"code"` | `` `テキスト` `` |
+| コード(ブロック) | `"code_block"` | ` ```テキスト``` ` |
+| イタリック | `"italic"` | `*テキスト*` |
+| スキップ | `"skip"` | (出力しない) |
+
+### 4.2 デフォルトカテゴリマッピング（全25カテゴリ）
+
+PP-DocLayoutV2 の全カテゴリに対するデフォルトマッピング：
+
+```python
+# src/pdf_translator/output/markdown_writer.py
+
+DEFAULT_CATEGORY_MAPPING: dict[str, str] = {
+    # === テキスト系 ===
+    "doc_title": "h1",           # 文書タイトル → H1
+    "paragraph_title": "h2",     # セクション見出し → H2
+    "text": "p",                 # 本文 → 段落
+    "vertical_text": "p",        # 縦書きテキスト → 段落
+    "abstract": "blockquote",    # 概要 → 引用
+    "aside_text": "blockquote",  # 補足テキスト → 引用
+
+    # === 図表系 ===
+    "figure_title": "italic",    # 図キャプション → イタリック
+    "table": "p",                # 表 → 段落（将来: Markdown表）
+    "chart": "skip",             # グラフ → スキップ
+    "image": "skip",             # 画像 → スキップ
+
+    # === 数式系 ===
+    "inline_formula": "code",        # インライン数式 → コード
+    "display_formula": "code_block", # ディスプレイ数式 → コードブロック
+    "algorithm": "code_block",       # アルゴリズム → コードブロック
+    "formula_number": "skip",        # 数式番号 → スキップ
+
+    # === 参照系 ===
+    "reference": "p",            # 参考文献 → 段落
+    "reference_content": "p",    # 参考文献内容 → 段落
+    "footnote": "p",             # 脚注 → 段落
+    "vision_footnote": "p",      # 視覚的脚注 → 段落
+
+    # === ナビゲーション系（通常スキップ） ===
+    "header": "skip",            # ヘッダー → スキップ
+    "header_image": "skip",      # ヘッダー内画像 → スキップ
+    "footer": "skip",            # フッター → スキップ
+    "footer_image": "skip",      # フッター内画像 → スキップ
+    "number": "skip",            # ページ番号等 → スキップ
+
+    # === その他 ===
+    "seal": "skip",              # 印鑑 → スキップ
+    "content": "p",              # コンテンツ → 段落
+    "unknown": "p",              # 未知 → 段落
+}
+
+# カテゴリなし（None）の場合のデフォルト
+DEFAULT_NONE_CATEGORY_MAPPING: str = "p"  # 段落として出力
+```
+
+### 4.3 カテゴリマッピングのカスタマイズ
+
+ユーザーは `category_mapping_overrides` で部分的にマッピングを上書きできる：
+
+```python
+@dataclass
+class MarkdownConfig:
+    # ... 既存フィールド ...
+
+    # カテゴリマッピングのオーバーライド（部分指定可能）
+    category_mapping_overrides: dict[str, str] | None = None
+```
+
+**使用例**:
+
+```python
+# デフォルト: doc_title → h1, paragraph_title → h2
+config = MarkdownConfig()
+
+# ユースケース1: 見出しレベルを変更（H2から開始）
+config = MarkdownConfig(
+    category_mapping_overrides={
+        "doc_title": "h2",
+        "paragraph_title": "h3",
+    }
+)
+
+# ユースケース2: abstract を見出しに変更
+config = MarkdownConfig(
+    category_mapping_overrides={
+        "abstract": "h3",  # blockquote → h3
+    }
+)
+
+# ユースケース3: heading_offset との組み合わせ
+config = MarkdownConfig(
+    heading_offset=1,  # 全見出しを +1
+)
+# → doc_title: h1+1=h2, paragraph_title: h2+1=h3
+
+# ユースケース4: ヘッダー/フッターも出力したい
+config = MarkdownConfig(
+    category_mapping_overrides={
+        "header": "p",
+        "footer": "p",
+    }
+)
+
+# ユースケース5: 数式をLaTeX形式で出力（将来拡張用）
+config = MarkdownConfig(
+    category_mapping_overrides={
+        "inline_formula": "latex_inline",   # 将来: $...$
+        "display_formula": "latex_block",   # 将来: $$...$$
+    }
+)
+```
+
+### 4.4 マッピング解決ロジック
+
+```python
+def _get_element_type(self, category: str | None) -> str:
+    """カテゴリからMarkdown要素タイプを取得"""
+    if category is None:
+        return DEFAULT_NONE_CATEGORY_MAPPING  # "p"
+
+    # 1. オーバーライドを優先チェック
+    if self._config.category_mapping_overrides:
+        if category in self._config.category_mapping_overrides:
+            return self._config.category_mapping_overrides[category]
+
+    # 2. デフォルトマッピングを使用
+    return DEFAULT_CATEGORY_MAPPING.get(category, "p")
+
+def _apply_heading_offset(self, element_type: str) -> str:
+    """見出しにオフセットを適用"""
+    if not element_type.startswith("h") or len(element_type) != 2:
+        return element_type
+
+    try:
+        level = int(element_type[1])
+        new_level = min(6, max(1, level + self._config.heading_offset))
+        return f"h{new_level}"
+    except ValueError:
+        return element_type
+```
 
 **脚注について**: 現行データモデル（`Paragraph`）には脚注番号フィールドがないため、
 Markdown脚注記法 `[^n]` ではなく、通常の段落として出力する。
 本格的な脚注対応は将来の拡張とする（データモデルへの `footnote_number` 追加が必要）。
 
-```markdown
-# 脚注の現行出力形式
-※ 脚注テキストがここに出力される
-```
-
-### 4.2 テキスト選択ルール（フォールバック）
+### 4.5 テキスト選択ルール（フォールバック）
 
 `TRANSLATED_ONLY` モードでは以下の優先順位でテキストを選択:
 
@@ -530,7 +669,7 @@ def _get_display_text(self, paragraph: Paragraph) -> str:
         return paragraph.text
 ```
 
-### 4.3 スタイル変換
+### 4.6 スタイル変換
 
 | Paragraph属性 | Markdown |
 |---------------|----------|
@@ -538,7 +677,7 @@ def _get_display_text(self, paragraph: Paragraph) -> str:
 | `is_italic=True` | `*text*` |
 | `is_bold=True, is_italic=True` | `***text***` |
 
-### 4.5 段落の読み順
+### 4.7 段落の読み順
 
 現行実装では、段落は pdftext の出力順（ブロック順）で処理される。
 多段組（マルチカラム）レイアウトの読み順は pdftext の解析に依存する。
@@ -553,7 +692,7 @@ def _get_display_text(self, paragraph: Paragraph) -> str:
 
 現時点では、読み順の問題は許容し、将来のレイアウト解析強化で対応する。
 
-### 4.6 ページ区切り
+### 4.8 ページ区切り
 
 ページ番号は `Paragraph.page_number`（0始まり）を1始まりに変換して表示:
 
@@ -711,8 +850,29 @@ tests/
 13. **CLIオプション追加**
     - `--markdown` フラグ（Markdown出力を有効化）
     - `--markdown-mode` オプション（translated_only / parallel）
+    - `--heading-offset` オプション（見出しレベル一括オフセット）
+    - `--category-map` オプション（カテゴリマッピング上書き）
     - `--save-json` フラグ（中間データ保存を有効化）
     - `--from-json` オプション（中間データからMarkdown生成、再翻訳なし）
+
+    **CLIオプション使用例**:
+    ```bash
+    # 基本的なMarkdown出力
+    translate-pdf input.pdf --markdown
+
+    # 見出しレベルを変更（H2から開始）
+    translate-pdf input.pdf --markdown \
+        --category-map "doc_title=h2,paragraph_title=h3"
+
+    # 一括オフセット
+    translate-pdf input.pdf --markdown --heading-offset 1
+
+    # abstract を見出しに変更
+    translate-pdf input.pdf --markdown --category-map "abstract=h3"
+
+    # 中間データも保存
+    translate-pdf input.pdf --markdown --save-json
+    ```
 
 ---
 
@@ -743,13 +903,45 @@ class TestMarkdownWriter:
     def test_paragraph_to_markdown_title(self): ...
     def test_paragraph_to_markdown_with_bold(self): ...
     def test_paragraph_to_markdown_with_italic(self): ...
-    def test_category_to_heading_level(self): ...
     def test_write_single_paragraph(self): ...
     def test_write_multiple_paragraphs(self): ...
     def test_write_with_page_breaks(self): ...
     def test_generate_metadata(self): ...
     def test_parallel_mode(self): ...
     def test_translated_only_mode(self): ...
+
+class TestCategoryMapping:
+    """カテゴリマッピングのテスト"""
+    def test_default_mapping_doc_title(self):
+        """doc_title → h1 のデフォルトマッピング"""
+        ...
+    def test_default_mapping_paragraph_title(self):
+        """paragraph_title → h2 のデフォルトマッピング"""
+        ...
+    def test_default_mapping_text(self):
+        """text → p のデフォルトマッピング"""
+        ...
+    def test_default_mapping_skip_categories(self):
+        """header, footer, image 等が skip されること"""
+        ...
+    def test_category_override_heading_level(self):
+        """doc_title=h2 等のオーバーライド"""
+        ...
+    def test_category_override_element_type(self):
+        """abstract=h3 等の要素タイプ変更"""
+        ...
+    def test_heading_offset_applies_to_all(self):
+        """heading_offset が全見出しに適用されること"""
+        ...
+    def test_heading_offset_with_override(self):
+        """heading_offset と override の組み合わせ"""
+        ...
+    def test_none_category_uses_default(self):
+        """category=None の場合 "p" が使用されること"""
+        ...
+    def test_unknown_category_uses_default(self):
+        """未知のカテゴリは "p" になること"""
+        ...
 ```
 
 ### 8.3 統合テスト
