@@ -156,6 +156,7 @@ class TranslationPipeline:
         self._config = config or PipelineConfig()
         self._progress_callback = progress_callback
         self._analyzer = LayoutAnalyzer()
+        self._page_count: int = 0  # Set by _stage_extract for use in _save_intermediate
 
     async def translate(
         self,
@@ -251,6 +252,7 @@ class TranslationPipeline:
 
         with PDFProcessor(pdf_path) as processor:
             page_count = processor.page_count
+        self._page_count = page_count  # Store for _save_intermediate
         self._notify("extract", page_count, page_count)
         return paragraphs
 
@@ -537,11 +539,18 @@ class TranslationPipeline:
         # Extract tables if enabled
         if self._config.extract_tables and layout_blocks:
             table_config = TableExtractionConfig(mode=self._config.table_mode)
-            table_extractor = TableExtractor(table_config)
+            # Pass image config for table image fallback to use same settings
+            table_image_config = ImageExtractionConfig(
+                format=self._config.image_format,
+                quality=self._config.image_quality,
+                dpi=self._config.image_dpi,
+            )
+            table_extractor = TableExtractor(table_config, image_config=table_image_config)
 
             # Get text objects for heuristic extraction
-            # Note: We need to get TextObjects from ParagraphExtractor or PDFProcessor
-            # For now, we pass empty list and rely on image fallback
+            # TODO: TextObject extraction not yet implemented in pipeline.
+            # Heuristic mode will fall back to pdfplumber or image extraction.
+            # See Issue for proper TextObject integration.
             text_objects: list[Any] = []
 
             for page_num, blocks in layout_blocks.items():
@@ -588,9 +597,10 @@ class TranslationPipeline:
             pdf_path: Path to the source PDF.
             output_path: Output path for the translated PDF.
         """
-        # Count pages from paragraphs
-        page_numbers = {p.page_number for p in paragraphs}
-        total_pages = max(page_numbers) + 1 if page_numbers else 0
+        # Use actual PDF page count (stored by _stage_extract)
+        # This is more accurate than counting from paragraphs, as pages without
+        # text content would be missed otherwise.
+        total_pages = self._page_count
 
         # Get translator backend name
         backend_name = type(self._translator).__name__.replace("Translator", "").lower()

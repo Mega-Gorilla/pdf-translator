@@ -191,13 +191,19 @@ class TableExtractor:
     - image: Image fallback for complex tables
     """
 
-    def __init__(self, config: TableExtractionConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TableExtractionConfig | None = None,
+        image_config: Any | None = None,
+    ) -> None:
         """Initialize TableExtractor.
 
         Args:
             config: Table extraction configuration.
+            image_config: ImageExtractionConfig for image fallback.
         """
         self._config = config or TableExtractionConfig()
+        self._image_config = image_config  # For image fallback
         self._pdfplumber_available = self._check_pdfplumber()
         self._counter = 0
 
@@ -615,7 +621,8 @@ class TableExtractor:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        config = ImageExtractionConfig()
+        # Use provided image config or default
+        config = self._image_config or ImageExtractionConfig()
         bbox = table_block.bbox
         page_num = table_block.page_num
 

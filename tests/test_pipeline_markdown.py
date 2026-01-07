@@ -232,6 +232,8 @@ class TestPipelineSaveIntermediate:
             target_lang="ja",
         )
         pipeline = TranslationPipeline(mock_translator, config)
+        # Simulate _stage_extract setting the page count
+        pipeline._page_count = 2
 
         paragraphs = [
             Paragraph(
@@ -269,7 +271,7 @@ class TestPipelineSaveIntermediate:
             assert data["metadata"]["source_lang"] == "en"
             assert data["metadata"]["target_lang"] == "ja"
             assert data["metadata"]["translator_backend"] == "google"
-            assert data["metadata"]["page_count"] == 2  # pages 0 and 1
+            assert data["metadata"]["page_count"] == 2  # Set by _page_count
             assert len(data["paragraphs"]) == 2
 
     def test_save_intermediate_empty_paragraphs(self) -> None:
