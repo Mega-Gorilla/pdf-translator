@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from pdf_translator.core.models import BBox, Paragraph
 
 if TYPE_CHECKING:
-    pass  # For future ExtractedImage, ExtractedTable imports
+    from pdf_translator.output.image_extractor import ExtractedImage
+    from pdf_translator.output.table_extractor import ExtractedTable
 
 
 class MarkdownOutputMode(Enum):
@@ -91,8 +92,8 @@ class MarkdownWriter:
     def write(
         self,
         paragraphs: list[Paragraph],
-        extracted_images: list[Any] | None = None,
-        extracted_tables: list[Any] | None = None,
+        extracted_images: list[ExtractedImage] | None = None,
+        extracted_tables: list[ExtractedTable] | None = None,
     ) -> str:
         """Generate Markdown string from paragraphs.
 
@@ -138,8 +139,8 @@ class MarkdownWriter:
         self,
         paragraphs: list[Paragraph],
         output_path: Path,
-        extracted_images: list[Any] | None = None,
-        extracted_tables: list[Any] | None = None,
+        extracted_images: list[ExtractedImage] | None = None,
+        extracted_tables: list[ExtractedTable] | None = None,
     ) -> None:
         """Write Markdown to file.
 
@@ -195,8 +196,8 @@ class MarkdownWriter:
 
     def _build_image_map(
         self,
-        extracted_images: list[Any] | None,
-    ) -> dict[str, Any]:
+        extracted_images: list[ExtractedImage] | None,
+    ) -> dict[str, ExtractedImage]:
         """Build image map for lookup.
 
         Args:
@@ -207,21 +208,20 @@ class MarkdownWriter:
         """
         if not extracted_images:
             return {}
-        result: dict[str, Any] = {}
+        result: dict[str, ExtractedImage] = {}
         for img in extracted_images:
-            # ExtractedImage should have layout_block_id, page_number, bbox
             key = self._build_key(
-                getattr(img, "layout_block_id", None),
-                getattr(img, "page_number", 0),
-                getattr(img, "bbox", BBox(0, 0, 0, 0)),
+                img.layout_block_id,
+                img.page_number,
+                img.bbox,
             )
             result[key] = img
         return result
 
     def _build_table_map(
         self,
-        extracted_tables: list[Any] | None,
-    ) -> dict[str, Any]:
+        extracted_tables: list[ExtractedTable] | None,
+    ) -> dict[str, ExtractedTable]:
         """Build table map for lookup.
 
         Args:
@@ -232,13 +232,12 @@ class MarkdownWriter:
         """
         if not extracted_tables:
             return {}
-        result: dict[str, Any] = {}
+        result: dict[str, ExtractedTable] = {}
         for table in extracted_tables:
-            # ExtractedTable should have layout_block_id, page_number, bbox
             key = self._build_key(
-                getattr(table, "layout_block_id", None),
-                getattr(table, "page_number", 0),
-                getattr(table, "bbox", BBox(0, 0, 0, 0)),
+                table.layout_block_id,
+                table.page_number,
+                table.bbox,
             )
             result[key] = table
         return result
@@ -246,8 +245,8 @@ class MarkdownWriter:
     def _paragraph_to_markdown(
         self,
         paragraph: Paragraph,
-        image_map: dict[str, Any] | None = None,
-        table_map: dict[str, Any] | None = None,
+        image_map: dict[str, ExtractedImage] | None = None,
+        table_map: dict[str, ExtractedTable] | None = None,
     ) -> str:
         """Convert single paragraph to Markdown.
 

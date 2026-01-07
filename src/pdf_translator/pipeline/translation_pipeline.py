@@ -27,10 +27,20 @@ from pdf_translator.core.side_by_side import (
     SideBySideGenerator,
     SideBySideOrder,
 )
+from pdf_translator.output.image_extractor import (
+    ExtractedImage,
+    ImageExtractionConfig,
+    ImageExtractor,
+)
 from pdf_translator.output.markdown_writer import (
     MarkdownConfig,
     MarkdownOutputMode,
     MarkdownWriter,
+)
+from pdf_translator.output.table_extractor import (
+    ExtractedTable,
+    TableExtractionConfig,
+    TableExtractor,
 )
 from pdf_translator.output.translated_document import TranslatedDocument
 from pdf_translator.pipeline.errors import (
@@ -110,6 +120,16 @@ class PipelineConfig:
     markdown_heading_offset: int = 0  # 0-5, shifts heading levels
     save_intermediate: bool = False  # Save intermediate JSON file
 
+    # Image extraction options (only when markdown_output=True)
+    extract_images: bool = True  # Extract images from PDF
+    image_format: str = "png"  # png or jpeg
+    image_quality: int = 95  # JPEG quality (1-100)
+    image_dpi: int = 150  # Render resolution
+
+    # Table extraction options (only when markdown_output=True)
+    extract_tables: bool = True  # Extract tables from PDF
+    table_mode: str = "heuristic"  # heuristic, pdfplumber, or image
+
 
 @dataclass
 class TranslationResult:
@@ -184,7 +204,9 @@ class TranslationPipeline:
         # Generate Markdown output if enabled
         markdown_str: str | None = None
         if self._config.markdown_output:
-            markdown_str = self._stage_markdown(paragraphs, pdf_path)
+            markdown_str = self._stage_markdown(
+                paragraphs, pdf_path, layout_blocks, output_path
+            )
 
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -477,16 +499,68 @@ class TranslationPipeline:
         self,
         paragraphs: list[Paragraph],
         pdf_path: Path,
+        layout_blocks: dict[int, list[LayoutBlock]],
+        output_path: Path | None,
     ) -> str:
         """Generate Markdown output from translated paragraphs.
 
         Args:
             paragraphs: List of translated paragraphs.
             pdf_path: Path to the source PDF (for metadata).
+            layout_blocks: Layout blocks per page (for image/table extraction).
+            output_path: Output path for images directory.
 
         Returns:
             Markdown string.
         """
+        extracted_images: list[ExtractedImage] = []
+        extracted_tables: list[ExtractedTable] = []
+
+        # Determine images output directory
+        if output_path is not None:
+            images_dir = output_path.parent / "images"
+        else:
+            images_dir = pdf_path.parent / "images"
+
+        # Extract images if enabled
+        if self._config.extract_images and layout_blocks:
+            image_config = ImageExtractionConfig(
+                enabled=True,
+                format=self._config.image_format,
+                quality=self._config.image_quality,
+                dpi=self._config.image_dpi,
+            )
+            extractor = ImageExtractor(image_config)
+            extracted_images = extractor.extract(pdf_path, layout_blocks, images_dir)
+            self._notify("extract_images", len(extracted_images), len(extracted_images))
+
+        # Extract tables if enabled
+        if self._config.extract_tables and layout_blocks:
+            table_config = TableExtractionConfig(mode=self._config.table_mode)
+            table_extractor = TableExtractor(table_config)
+
+            # Get text objects for heuristic extraction
+            # Note: We need to get TextObjects from ParagraphExtractor or PDFProcessor
+            # For now, we pass empty list and rely on image fallback
+            text_objects: list[Any] = []
+
+            for page_num, blocks in layout_blocks.items():
+                table_blocks = [
+                    b for b in blocks if b.raw_category.value == "table"
+                ]
+                for block in table_blocks:
+                    result = table_extractor.extract(
+                        pdf_path, block, text_objects, images_dir
+                    )
+                    if isinstance(result, ExtractedTable):
+                        extracted_tables.append(result)
+                    else:
+                        # Image fallback
+                        extracted_images.append(result)
+
+            self._notify("extract_tables", len(extracted_tables), len(extracted_tables))
+
+        # Generate Markdown
         config = MarkdownConfig(
             output_mode=self._config.markdown_mode,
             include_metadata=self._config.markdown_include_metadata,
@@ -497,7 +571,7 @@ class TranslationPipeline:
             source_filename=pdf_path.name,
         )
         writer = MarkdownWriter(config)
-        markdown = writer.write(paragraphs)
+        markdown = writer.write(paragraphs, extracted_images, extracted_tables)
         self._notify("markdown", 1, 1)
         return markdown
 

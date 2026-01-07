@@ -177,6 +177,46 @@ Environment Variables:
         help="Heading level offset (default: 0)",
     )
 
+    # Image extraction options (for Markdown)
+    img_group = parser.add_argument_group("Image extraction options (with --markdown)")
+    img_group.add_argument(
+        "--no-extract-images",
+        action="store_true",
+        help="Disable image extraction from PDF",
+    )
+    img_group.add_argument(
+        "--image-format",
+        default="png",
+        choices=["png", "jpeg"],
+        help="Image output format (default: png)",
+    )
+    img_group.add_argument(
+        "--image-quality",
+        type=int,
+        default=95,
+        help="JPEG quality 1-100 (default: 95)",
+    )
+    img_group.add_argument(
+        "--image-dpi",
+        type=int,
+        default=150,
+        help="Image render resolution (default: 150)",
+    )
+
+    # Table extraction options (for Markdown)
+    tbl_group = parser.add_argument_group("Table extraction options (with --markdown)")
+    tbl_group.add_argument(
+        "--no-extract-tables",
+        action="store_true",
+        help="Disable table extraction from PDF",
+    )
+    tbl_group.add_argument(
+        "--table-mode",
+        default="heuristic",
+        choices=["heuristic", "pdfplumber", "image"],
+        help="Table extraction mode (default: heuristic)",
+    )
+
     # Intermediate data options
     parser.add_argument(
         "--save-intermediate",
@@ -350,6 +390,14 @@ async def run(args: argparse.Namespace) -> int:
         markdown_include_page_breaks=not args.markdown_no_page_breaks,
         markdown_heading_offset=args.markdown_heading_offset,
         save_intermediate=args.save_intermediate,
+        # Image extraction options
+        extract_images=not args.no_extract_images,
+        image_format=args.image_format,
+        image_quality=args.image_quality,
+        image_dpi=args.image_dpi,
+        # Table extraction options
+        extract_tables=not args.no_extract_tables,
+        table_mode=args.table_mode,
         # Side-by-side options
         side_by_side=args.side_by_side,
         # Debug options

@@ -97,6 +97,8 @@ class TestPipelineMarkdownStage:
             markdown_mode=MarkdownOutputMode.TRANSLATED_ONLY,
             source_lang="en",
             target_lang="ja",
+            extract_images=False,  # Disable for unit test
+            extract_tables=False,  # Disable for unit test
         )
         pipeline = TranslationPipeline(mock_translator, config)
 
@@ -113,7 +115,7 @@ class TestPipelineMarkdownStage:
         ]
         pdf_path = Path("/tmp/test.pdf")
 
-        markdown = pipeline._stage_markdown(paragraphs, pdf_path)
+        markdown = pipeline._stage_markdown(paragraphs, pdf_path, {}, None)
 
         assert "こんにちは" in markdown
         # Should NOT contain original text in TRANSLATED_ONLY mode
@@ -127,6 +129,8 @@ class TestPipelineMarkdownStage:
             markdown_mode=MarkdownOutputMode.PARALLEL,
             source_lang="en",
             target_lang="ja",
+            extract_images=False,  # Disable for unit test
+            extract_tables=False,  # Disable for unit test
         )
         pipeline = TranslationPipeline(mock_translator, config)
 
@@ -143,7 +147,7 @@ class TestPipelineMarkdownStage:
         ]
         pdf_path = Path("/tmp/test.pdf")
 
-        markdown = pipeline._stage_markdown(paragraphs, pdf_path)
+        markdown = pipeline._stage_markdown(paragraphs, pdf_path, {}, None)
 
         # Should contain both original and translation
         assert "Hello" in markdown
@@ -157,6 +161,8 @@ class TestPipelineMarkdownStage:
             markdown_include_metadata=True,
             source_lang="en",
             target_lang="ja",
+            extract_images=False,  # Disable for unit test
+            extract_tables=False,  # Disable for unit test
         )
         pipeline = TranslationPipeline(mock_translator, config)
 
@@ -172,7 +178,7 @@ class TestPipelineMarkdownStage:
         ]
         pdf_path = Path("/tmp/sample.pdf")
 
-        markdown = pipeline._stage_markdown(paragraphs, pdf_path)
+        markdown = pipeline._stage_markdown(paragraphs, pdf_path, {}, None)
 
         # Check YAML frontmatter
         assert "---" in markdown
@@ -188,6 +194,8 @@ class TestPipelineMarkdownStage:
             markdown_include_metadata=False,
             source_lang="en",
             target_lang="ja",
+            extract_images=False,  # Disable for unit test
+            extract_tables=False,  # Disable for unit test
         )
         pipeline = TranslationPipeline(mock_translator, config)
 
@@ -203,7 +211,7 @@ class TestPipelineMarkdownStage:
         ]
         pdf_path = Path("/tmp/sample.pdf")
 
-        markdown = pipeline._stage_markdown(paragraphs, pdf_path)
+        markdown = pipeline._stage_markdown(paragraphs, pdf_path, {}, None)
 
         # Should NOT have YAML frontmatter
         assert "source_lang:" not in markdown
