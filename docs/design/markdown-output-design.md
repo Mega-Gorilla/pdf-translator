@@ -13,10 +13,10 @@ Issue: #5
 - PDF翻訳結果をMarkdown形式で出力
 - レイアウト解析結果を活用した構造化出力
 - 複数の出力オプションをサポート
+- **PDFから画像を抽出し、Markdownに埋め込み**
 
 ### 1.3 スコープ外
 
-- 画像の抽出・埋め込み（将来の拡張）
 - 表のMarkdown変換（将来の拡張）
 - 数式のLaTeX変換（将来の拡張）
 - リスト・箇条書きの自動検出（将来の拡張）
@@ -47,7 +47,8 @@ PDF
 │  ├─ _stage_apply() → pdf_bytes (翻訳済みPDF)                 │
 │  │                                                          │
 │  └─ if markdown_output:                                     │
-│       MarkdownWriter.write(paragraphs) → markdown           │
+│       ├─ ImageExtractor.extract() → images/ (画像抽出)       │
+│       └─ MarkdownWriter.write(paragraphs) → markdown        │
 └─────────────────────────────────────────────────────────────┘
  │
  │ TranslationResult (単一オブジェクト)
@@ -59,14 +60,18 @@ PDF
 │ 出力ファイル (output_pathから自動決定)                        │
 │  ├─ output.pdf         (常に出力)                            │
 │  ├─ output.md          (markdown_output=True時)             │
-│  └─ output.json        (save_intermediate=True時)            │
+│  ├─ output.json        (save_intermediate=True時)            │
+│  └─ images/            (extract_images=True時)               │
+│       ├─ figure_001.png                                      │
+│       └─ figure_002.png                                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **ポイント**:
 - 翻訳処理は1回のみ実行（PDF生成とMarkdown生成で再翻訳しない）
 - `paragraphs`を保持することで、同一の翻訳結果から複数形式を生成
-- ファイル出力は`output_path`から自動的に`.md`/`.json`パスを決定
+- ファイル出力は`output_path`から自動的に`.md`/`.json`/`images/`パスを決定
+- 画像抽出は `image`, `chart` カテゴリの LayoutBlock を使用
 
 ### 2.2 再生成フロー（中間データからMarkdown生成）
 
@@ -118,6 +123,18 @@ class MarkdownOutputMode(Enum):
 
 
 @dataclass
+class ImageExtractionConfig:
+    """画像抽出設定"""
+    enabled: bool = True                     # 画像抽出を有効化（デフォルト有効）
+    output_dir: Optional[Path] = None        # 画像保存ディレクトリ（Noneで自動）
+    relative_path: str = "images"            # Markdownからの相対パス
+    format: str = "png"                      # 出力フォーマット（png/jpeg）
+    quality: int = 95                        # JPEG品質（1-100）
+    min_size: tuple[int, int] = (50, 50)    # 最小サイズ（小さすぎる画像を除外）
+    naming: str = "sequential"               # 命名規則: sequential/page_index
+
+
+@dataclass
 class MarkdownConfig:
     """Markdown出力設定"""
     output_mode: MarkdownOutputMode = MarkdownOutputMode.TRANSLATED_ONLY
@@ -129,6 +146,8 @@ class MarkdownConfig:
     source_filename: Optional[str] = None    # 元PDFファイル名
     # カテゴリマッピングのオーバーライド（詳細は Section 4.3 参照）
     category_mapping_overrides: Optional[dict[str, str]] = None
+    # 画像抽出設定（詳細は Section 5 参照）
+    image_extraction: Optional[ImageExtractionConfig] = None
 
 
 class MarkdownWriter:
@@ -710,9 +729,175 @@ page_break = f"---\n<!-- Page {display_page} -->\n"
 
 ---
 
-## 5. 出力フォーマット例
+## 5. 画像抽出・挿入
 
-### 5.1 訳文のみ (`TRANSLATED_ONLY`)
+PDFから画像を抽出し、Markdownに埋め込む機能。
+
+### 5.1 設計概要
+
+```
+PDF
+ │
+ ├─ image/chart カテゴリの LayoutBlock を検出
+ │
+ ▼
+┌─────────────────────────────────────────────────────────────┐
+│ ImageExtractor                                               │
+│  ├─ pypdfium2 で画像領域を抽出                               │
+│  ├─ 画像フォーマット変換（PNG/JPEG）                         │
+│  └─ ファイル保存（設定に応じたパス）                         │
+└─────────────────────────────────────────────────────────────┘
+ │
+ ▼
+┌─────────────────────────────────────────────────────────────┐
+│ MarkdownWriter                                               │
+│  ├─ 画像参照を生成: ![alt](path)                            │
+│  └─ figure_title があれば caption として追加                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 5.2 ImageExtractor クラス
+
+```python
+# src/pdf_translator/output/image_extractor.py
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from pdf_translator.core.models import LayoutBlock
+
+
+@dataclass
+class ExtractedImage:
+    """抽出された画像情報"""
+    id: str                      # 画像ID (figure_001 等)
+    path: Path                   # 保存先パス
+    relative_path: str           # Markdownからの相対パス
+    page_number: int             # ページ番号
+    category: str                # image / chart
+    caption: Optional[str]       # figure_title から取得したキャプション
+
+
+class ImageExtractor:
+    """PDF画像抽出器"""
+
+    def __init__(self, config: ImageExtractionConfig) -> None:
+        self._config = config
+
+    def extract(
+        self,
+        pdf_path: Path,
+        layout_blocks: list[LayoutBlock],
+        output_dir: Path,
+    ) -> list[ExtractedImage]:
+        """PDFから画像を抽出して保存"""
+        ...
+
+    def _extract_image_from_page(
+        self,
+        page: "PdfPage",
+        bbox: BBox,
+    ) -> bytes:
+        """ページの指定領域から画像を抽出"""
+        ...
+
+    def _find_caption(
+        self,
+        image_block: LayoutBlock,
+        all_blocks: list[LayoutBlock],
+    ) -> Optional[str]:
+        """figure_title を検索してキャプションを取得"""
+        ...
+```
+
+### 5.3 出力構造
+
+```
+output/
+├── document_ja.pdf          # 翻訳済みPDF
+├── document_ja.md           # Markdown
+├── document_ja.json         # 中間データ（オプション）
+└── images/                  # 画像フォルダ（設定可能）
+    ├── figure_001.png       # image カテゴリ
+    ├── figure_002.png
+    └── chart_001.png        # chart カテゴリ
+```
+
+### 5.4 Markdown出力例
+
+```markdown
+## 実験結果
+
+以下の図に結果を示す。
+
+![Figure 1: 実験結果のグラフ](images/figure_001.png)
+
+*図1: 実験結果のグラフ*
+
+データ分析の結果...
+
+![Figure 2](images/figure_002.png)
+```
+
+### 5.5 カテゴリマッピング
+
+画像関連カテゴリのデフォルトマッピングを更新:
+
+```python
+DEFAULT_CATEGORY_MAPPING = {
+    # ... 既存 ...
+    "image": "image",        # 画像参照を生成
+    "chart": "image",        # チャートも画像として処理
+    "figure_title": "caption", # キャプションとして処理
+}
+```
+
+要素タイプの追加:
+
+| 要素タイプ | 文字列 | Markdown出力 |
+|------------|--------|--------------|
+| 画像 | `"image"` | `![alt](path)` |
+| キャプション | `"caption"` | `*テキスト*` (イタリック) |
+
+### 5.6 設定オプション
+
+`ImageExtractionConfig` の詳細（Section 3.1 参照）:
+
+| フィールド | デフォルト | 説明 |
+|------------|------------|------|
+| `enabled` | `True` | 画像抽出を有効化 |
+| `output_dir` | `None` | 画像保存先（Noneで自動） |
+| `relative_path` | `"images"` | Markdownからの相対パス |
+| `format` | `"png"` | 出力フォーマット (png/jpeg) |
+| `quality` | `95` | JPEG品質 (1-100) |
+| `min_size` | `(50, 50)` | 最小サイズ（除外条件） |
+| `naming` | `"sequential"` | 命名規則 |
+
+### 5.7 CLIオプション
+
+```bash
+# 画像抽出を無効化（デフォルトは有効）
+translate-pdf input.pdf --markdown --no-extract-images
+
+# カスタム画像保存先
+translate-pdf input.pdf --markdown \
+    --image-dir "./assets/images"
+
+# 相対パス指定
+translate-pdf input.pdf --markdown \
+    --image-relative-path "assets/images"
+
+# フォーマット指定
+translate-pdf input.pdf --markdown \
+    --image-format jpeg --image-quality 85
+```
+
+---
+
+## 6. 出力フォーマット例
+
+### 6.1 訳文のみ (`TRANSLATED_ONLY`)
 
 ```markdown
 ---
@@ -739,7 +924,7 @@ source_file: sample.pdf
 次のセクションの内容...
 ```
 
-### 5.2 並列出力 (`PARALLEL`)
+### 6.2 並列出力 (`PARALLEL`)
 
 ```markdown
 ---
@@ -763,13 +948,14 @@ This is a body paragraph. The translated text appears here.
 
 ---
 
-## 6. ファイル構成
+## 7. ファイル構成
 
 ```
 src/pdf_translator/
 ├── output/                          # NEW
 │   ├── __init__.py
 │   ├── markdown_writer.py           # MarkdownWriter, MarkdownConfig
+│   ├── image_extractor.py           # ImageExtractor, ImageExtractionConfig
 │   └── translated_document.py       # TranslatedDocument (中間データ)
 ├── pipeline/
 │   └── translation_pipeline.py      # 変更: TranslationResult拡張
@@ -778,12 +964,13 @@ src/pdf_translator/
 
 tests/
 ├── test_markdown_writer.py          # NEW
+├── test_image_extractor.py          # NEW
 └── test_translated_document.py      # NEW
 ```
 
 ---
 
-## 7. 実装ステップ
+## 8. 実装ステップ
 
 ### Phase 0: 中間データ形式（前提条件）
 
@@ -845,30 +1032,57 @@ tests/
 12. **並列出力モード**
     - 原文/訳文の並列表示
 
-### Phase 4: CLI統合
+### Phase 4: 画像抽出
 
-13. **CLIオプション追加**
+13. **ImageExtractor 実装**
+    - `output/image_extractor.py` 新規作成
+    - pypdfium2 から画像領域を抽出
+    - PIL/Pillow で画像変換・保存
+
+14. **LayoutBlock との連携**
+    - `image`, `chart` カテゴリの BBox を使用
+    - ページ内の画像領域を特定
+    - `figure_title` との関連付け（キャプション検索）
+
+15. **MarkdownWriter 拡張**
+    - `"image"`, `"caption"` 要素タイプの処理
+    - 画像参照 `![alt](path)` の生成
+    - 抽出画像リストの受け渡し
+
+16. **画像抽出テスト**
+    - 単一画像の抽出
+    - 複数画像の抽出
+    - キャプション関連付け
+    - 出力パスカスタマイズ
+
+### Phase 5: CLI統合
+
+17. **CLIオプション追加**
     - `--markdown` フラグ（Markdown出力を有効化）
     - `--markdown-mode` オプション（translated_only / parallel）
     - `--heading-offset` オプション（見出しレベル一括オフセット）
     - `--category-map` オプション（カテゴリマッピング上書き）
     - `--save-json` フラグ（中間データ保存を有効化）
     - `--from-json` オプション（中間データからMarkdown生成、再翻訳なし）
+    - `--no-extract-images` フラグ（画像抽出を無効化）
+    - `--image-dir` オプション（画像保存先）
+    - `--image-relative-path` オプション（相対パス）
+    - `--image-format` オプション（png/jpeg）
 
     **CLIオプション使用例**:
     ```bash
-    # 基本的なMarkdown出力
+    # 基本的なMarkdown出力（画像抽出はデフォルト有効）
     translate-pdf input.pdf --markdown
+
+    # 画像抽出を無効化
+    translate-pdf input.pdf --markdown --no-extract-images
+
+    # カスタム画像保存先
+    translate-pdf input.pdf --markdown --image-dir "./assets/images"
 
     # 見出しレベルを変更（H2から開始）
     translate-pdf input.pdf --markdown \
         --category-map "doc_title=h2,paragraph_title=h3"
-
-    # 一括オフセット
-    translate-pdf input.pdf --markdown --heading-offset 1
-
-    # abstract を見出しに変更
-    translate-pdf input.pdf --markdown --category-map "abstract=h3"
 
     # 中間データも保存
     translate-pdf input.pdf --markdown --save-json
@@ -876,9 +1090,9 @@ tests/
 
 ---
 
-## 8. テスト計画
+## 9. テスト計画
 
-### 8.1 中間データ形式テスト
+### 9.1 中間データ形式テスト
 
 ```python
 class TestParagraphSerialization:
@@ -895,7 +1109,7 @@ class TestTranslatedDocument:
     def test_version_mismatch_raises_error(self): ...
 ```
 
-### 8.2 Markdown Writer テスト
+### 9.2 Markdown Writer テスト
 
 ```python
 class TestMarkdownWriter:
@@ -944,7 +1158,7 @@ class TestCategoryMapping:
         ...
 ```
 
-### 8.3 統合テスト
+### 9.3 統合テスト
 
 ```python
 class TestMarkdownIntegration:
@@ -973,142 +1187,122 @@ class TestMarkdownIntegration:
         ...
 ```
 
+### 9.4 画像抽出テスト
+
+```python
+class TestImageExtractor:
+    """画像抽出器のテスト"""
+    def test_extract_single_image(self):
+        """単一画像の抽出"""
+        ...
+
+    def test_extract_multiple_images(self):
+        """複数画像の抽出"""
+        ...
+
+    def test_extract_image_from_bbox(self):
+        """LayoutBlock の BBox から画像領域を正しく抽出"""
+        ...
+
+    def test_image_format_png(self):
+        """PNG形式で出力"""
+        ...
+
+    def test_image_format_jpeg(self):
+        """JPEG形式で出力"""
+        ...
+
+    def test_jpeg_quality_setting(self):
+        """JPEG品質設定が適用されること"""
+        ...
+
+    def test_min_size_filter(self):
+        """min_size より小さい画像が除外されること"""
+        ...
+
+    def test_custom_output_dir(self):
+        """カスタム出力ディレクトリへの保存"""
+        ...
+
+    def test_sequential_naming(self):
+        """sequential 命名規則（figure_001, figure_002, ...）"""
+        ...
+
+    def test_page_index_naming(self):
+        """page_index 命名規則（p1_figure_001, ...）"""
+        ...
+
+
+class TestImageCaptionAssociation:
+    """画像とキャプションの関連付けテスト"""
+    def test_find_caption_below_image(self):
+        """画像の下にある figure_title をキャプションとして検出"""
+        ...
+
+    def test_find_caption_above_image(self):
+        """画像の上にある figure_title をキャプションとして検出"""
+        ...
+
+    def test_no_caption_when_figure_title_far(self):
+        """figure_title が離れている場合はキャプションなし"""
+        ...
+
+    def test_caption_on_same_page_only(self):
+        """異なるページの figure_title は関連付けない"""
+        ...
+
+
+class TestImageMarkdownOutput:
+    """画像のMarkdown出力テスト"""
+    def test_image_reference_generated(self):
+        """![alt](path) 形式の参照が生成されること"""
+        ...
+
+    def test_image_with_caption(self):
+        """キャプション付き画像の出力"""
+        ...
+
+    def test_image_without_caption(self):
+        """キャプションなし画像の出力"""
+        ...
+
+    def test_relative_path_in_reference(self):
+        """相対パスが正しく設定されること"""
+        ...
+
+    def test_custom_relative_path(self):
+        """カスタム相対パス設定"""
+        ...
+
+    def test_image_extraction_disabled(self):
+        """enabled=False で画像参照が生成されないこと"""
+        ...
+
+
+class TestImageIntegration:
+    """画像抽出の統合テスト"""
+    def test_pipeline_extracts_images(self):
+        """パイプライン実行で画像が抽出されること"""
+        ...
+
+    def test_images_dir_created(self):
+        """images/ ディレクトリが自動作成されること"""
+        ...
+
+    def test_markdown_references_extracted_images(self):
+        """Markdownが抽出された画像を参照すること"""
+        ...
+
+    def test_no_extract_images_flag(self):
+        """--no-extract-images フラグで画像抽出がスキップされること"""
+        ...
+```
+
 ---
 
-## 9. 将来の拡張
+## 10. 将来の拡張
 
-### 9.1 画像抽出・挿入
-
-PDFから画像を抽出し、Markdownに埋め込む機能。
-
-#### 9.1.1 設計概要
-
-```
-PDF
- │
- ├─ image カテゴリの LayoutBlock を検出
- │
- ▼
-┌─────────────────────────────────────────────────────────────┐
-│ ImageExtractor                                               │
-│  ├─ pypdfium2 で画像領域を抽出                               │
-│  ├─ 画像フォーマット変換（PNG/JPEG）                         │
-│  └─ ファイル保存（設定に応じたパス）                         │
-└─────────────────────────────────────────────────────────────┘
- │
- ▼
-┌─────────────────────────────────────────────────────────────┐
-│ MarkdownWriter                                               │
-│  ├─ 画像参照を生成: ![alt](path)                            │
-│  └─ figure_title があれば caption として追加                 │
-└─────────────────────────────────────────────────────────────┘
-```
-
-#### 9.1.2 設定オプション
-
-```python
-@dataclass
-class ImageExtractionConfig:
-    """画像抽出設定"""
-    enabled: bool = False                    # 画像抽出を有効化
-    output_dir: Optional[Path] = None        # 画像保存ディレクトリ（Noneで自動）
-    relative_path: str = "images"            # Markdownからの相対パス
-    format: str = "png"                      # 出力フォーマット（png/jpeg）
-    quality: int = 95                        # JPEG品質（1-100）
-    min_size: tuple[int, int] = (50, 50)    # 最小サイズ（小さすぎる画像を除外）
-    naming: str = "sequential"               # 命名規則: sequential/page_index
-
-@dataclass
-class MarkdownConfig:
-    # ... 既存フィールド ...
-    image_extraction: Optional[ImageExtractionConfig] = None
-```
-
-#### 9.1.3 出力構造
-
-```
-output/
-├── document_ja.pdf          # 翻訳済みPDF
-├── document_ja.md           # Markdown
-├── document_ja.json         # 中間データ（オプション）
-└── images/                  # 画像フォルダ（設定可能）
-    ├── figure_001.png
-    ├── figure_002.png
-    └── chart_001.png
-```
-
-#### 9.1.4 Markdown出力例
-
-```markdown
-## 実験結果
-
-以下の図に結果を示す。
-
-![Figure 1: 実験結果のグラフ](images/figure_001.png)
-*図1: 実験結果のグラフ*
-
-データ分析の結果...
-
-![Figure 2](images/figure_002.png)
-```
-
-#### 9.1.5 カテゴリマッピング拡張
-
-画像関連カテゴリの新しい要素タイプを追加:
-
-```python
-# 将来の要素タイプ
-| 要素タイプ | 文字列 | Markdown出力 |
-|------------|--------|--------------|
-| 画像 | `"image"` | `![alt](path)` |
-| 図（画像+キャプション） | `"figure"` | 画像 + イタリックキャプション |
-
-# マッピング更新例
-DEFAULT_CATEGORY_MAPPING = {
-    # ... 既存 ...
-    "image": "image",        # skip → image に変更
-    "chart": "image",        # skip → image に変更
-    "figure_title": "italic", # キャプションとして使用
-}
-```
-
-#### 9.1.6 CLIオプション
-
-```bash
-# 画像抽出を有効化
-translate-pdf input.pdf --markdown --extract-images
-
-# カスタム画像保存先
-translate-pdf input.pdf --markdown --extract-images \
-    --image-dir "./assets/images"
-
-# 相対パス指定
-translate-pdf input.pdf --markdown --extract-images \
-    --image-relative-path "assets/images"
-
-# フォーマット指定
-translate-pdf input.pdf --markdown --extract-images \
-    --image-format jpeg --image-quality 85
-```
-
-#### 9.1.7 実装ステップ
-
-1. **ImageExtractor クラス作成**
-   - pypdfium2 から画像領域を抽出
-   - PIL/Pillow で画像変換・保存
-
-2. **LayoutBlock との連携**
-   - `image`, `chart` カテゴリの BBox を使用
-   - ページ内の画像領域を特定
-
-3. **MarkdownWriter 拡張**
-   - `"image"` 要素タイプの処理
-   - `figure_title` との関連付け
-
-4. **中間データ形式拡張**
-   - `TranslatedDocument` に画像メタデータを追加
-
-### 9.2 表のMarkdown変換
+### 10.1 表のMarkdown変換
 
 ```markdown
 | Column 1 | Column 2 |
@@ -1121,7 +1315,7 @@ translate-pdf input.pdf --markdown --extract-images \
 - OCR または構造解析で表データを抽出
 - Markdown表形式に変換
 
-### 9.3 数式のLaTeX変換
+### 10.2 数式のLaTeX変換
 
 ```markdown
 $$E = mc^2$$
@@ -1142,7 +1336,7 @@ DEFAULT_CATEGORY_MAPPING = {
 
 ---
 
-## 10. 参考
+## 11. 参考
 
 - Issue #5: feat: Markdown出力機能の実装
 - Issue #4: 翻訳パイプライン（依存Issue、完了済み）
