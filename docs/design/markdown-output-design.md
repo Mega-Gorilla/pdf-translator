@@ -195,14 +195,33 @@ class MarkdownWriter:
         """YAMLフロントマター形式のメタデータを生成"""
         ...
 
+    def _build_position_key(self, page_number: int, bbox: BBox) -> str:
+        """位置ベースのキーを生成
+
+        Args:
+            page_number: ページ番号
+            bbox: バウンディングボックス
+
+        Returns:
+            "p{page}_{x0}_{y0}_{x1}_{y1}" 形式のキー文字列
+        """
+        ...
+
     def _build_table_map(
         self,
         extracted_tables: list[ExtractedTable] | None,
     ) -> dict[str, ExtractedTable]:
-        """表マップを構築（LayoutBlock.id → ExtractedTable）
+        """表マップを構築
 
-        表の挿入位置は、対応する table カテゴリの Paragraph の
-        位置（page_number + bbox）で特定する。
+        Args:
+            extracted_tables: 抽出された表リスト
+
+        Returns:
+            位置キー → ExtractedTable のマップ
+
+        Note:
+            キーは _build_position_key() で生成（page_number + bbox）。
+            Paragraph と ExtractedTable は同じ位置キーで照合される。
         """
         ...
 
@@ -216,19 +235,25 @@ class MarkdownWriter:
 
         Args:
             paragraph: 変換対象のParagraph
-            image_map: page_number + bbox → ExtractedImage のマップ
-                       カテゴリが "image"/"chart" の場合に参照
-            table_map: LayoutBlock.id → ExtractedTable のマップ
+            image_map: 位置キー → ExtractedImage のマップ
+                       カテゴリが "image"/"chart"/"table"(画像フォールバック) の場合に参照
+            table_map: 位置キー → ExtractedTable のマップ
                        カテゴリが "table" の場合に参照
 
         Returns:
             Markdown文字列
 
         Note:
-            表の挿入:
-            - カテゴリが "table" の場合、table_map から対応する表を検索
-            - ExtractedTable.to_markdown() で Markdown 表に変換
-            - 表が見つからない場合は段落テキストをそのまま出力
+            キー照合:
+            - 位置キーは _build_position_key(page_number, bbox) で生成
+            - Paragraph.page_number と Paragraph.block_bbox を使用
+
+            表の挿入（カテゴリが "table" の場合）:
+            1. table_map から対応する ExtractedTable を検索
+            2. 見つかれば ExtractedTable.to_markdown() で Markdown 表に変換
+            3. 見つからなければ image_map から画像フォールバックを検索
+            4. 画像があれば ![Table](path) として出力
+            5. どちらもなければ段落テキストをそのまま出力
         """
         ...
 
@@ -337,7 +362,10 @@ async def _translate_impl(
                 )
                 if isinstance(result, ExtractedTable):
                     extracted_tables.append(result)
-                else:  # ExtractedImage（画像フォールバック）
+                else:
+                    # 画像フォールバック: ExtractedImage を追加
+                    # Note: result は表の位置情報（page_number, bbox相当）を保持
+                    # MarkdownWriter で table カテゴリの Paragraph と照合可能
                     extracted_images.append(result)
 
         # Markdown生成
@@ -889,7 +917,8 @@ class ExtractedImage:
     path: Path                   # 保存先パス
     relative_path: str           # Markdownからの相対パス
     page_number: int             # ページ番号
-    category: str                # image / chart
+    bbox: BBox                   # バウンディングボックス（位置キー生成用）
+    category: str                # image / chart / table（画像フォールバック時）
     caption: Optional[str]       # figure_title から取得したキャプション
 
 
@@ -1232,6 +1261,7 @@ class ExtractedTable:
     """抽出された表"""
     id: str
     page_number: int
+    bbox: BBox                   # バウンディングボックス（位置キー生成用）
     rows: list[list[TableCell]]
     header_rows: int = 1
     caption: Optional[str] = None
