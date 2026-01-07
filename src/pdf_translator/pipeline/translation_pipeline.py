@@ -27,6 +27,12 @@ from pdf_translator.core.side_by_side import (
     SideBySideGenerator,
     SideBySideOrder,
 )
+from pdf_translator.output.markdown_writer import (
+    MarkdownConfig,
+    MarkdownOutputMode,
+    MarkdownWriter,
+)
+from pdf_translator.output.translated_document import TranslatedDocument
 from pdf_translator.pipeline.errors import (
     ExtractionError,
     LayoutAnalysisError,
@@ -96,6 +102,14 @@ class PipelineConfig:
     # Translation failure handling
     strict_mode: bool = False  # If True, raise error on single text failure
 
+    # Markdown output options
+    markdown_output: bool = False  # Generate Markdown output
+    markdown_mode: MarkdownOutputMode = MarkdownOutputMode.TRANSLATED_ONLY
+    markdown_include_metadata: bool = True
+    markdown_include_page_breaks: bool = True
+    markdown_heading_offset: int = 0  # 0-5, shifts heading levels
+    save_intermediate: bool = False  # Save intermediate JSON file
+
 
 @dataclass
 class TranslationResult:
@@ -104,6 +118,8 @@ class TranslationResult:
     pdf_bytes: bytes
     stats: dict[str, Any] | None = None
     side_by_side_pdf_bytes: bytes | None = None  # Only set if side_by_side is enabled
+    markdown: str | None = None  # Only set if markdown_output is enabled
+    paragraphs: list[Paragraph] | None = None  # Translated paragraphs for downstream use
 
 
 class TranslationPipeline:
@@ -165,6 +181,11 @@ class TranslationPipeline:
                 pdf_path, pdf_bytes, paragraphs, pre_merge_paragraphs
             )
 
+        # Generate Markdown output if enabled
+        markdown_str: str | None = None
+        if self._config.markdown_output:
+            markdown_str = self._stage_markdown(paragraphs, pdf_path)
+
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(pdf_bytes)
@@ -173,6 +194,15 @@ class TranslationPipeline:
             if side_by_side_bytes is not None:
                 sbs_output_path = output_path.with_stem(output_path.stem + "_side_by_side")
                 sbs_output_path.write_bytes(side_by_side_bytes)
+
+            # Save Markdown with ".md" suffix
+            if markdown_str is not None:
+                md_output_path = output_path.with_suffix(".md")
+                md_output_path.write_text(markdown_str, encoding="utf-8")
+
+            # Save intermediate JSON if enabled
+            if self._config.save_intermediate:
+                self._save_intermediate(paragraphs, pdf_path, output_path)
 
         stats = {
             "original_paragraphs": original_count,
@@ -185,6 +215,8 @@ class TranslationPipeline:
             pdf_bytes=pdf_bytes,
             stats=stats,
             side_by_side_pdf_bytes=side_by_side_bytes,
+            markdown=markdown_str,
+            paragraphs=paragraphs,
         )
 
     async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
@@ -440,6 +472,67 @@ class TranslationPipeline:
         )
         self._notify("side_by_side", 1, 1)
         return result
+
+    def _stage_markdown(
+        self,
+        paragraphs: list[Paragraph],
+        pdf_path: Path,
+    ) -> str:
+        """Generate Markdown output from translated paragraphs.
+
+        Args:
+            paragraphs: List of translated paragraphs.
+            pdf_path: Path to the source PDF (for metadata).
+
+        Returns:
+            Markdown string.
+        """
+        config = MarkdownConfig(
+            output_mode=self._config.markdown_mode,
+            include_metadata=self._config.markdown_include_metadata,
+            include_page_breaks=self._config.markdown_include_page_breaks,
+            heading_offset=self._config.markdown_heading_offset,
+            source_lang=self._config.source_lang,
+            target_lang=self._config.target_lang,
+            source_filename=pdf_path.name,
+        )
+        writer = MarkdownWriter(config)
+        markdown = writer.write(paragraphs)
+        self._notify("markdown", 1, 1)
+        return markdown
+
+    def _save_intermediate(
+        self,
+        paragraphs: list[Paragraph],
+        pdf_path: Path,
+        output_path: Path,
+    ) -> None:
+        """Save intermediate JSON file for debugging or regeneration.
+
+        Args:
+            paragraphs: List of translated paragraphs.
+            pdf_path: Path to the source PDF.
+            output_path: Output path for the translated PDF.
+        """
+        # Count pages from paragraphs
+        page_numbers = {p.page_number for p in paragraphs}
+        total_pages = max(page_numbers) + 1 if page_numbers else 0
+
+        # Get translator backend name
+        backend_name = type(self._translator).__name__.replace("Translator", "").lower()
+
+        doc = TranslatedDocument.from_pipeline_result(
+            paragraphs=paragraphs,
+            source_file=pdf_path.name,
+            source_lang=self._config.source_lang,
+            target_lang=self._config.target_lang,
+            translator_backend=backend_name,
+            total_pages=total_pages,
+        )
+
+        json_output_path = output_path.with_suffix(".json")
+        doc.save(json_output_path)
+        self._notify("save_intermediate", 1, 1)
 
     async def _translate_with_retry(self, texts: list[str]) -> list[str]:
         """Translate texts with retry and fallback logic.
