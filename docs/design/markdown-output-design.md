@@ -186,6 +186,7 @@ class MarkdownWriter:
         paragraphs: list[Paragraph],
         output_path: Path,
         extracted_images: list[ExtractedImage] | None = None,
+        extracted_tables: list[ExtractedTable] | None = None,
     ) -> None:
         """Markdown文字列をファイルに出力"""
         ...
@@ -194,10 +195,22 @@ class MarkdownWriter:
         """YAMLフロントマター形式のメタデータを生成"""
         ...
 
+    def _build_table_map(
+        self,
+        extracted_tables: list[ExtractedTable] | None,
+    ) -> dict[str, ExtractedTable]:
+        """表マップを構築（LayoutBlock.id → ExtractedTable）
+
+        表の挿入位置は、対応する table カテゴリの Paragraph の
+        位置（page_number + bbox）で特定する。
+        """
+        ...
+
     def _paragraph_to_markdown(
         self,
         paragraph: Paragraph,
         image_map: dict[str, ExtractedImage] | None = None,
+        table_map: dict[str, ExtractedTable] | None = None,
     ) -> str:
         """単一のParagraphをMarkdownに変換
 
@@ -205,9 +218,17 @@ class MarkdownWriter:
             paragraph: 変換対象のParagraph
             image_map: page_number + bbox → ExtractedImage のマップ
                        カテゴリが "image"/"chart" の場合に参照
+            table_map: LayoutBlock.id → ExtractedTable のマップ
+                       カテゴリが "table" の場合に参照
 
         Returns:
             Markdown文字列
+
+        Note:
+            表の挿入:
+            - カテゴリが "table" の場合、table_map から対応する表を検索
+            - ExtractedTable.to_markdown() で Markdown 表に変換
+            - 表が見つからない場合は段落テキストをそのまま出力
         """
         ...
 
@@ -267,7 +288,12 @@ async def _translate_impl(
     pdf_path: Path,
     output_path: Path | None = None,
 ) -> TranslationResult:
-    # ... 既存のパイプラインステージ ...
+    # 既存のパイプラインステージ
+    # _stage_extract() で Paragraph[] と TextObject[] を取得
+    paragraphs, text_objects = await self._stage_extract(pdf_path)
+    # _stage_analyze() で LayoutBlock[] を取得
+    layout_blocks = await self._stage_analyze(pdf_path)
+    # ... _stage_categorize(), _stage_merge(), _stage_translate() ...
 
     # PDF生成
     pdf_bytes = await self._stage_apply(paragraphs, original_pdf)
@@ -300,7 +326,11 @@ async def _translate_impl(
                 mode=self._config.table_mode,
             ))
             # table カテゴリの LayoutBlock を抽出
-            table_blocks = [b for b in layout_blocks if b.category == "table"]
+            # Note: LayoutBlock.raw_category は RawLayoutCategory enum
+            table_blocks = [
+                b for b in layout_blocks
+                if b.raw_category.value == "table"
+            ]
             for table_block in table_blocks:
                 result = table_extractor.extract(
                     pdf_path, table_block, text_objects
@@ -603,6 +633,7 @@ Path("output/sample_ja_parallel.md").write_text(markdown, encoding="utf-8")
 | コード(ブロック) | `"code_block"` | ` ```テキスト``` ` |
 | イタリック | `"italic"` | `*テキスト*` |
 | 画像 | `"image"` | `![alt](path)` |
+| 表 | `"table"` | `\| col \| col \|` (Markdown表) |
 | キャプション | `"caption"` | `*テキスト*` (イタリック) |
 | スキップ | `"skip"` | (出力しない) |
 
@@ -624,7 +655,7 @@ DEFAULT_CATEGORY_MAPPING: dict[str, str] = {
 
     # === 図表系 ===
     "figure_title": "caption",   # 図キャプション → キャプション（イタリック）
-    "table": "p",                # 表 → 段落（将来: Markdown表）
+    "table": "table",            # 表 → Markdown表（extract_tables=True時）
     "chart": "image",            # グラフ → 画像として抽出
     "image": "image",            # 画像 → 画像として抽出
 
@@ -1232,21 +1263,45 @@ class TableExtractor:
         table_block: LayoutBlock,
         text_objects: list[TextObject],
     ) -> ExtractedTable | ExtractedImage:
-        """表を抽出（3段階フォールバック）"""
-        # 1. TextObject ヒューリスティクス
-        try:
-            return self._extract_with_heuristics(text_objects, table_block.bbox)
-        except TableExtractionError:
-            pass
+        """表を抽出（モードに応じた戦略選択）
 
-        # 2. pdfplumber（有線表向け）
-        if self._pdfplumber_available:
+        モード別の動作:
+        - heuristic: ヒューリスティクス → pdfplumber → 画像（デフォルト）
+        - pdfplumber: pdfplumber → ヒューリスティクス → 画像
+        - image: 即座に画像として抽出（抽出をスキップ）
+        """
+        if self._config.mode == "image":
+            # 画像モード: 抽出をスキップして画像化
+            return self._extract_as_image(pdf_path, table_block)
+
+        if self._config.mode == "pdfplumber":
+            # pdfplumber優先モード
+            if self._pdfplumber_available:
+                try:
+                    return self._extract_with_pdfplumber(pdf_path, table_block)
+                except TableExtractionError:
+                    pass
+            # フォールバック: ヒューリスティクス
             try:
-                return self._extract_with_pdfplumber(pdf_path, table_block)
+                return self._extract_with_heuristics(text_objects, table_block.bbox)
+            except TableExtractionError:
+                pass
+        else:
+            # heuristicモード（デフォルト）
+            # 1. TextObject ヒューリスティクス
+            try:
+                return self._extract_with_heuristics(text_objects, table_block.bbox)
             except TableExtractionError:
                 pass
 
-        # 3. 画像フォールバック
+            # 2. pdfplumber（有線表向け）
+            if self._pdfplumber_available:
+                try:
+                    return self._extract_with_pdfplumber(pdf_path, table_block)
+                except TableExtractionError:
+                    pass
+
+        # 最終フォールバック: 画像
         return self._extract_as_image(pdf_path, table_block)
 ```
 
