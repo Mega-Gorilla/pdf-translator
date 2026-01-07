@@ -24,30 +24,46 @@ Issue: #5
 
 ## 2. データフロー
 
-### 2.1 基本フロー（翻訳時にMarkdown生成）
+### 2.1 基本フロー（単一パイプライン実行で複数出力）
+
+**設計方針**: 1回のパイプライン実行で PDF + Markdown + JSON（オプション）を同時出力。
+翻訳結果を使い回すことで、再翻訳なしに複数形式の出力が可能。
 
 ```
 PDF
  │
  ▼
-┌─────────────────────────────────────────┐
-│ TranslationPipeline                      │
-│  ├─ _stage_extract() → Paragraph[]      │
-│  ├─ _stage_analyze() → LayoutBlock[]    │
-│  ├─ _stage_categorize()                 │
-│  ├─ _stage_merge()                      │
-│  ├─ _stage_translate()                  │
-│  └─ _stage_apply() → PDF bytes          │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ TranslationPipeline._translate_impl()                        │
+│  ├─ _stage_extract() → Paragraph[]                          │
+│  ├─ _stage_analyze() → LayoutBlock[]                        │
+│  ├─ _stage_categorize()                                     │
+│  ├─ _stage_merge()                                          │
+│  ├─ _stage_translate()  ← 翻訳は1回のみ                      │
+│  │                                                          │
+│  ├─ _stage_apply() → pdf_bytes (翻訳済みPDF)                 │
+│  │                                                          │
+│  └─ if markdown_output:                                     │
+│       MarkdownWriter.write(paragraphs) → markdown           │
+└─────────────────────────────────────────────────────────────┘
  │
- │  paragraphs (with translated_text, category)
- ├──────────────────────────────┐
- ▼                              ▼
-┌──────────────────┐    ┌──────────────────┐
-│ MarkdownWriter   │    │ TranslatedDoc    │
-│  → .md file      │    │  → .json file    │
-└──────────────────┘    └──────────────────┘
+ │ TranslationResult (単一オブジェクト)
+ │   - pdf_bytes       → output.pdf
+ │   - markdown        → output.md (オプション)
+ │   - paragraphs      → output.json (オプション、TranslatedDocument経由)
+ ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 出力ファイル (output_pathから自動決定)                        │
+│  ├─ output.pdf         (常に出力)                            │
+│  ├─ output.md          (markdown_output=True時)             │
+│  └─ output.json        (save_intermediate=True時)            │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**ポイント**:
+- 翻訳処理は1回のみ実行（PDF生成とMarkdown生成で再翻訳しない）
+- `paragraphs`を保持することで、同一の翻訳結果から複数形式を生成
+- ファイル出力は`output_path`から自動的に`.md`/`.json`パスを決定
 
 ### 2.2 再生成フロー（中間データからMarkdown生成）
 
@@ -148,12 +164,15 @@ class MarkdownWriter:
 
 @dataclass
 class TranslationResult:
-    """Translation pipeline result."""
-    pdf_bytes: bytes
+    """Translation pipeline result.
+
+    単一のパイプライン実行で生成される全出力を保持。
+    """
+    pdf_bytes: bytes                             # 翻訳済みPDF
     stats: dict[str, Any] | None = None
     side_by_side_pdf_bytes: bytes | None = None
-    paragraphs: list[Paragraph] | None = None  # NEW: Markdown生成用
-    markdown: str | None = None                 # NEW: 生成されたMarkdown
+    markdown: str | None = None                  # NEW: 生成されたMarkdown
+    paragraphs: list[Paragraph] | None = None    # NEW: 中間データ（JSON保存用）
 ```
 
 ### 3.3 PipelineConfig の拡張
@@ -168,6 +187,64 @@ class PipelineConfig:
     markdown_mode: MarkdownOutputMode = MarkdownOutputMode.TRANSLATED_ONLY
     markdown_include_metadata: bool = True
     markdown_include_page_breaks: bool = True
+    save_intermediate: bool = False  # 中間データ(JSON)を保存するか
+```
+
+### 3.3.1 _translate_impl での実装イメージ
+
+```python
+async def _translate_impl(
+    self,
+    pdf_path: Path,
+    output_path: Path | None = None,
+) -> TranslationResult:
+    # ... 既存のパイプラインステージ ...
+
+    # PDF生成
+    pdf_bytes = await self._stage_apply(paragraphs, original_pdf)
+
+    # Markdown生成（有効時）
+    markdown: str | None = None
+    if self._config.markdown_output:
+        writer = MarkdownWriter(MarkdownConfig(
+            output_mode=self._config.markdown_mode,
+            include_metadata=self._config.markdown_include_metadata,
+            include_page_breaks=self._config.markdown_include_page_breaks,
+            source_lang=self._config.source_lang,
+            target_lang=self._config.target_lang,
+            source_filename=pdf_path.name,
+        ))
+        markdown = writer.write(paragraphs)
+
+    # ファイル出力
+    if output_path is not None:
+        # PDF出力（常に）
+        output_path.write_bytes(pdf_bytes)
+
+        # Markdown出力（有効時）
+        if markdown:
+            md_path = output_path.with_suffix(".md")
+            md_path.write_text(markdown, encoding="utf-8")
+
+        # 中間データ出力（有効時）
+        if self._config.save_intermediate:
+            json_path = output_path.with_suffix(".json")
+            doc = TranslatedDocument.from_pipeline_result(
+                paragraphs=paragraphs,
+                source_file=pdf_path.name,
+                source_lang=self._config.source_lang,
+                target_lang=self._config.target_lang,
+                translator_backend=self._translator.name,
+            )
+            doc.save(json_path)
+
+    # 結果を返す（paragraphsはsave_intermediate時のみ保持）
+    return TranslationResult(
+        pdf_bytes=pdf_bytes,
+        stats=stats,
+        markdown=markdown,
+        paragraphs=paragraphs if self._config.save_intermediate else None,
+    )
 ```
 
 ### 3.4 中間データ形式（再翻訳なしMarkdown生成用）
@@ -352,25 +429,37 @@ class TranslatedDocument:
 #### 使用例
 
 ```python
-# 翻訳時に中間データを保存
-result = await pipeline.translate(pdf_path)
-doc = TranslatedDocument.from_pipeline_result(
-    paragraphs=result.paragraphs,
-    source_file="sample.pdf",
-    source_lang="en",
+# 基本的な使い方：PDF + Markdown を同時出力
+config = PipelineConfig(
     target_lang="ja",
-    translator_backend="openai",
+    markdown_output=True,           # Markdown出力を有効化
+    markdown_mode=MarkdownOutputMode.TRANSLATED_ONLY,
 )
-doc.save(Path("sample_translated.json"))
+pipeline = TranslationPipeline(config)
+result = await pipeline.translate(
+    Path("sample.pdf"),
+    output_path=Path("output/sample_ja.pdf"),
+)
+# 自動的に output/sample_ja.pdf と output/sample_ja.md が出力される
 
-# 後からMarkdownを生成（再翻訳なし）
-doc = TranslatedDocument.load(Path("sample_translated.json"))
+# 中間データも保存する場合
+config = PipelineConfig(
+    target_lang="ja",
+    markdown_output=True,
+    save_intermediate=True,         # JSONも保存
+)
+# sample_ja.pdf, sample_ja.md, sample_ja.json が出力される
+
+# 後からMarkdownを再生成（再翻訳なし）
+doc = TranslatedDocument.load(Path("output/sample_ja.json"))
 writer = MarkdownWriter(MarkdownConfig(
+    output_mode=MarkdownOutputMode.PARALLEL,  # 今度は並列モードで
     source_lang=doc.metadata.source_lang,
     target_lang=doc.metadata.target_lang,
     source_filename=doc.metadata.source_file,
 ))
 markdown = writer.write(doc.paragraphs)
+Path("output/sample_ja_parallel.md").write_text(markdown, encoding="utf-8")
 ```
 
 ---
@@ -517,35 +606,40 @@ tests/
 ### Phase 2: パイプライン統合
 
 6. **TranslationResult 拡張**
-   - `paragraphs` フィールド追加
    - `markdown` フィールド追加
+   - `paragraphs` フィールド追加
 
 7. **PipelineConfig 拡張**
    - `markdown_output` オプション追加
    - `markdown_mode` オプション追加
    - `save_intermediate` オプション追加（中間データ保存）
 
-8. **パイプライン統合テスト**
+8. **_translate_impl 統合**
+   - PDF生成後にMarkdown生成を実行
+   - 単一パイプライン実行で複数出力（PDF + MD + JSON）
+   - ファイル出力の自動化（output_pathから派生）
+
+9. **パイプライン統合テスト**
 
 ### Phase 3: 出力オプション
 
-9. **メタデータ生成**
-   - YAMLフロントマター
-   - 翻訳情報
+10. **メタデータ生成**
+    - YAMLフロントマター
+    - 翻訳情報
 
-10. **ページ区切り**
+11. **ページ区切り**
     - ページ番号に基づく区切り挿入
 
-11. **並列出力モード**
+12. **並列出力モード**
     - 原文/訳文の並列表示
 
 ### Phase 4: CLI統合
 
-12. **CLIオプション追加**
-    - `--markdown` フラグ
-    - `--markdown-mode` オプション
-    - `--save-json` フラグ（中間データ保存）
-    - `--from-json` オプション（中間データから生成）
+13. **CLIオプション追加**
+    - `--markdown` フラグ（Markdown出力を有効化）
+    - `--markdown-mode` オプション（translated_only / parallel）
+    - `--save-json` フラグ（中間データ保存を有効化）
+    - `--from-json` オプション（中間データからMarkdown生成、再翻訳なし）
 
 ---
 
@@ -589,10 +683,29 @@ class TestMarkdownWriter:
 
 ```python
 class TestMarkdownIntegration:
-    def test_pipeline_with_markdown_output(self): ...
-    def test_markdown_file_output(self): ...
-    def test_save_intermediate_and_regenerate(self): ...  # 中間データから再生成
-    def test_from_json_without_retranslation(self): ...   # 再翻訳なしテスト
+    def test_pipeline_with_markdown_output(self):
+        """markdown_output=True時にresult.markdownが生成される"""
+        ...
+
+    def test_single_run_outputs_pdf_and_markdown(self):
+        """1回のパイプライン実行でPDFとMarkdownが同時出力される"""
+        ...
+
+    def test_markdown_file_auto_generated(self):
+        """output_path指定時に.mdファイルが自動生成される"""
+        ...
+
+    def test_save_intermediate_creates_json(self):
+        """save_intermediate=True時に.jsonファイルが作成される"""
+        ...
+
+    def test_regenerate_from_json_without_retranslation(self):
+        """JSONから再生成時に翻訳APIが呼ばれない"""
+        ...
+
+    def test_different_markdown_modes_from_same_json(self):
+        """同一JSONから異なるモードでMarkdown生成"""
+        ...
 ```
 
 ---
