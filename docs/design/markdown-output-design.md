@@ -195,15 +195,27 @@ class MarkdownWriter:
         """YAMLフロントマター形式のメタデータを生成"""
         ...
 
-    def _build_position_key(self, page_number: int, bbox: BBox) -> str:
-        """位置ベースのキーを生成
+    def _build_key(
+        self,
+        layout_block_id: str | None,
+        page_number: int,
+        bbox: BBox,
+    ) -> str:
+        """マップ検索用のキーを生成
 
         Args:
-            page_number: ページ番号
-            bbox: バウンディングボックス
+            layout_block_id: LayoutBlock ID（優先使用）
+            page_number: ページ番号（フォールバック用）
+            bbox: バウンディングボックス（フォールバック用）
 
         Returns:
-            "p{page}_{x0}_{y0}_{x1}_{y1}" 形式のキー文字列
+            layout_block_id があればそのまま使用、
+            なければ "p{page}_{x0}_{y0}_{x1}_{y1}" 形式のキー文字列
+
+        Note:
+            Paragraph.block_bbox（pdftext由来）と LayoutBlock.bbox（PP-DocLayout由来）は
+            異なるソースから取得されるため、座標値が完全一致しない可能性がある。
+            そのため layout_block_id を優先的に使用し、位置ベースキーはフォールバックとする。
         """
         ...
 
@@ -217,11 +229,12 @@ class MarkdownWriter:
             extracted_tables: 抽出された表リスト
 
         Returns:
-            位置キー → ExtractedTable のマップ
+            キー → ExtractedTable のマップ
 
         Note:
-            キーは _build_position_key() で生成（page_number + bbox）。
-            Paragraph と ExtractedTable は同じ位置キーで照合される。
+            キーは _build_key() で生成。
+            ExtractedTable.layout_block_id があればそれを使用、
+            なければ page_number + bbox から位置ベースキーを生成。
         """
         ...
 
@@ -235,9 +248,9 @@ class MarkdownWriter:
 
         Args:
             paragraph: 変換対象のParagraph
-            image_map: 位置キー → ExtractedImage のマップ
+            image_map: キー → ExtractedImage のマップ
                        カテゴリが "image"/"chart"/"table"(画像フォールバック) の場合に参照
-            table_map: 位置キー → ExtractedTable のマップ
+            table_map: キー → ExtractedTable のマップ
                        カテゴリが "table" の場合に参照
 
         Returns:
@@ -245,8 +258,9 @@ class MarkdownWriter:
 
         Note:
             キー照合:
-            - 位置キーは _build_position_key(page_number, bbox) で生成
-            - Paragraph.page_number と Paragraph.block_bbox を使用
+            - キーは _build_key(layout_block_id, page_number, bbox) で生成
+            - Paragraph.layout_block_id があれば優先使用（確実なマッチ）
+            - なければ Paragraph.page_number と Paragraph.block_bbox から位置キー生成
 
             表の挿入（カテゴリが "table" の場合）:
             1. table_map から対応する ExtractedTable を検索
@@ -318,6 +332,9 @@ async def _translate_impl(
     paragraphs, text_objects = await self._stage_extract(pdf_path)
     # _stage_analyze() で LayoutBlock[] を取得
     layout_blocks = await self._stage_analyze(pdf_path)
+    # _stage_categorize() で Paragraph に category と layout_block_id を設定
+    # Note: layout_block_id は Paragraph と LayoutBlock の紐付けに使用
+    #       これにより MarkdownWriter での表/画像マップ照合が確実になる
     # ... _stage_categorize(), _stage_merge(), _stage_translate() ...
 
     # PDF生成
@@ -364,8 +381,8 @@ async def _translate_impl(
                     extracted_tables.append(result)
                 else:
                     # 画像フォールバック: ExtractedImage を追加
-                    # Note: result は表の位置情報（page_number, bbox相当）を保持
-                    # MarkdownWriter で table カテゴリの Paragraph と照合可能
+                    # Note: result.layout_block_id = table_block.id
+                    # MarkdownWriter で Paragraph.layout_block_id と照合可能
                     extracted_images.append(result)
 
         # Markdown生成
@@ -421,6 +438,7 @@ async def _translate_impl(
 @dataclass
 class Paragraph:
     # 既存フィールド...
+    layout_block_id: Optional[str] = None  # NEW: 対応する LayoutBlock の ID
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -437,6 +455,8 @@ class Paragraph:
             "alignment": self.alignment,
         }
         # Optional fields
+        if self.layout_block_id is not None:
+            result["layout_block_id"] = self.layout_block_id
         if self.category is not None:
             result["category"] = self.category
         if self.category_confidence is not None:
@@ -466,6 +486,7 @@ class Paragraph:
             block_bbox=BBox.from_dict(data["block_bbox"]),
             line_count=int(data["line_count"]),
             original_font_size=float(data.get("original_font_size", 12.0)),
+            layout_block_id=data.get("layout_block_id"),  # NEW
             category=data.get("category"),
             category_confidence=data.get("category_confidence"),
             translated_text=data.get("translated_text"),
@@ -916,8 +937,9 @@ class ExtractedImage:
     id: str                      # 画像ID (figure_001 等)
     path: Path                   # 保存先パス
     relative_path: str           # Markdownからの相対パス
-    page_number: int             # ページ番号
-    bbox: BBox                   # バウンディングボックス（位置キー生成用）
+    layout_block_id: str         # 元の LayoutBlock.id（キー照合用）
+    page_number: int             # ページ番号（フォールバック用）
+    bbox: BBox                   # バウンディングボックス（フォールバック用）
     category: str                # image / chart / table（画像フォールバック時）
     caption: Optional[str]       # figure_title から取得したキャプション
 
@@ -1260,8 +1282,9 @@ class TableCell:
 class ExtractedTable:
     """抽出された表"""
     id: str
-    page_number: int
-    bbox: BBox                   # バウンディングボックス（位置キー生成用）
+    layout_block_id: str         # 元の LayoutBlock.id（キー照合用）
+    page_number: int             # ページ番号（フォールバック用）
+    bbox: BBox                   # バウンディングボックス（フォールバック用）
     rows: list[list[TableCell]]
     header_rows: int = 1
     caption: Optional[str] = None
