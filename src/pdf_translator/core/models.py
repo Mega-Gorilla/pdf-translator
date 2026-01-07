@@ -450,6 +450,7 @@ class Paragraph:
     block_bbox: BBox
     line_count: int
     original_font_size: float = 12.0
+    layout_block_id: Optional[str] = None  # 対応する LayoutBlock の ID
     category: Optional[str] = None  # レイアウト解析器のカテゴリー
     category_confidence: Optional[float] = None  # レイアウト検出の信頼度 (0.0-1.0)
     translated_text: Optional[str] = None
@@ -479,6 +480,63 @@ class Paragraph:
         if translatable_categories is None:
             translatable_categories = DEFAULT_TRANSLATABLE_RAW_CATEGORIES
         return self.category in translatable_categories
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "page_number": self.page_number,
+            "text": self.text,
+            "block_bbox": self.block_bbox.to_dict(),
+            "line_count": self.line_count,
+            "original_font_size": self.original_font_size,
+            "is_bold": self.is_bold,
+            "is_italic": self.is_italic,
+            "rotation": self.rotation,
+            "alignment": self.alignment,
+        }
+        # Optional fields
+        if self.layout_block_id is not None:
+            result["layout_block_id"] = self.layout_block_id
+        if self.category is not None:
+            result["category"] = self.category
+        if self.category_confidence is not None:
+            result["category_confidence"] = self.category_confidence
+        if self.translated_text is not None:
+            result["translated_text"] = self.translated_text
+        if self.adjusted_font_size is not None:
+            result["adjusted_font_size"] = self.adjusted_font_size
+        if self.font_name is not None:
+            result["font_name"] = self.font_name
+        if self.text_color is not None:
+            result["text_color"] = self.text_color.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Paragraph":
+        """Create from dictionary."""
+        text_color = (
+            Color.from_dict(data["text_color"]) if "text_color" in data else None
+        )
+        return cls(
+            id=data["id"],
+            page_number=int(data["page_number"]),
+            text=data["text"],
+            block_bbox=BBox.from_dict(data["block_bbox"]),
+            line_count=int(data["line_count"]),
+            original_font_size=float(data.get("original_font_size", 12.0)),
+            layout_block_id=data.get("layout_block_id"),
+            category=data.get("category"),
+            category_confidence=data.get("category_confidence"),
+            translated_text=data.get("translated_text"),
+            adjusted_font_size=data.get("adjusted_font_size"),
+            is_bold=data.get("is_bold", False),
+            is_italic=data.get("is_italic", False),
+            font_name=data.get("font_name"),
+            text_color=text_color,
+            rotation=float(data.get("rotation", 0.0)),
+            alignment=data.get("alignment", "left"),
+        )
 
 
 @dataclass
