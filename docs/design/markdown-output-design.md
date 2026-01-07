@@ -19,6 +19,9 @@ Issue: #5
 - 画像の抽出・埋め込み（将来の拡張）
 - 表のMarkdown変換（将来の拡張）
 - 数式のLaTeX変換（将来の拡張）
+- リスト・箇条書きの自動検出（将来の拡張）
+  - Issue #5 に記載あり、現時点では段落として出力
+  - PDFテキストからリスト構造を正確に検出するには、先頭文字パターン（「・」「-」「1.」等）の解析が必要
 
 ---
 
@@ -109,7 +112,7 @@ from pdf_translator.core.models import Paragraph
 
 class MarkdownOutputMode(Enum):
     """Markdown出力モード"""
-    TRANSLATED_ONLY = "translated_only"      # 訳文のみ
+    TRANSLATED_ONLY = "translated_only"      # 訳文のみ（フォールバック: 原文）
     ORIGINAL_ONLY = "original_only"          # 原文のみ
     PARALLEL = "parallel"                    # 原文と訳文を並列
 
@@ -235,6 +238,7 @@ async def _translate_impl(
                 source_lang=self._config.source_lang,
                 target_lang=self._config.target_lang,
                 translator_backend=self._translator.name,
+                total_pages=len(original_pdf),  # PDF実ページ数
             )
             doc.save(json_path)
 
@@ -409,9 +413,22 @@ class TranslatedDocument:
         source_lang: str,
         target_lang: str,
         translator_backend: str,
+        total_pages: int,  # PDF実ページ数を明示的に渡す
     ) -> "TranslatedDocument":
-        """Create from pipeline result."""
-        page_numbers = {p.page_number for p in paragraphs}
+        """Create from pipeline result.
+
+        Args:
+            paragraphs: 翻訳済みParagraphリスト
+            source_file: 元PDFファイル名
+            source_lang: 原文言語コード
+            target_lang: 翻訳先言語コード
+            translator_backend: 使用した翻訳バックエンド名
+            total_pages: PDF実ページ数（空ページ含む）
+
+        Note:
+            page_countはparagraphsから算出せず、PDF実ページ数を使用する。
+            空ページ（テキストなし）があってもページ数が欠落しないようにするため。
+        """
         translated_count = sum(1 for p in paragraphs if p.translated_text)
         metadata = TranslatedDocumentMetadata(
             source_file=source_file,
@@ -419,7 +436,7 @@ class TranslatedDocument:
             target_lang=target_lang,
             translated_at=datetime.now().isoformat(),
             translator_backend=translator_backend,
-            page_count=len(page_numbers),
+            page_count=total_pages,  # PDF実ページ数を使用
             paragraph_count=len(paragraphs),
             translated_count=translated_count,
         )
@@ -477,10 +494,43 @@ Path("output/sample_ja_parallel.md").write_text(markdown, encoding="utf-8")
 | `vertical_text` | paragraph | 縦書きテキスト |
 | `aside_text` | `> blockquote` | 補足テキスト |
 | `figure_title` | `*italic*` | 図キャプション |
-| `footnote` | `[^n]` | 脚注 |
+| `footnote` | paragraph (※prefix) | 脚注（後述） |
 | `reference` | paragraph (small) | 参考文献 |
 
-### 4.2 スタイル変換
+**脚注について**: 現行データモデル（`Paragraph`）には脚注番号フィールドがないため、
+Markdown脚注記法 `[^n]` ではなく、通常の段落として出力する。
+本格的な脚注対応は将来の拡張とする（データモデルへの `footnote_number` 追加が必要）。
+
+```markdown
+# 脚注の現行出力形式
+※ 脚注テキストがここに出力される
+```
+
+### 4.2 テキスト選択ルール（フォールバック）
+
+`TRANSLATED_ONLY` モードでは以下の優先順位でテキストを選択:
+
+1. `translated_text` があれば使用
+2. `translated_text` がなければ `text`（原文）にフォールバック
+
+**理由**: 非翻訳カテゴリ（`doc_title`, `paragraph_title`, `footnote`, `reference` 等）は
+翻訳対象外のため `translated_text` が `None` となる。空見出しや欠落を防ぐため、
+原文をそのまま出力する。
+
+```python
+def _get_display_text(self, paragraph: Paragraph) -> str:
+    """出力モードに応じたテキストを取得"""
+    if self._config.output_mode == MarkdownOutputMode.TRANSLATED_ONLY:
+        # 訳文優先、なければ原文にフォールバック
+        return paragraph.translated_text or paragraph.text
+    elif self._config.output_mode == MarkdownOutputMode.ORIGINAL_ONLY:
+        return paragraph.text
+    else:  # PARALLEL
+        # 両方返す（呼び出し元で処理）
+        return paragraph.text
+```
+
+### 4.3 スタイル変換
 
 | Paragraph属性 | Markdown |
 |---------------|----------|
@@ -488,7 +538,30 @@ Path("output/sample_ja_parallel.md").write_text(markdown, encoding="utf-8")
 | `is_italic=True` | `*text*` |
 | `is_bold=True, is_italic=True` | `***text***` |
 
-### 4.3 ページ区切り
+### 4.5 段落の読み順
+
+現行実装では、段落は pdftext の出力順（ブロック順）で処理される。
+多段組（マルチカラム）レイアウトの読み順は pdftext の解析に依存する。
+
+**現状の制限**:
+- pdftext はY座標順でブロックを出力する傾向があり、多段組では列が交互に並ぶ可能性がある
+- 正確な列順序の検出には、レイアウト解析（PP-DocLayout等）との連携が必要
+
+**将来の拡張案**:
+- `_stage_analyze()` で検出した列構造を使用した並べ替え
+- `LayoutBlock` の位置情報に基づく列グループ化
+
+現時点では、読み順の問題は許容し、将来のレイアウト解析強化で対応する。
+
+### 4.6 ページ区切り
+
+ページ番号は `Paragraph.page_number`（0始まり）を1始まりに変換して表示:
+
+```python
+# page_number は 0-indexed なので +1 して表示
+display_page = paragraph.page_number + 1
+page_break = f"---\n<!-- Page {display_page} -->\n"
+```
 
 ```markdown
 ---
