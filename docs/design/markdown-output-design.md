@@ -2,6 +2,9 @@
 
 Issue: #5
 
+**スコープ拡張**: 本設計書では Issue #5 の基本要件に加え、画像抽出機能を必須実装として含める。
+画像抽出はMarkdown出力の品質向上に不可欠であり、Phase 4 として実装する。
+
 ## 1. 概要
 
 ### 1.1 目的
@@ -13,7 +16,7 @@ Issue: #5
 - PDF翻訳結果をMarkdown形式で出力
 - レイアウト解析結果を活用した構造化出力
 - 複数の出力オプションをサポート
-- **PDFから画像を抽出し、Markdownに埋め込み**
+- **PDFから画像を抽出し、Markdownに埋め込み**（本設計書で追加）
 
 ### 1.3 スコープ外
 
@@ -156,14 +159,27 @@ class MarkdownWriter:
     def __init__(self, config: Optional[MarkdownConfig] = None) -> None:
         self._config = config or MarkdownConfig()
 
-    def write(self, paragraphs: list[Paragraph]) -> str:
-        """ParagraphリストからMarkdown文字列を生成"""
+    def write(
+        self,
+        paragraphs: list[Paragraph],
+        extracted_images: list[ExtractedImage] | None = None,
+    ) -> str:
+        """ParagraphリストからMarkdown文字列を生成
+
+        Args:
+            paragraphs: 翻訳済みParagraphリスト
+            extracted_images: 抽出済み画像リスト（Section 5参照）
+
+        Returns:
+            Markdown文字列
+        """
         ...
 
     def write_to_file(
         self,
         paragraphs: list[Paragraph],
-        output_path: Path
+        output_path: Path,
+        extracted_images: list[ExtractedImage] | None = None,
     ) -> None:
         """Markdown文字列をファイルに出力"""
         ...
@@ -172,8 +188,21 @@ class MarkdownWriter:
         """YAMLフロントマター形式のメタデータを生成"""
         ...
 
-    def _paragraph_to_markdown(self, paragraph: Paragraph) -> str:
-        """単一のParagraphをMarkdownに変換"""
+    def _paragraph_to_markdown(
+        self,
+        paragraph: Paragraph,
+        image_map: dict[str, ExtractedImage] | None = None,
+    ) -> str:
+        """単一のParagraphをMarkdownに変換
+
+        Args:
+            paragraph: 変換対象のParagraph
+            image_map: page_number + bbox → ExtractedImage のマップ
+                       カテゴリが "image"/"chart" の場合に参照
+
+        Returns:
+            Markdown文字列
+        """
         ...
 
     def _get_element_type(self, category: Optional[str]) -> str:
@@ -212,6 +241,12 @@ class PipelineConfig:
     markdown_include_metadata: bool = True
     markdown_include_page_breaks: bool = True
     save_intermediate: bool = False  # 中間データ(JSON)を保存するか
+
+    # 画像抽出オプション（markdown_output=True時のみ有効）
+    extract_images: bool = True               # 画像抽出を有効化（デフォルト有効）
+    image_output_dir: Path | None = None      # 画像保存先（Noneで自動: output_dir/images/）
+    image_format: str = "png"                 # 画像フォーマット（png/jpeg）
+    image_quality: int = 95                   # JPEG品質（1-100）
 ```
 
 ### 3.3.1 _translate_impl での実装イメージ
@@ -229,7 +264,26 @@ async def _translate_impl(
 
     # Markdown生成（有効時）
     markdown: str | None = None
+    extracted_images: list[ExtractedImage] = []
+
     if self._config.markdown_output:
+        # 画像抽出（有効時）
+        if self._config.extract_images and output_path is not None:
+            image_output_dir = (
+                self._config.image_output_dir
+                or output_path.parent / "images"
+            )
+            image_extractor = ImageExtractor(ImageExtractionConfig(
+                enabled=True,
+                output_dir=image_output_dir,
+                format=self._config.image_format,
+                quality=self._config.image_quality,
+            ))
+            extracted_images = image_extractor.extract(
+                pdf_path, layout_blocks, image_output_dir
+            )
+
+        # Markdown生成
         writer = MarkdownWriter(MarkdownConfig(
             output_mode=self._config.markdown_mode,
             include_metadata=self._config.markdown_include_metadata,
@@ -238,7 +292,7 @@ async def _translate_impl(
             target_lang=self._config.target_lang,
             source_filename=pdf_path.name,
         ))
-        markdown = writer.write(paragraphs)
+        markdown = writer.write(paragraphs, extracted_images)
 
     # ファイル出力
     if output_path is not None:
@@ -521,6 +575,8 @@ Path("output/sample_ja_parallel.md").write_text(markdown, encoding="utf-8")
 | コード(インライン) | `"code"` | `` `テキスト` `` |
 | コード(ブロック) | `"code_block"` | ` ```テキスト``` ` |
 | イタリック | `"italic"` | `*テキスト*` |
+| 画像 | `"image"` | `![alt](path)` |
+| キャプション | `"caption"` | `*テキスト*` (イタリック) |
 | スキップ | `"skip"` | (出力しない) |
 
 ### 4.2 デフォルトカテゴリマッピング（全25カテゴリ）
@@ -540,10 +596,10 @@ DEFAULT_CATEGORY_MAPPING: dict[str, str] = {
     "aside_text": "blockquote",  # 補足テキスト → 引用
 
     # === 図表系 ===
-    "figure_title": "italic",    # 図キャプション → イタリック
+    "figure_title": "caption",   # 図キャプション → キャプション（イタリック）
     "table": "p",                # 表 → 段落（将来: Markdown表）
-    "chart": "skip",             # グラフ → スキップ
-    "image": "skip",             # 画像 → スキップ
+    "chart": "image",            # グラフ → 画像として抽出
+    "image": "image",            # 画像 → 画像として抽出
 
     # === 数式系 ===
     "inline_formula": "code",        # インライン数式 → コード
@@ -1068,6 +1124,7 @@ tests/
     - `--image-dir` オプション（画像保存先）
     - `--image-relative-path` オプション（相対パス）
     - `--image-format` オプション（png/jpeg）
+    - `--image-quality` オプション（JPEG品質 1-100、デフォルト95）
 
     **CLIオプション使用例**:
     ```bash
@@ -1136,7 +1193,10 @@ class TestCategoryMapping:
         """text → p のデフォルトマッピング"""
         ...
     def test_default_mapping_skip_categories(self):
-        """header, footer, image 等が skip されること"""
+        """header, footer, formula_number 等が skip されること"""
+        ...
+    def test_default_mapping_image_categories(self):
+        """image, chart が "image" にマッピングされること"""
         ...
     def test_category_override_heading_level(self):
         """doc_title=h2 等のオーバーライド"""
