@@ -24,6 +24,8 @@ Issue: #5
 
 ## 2. データフロー
 
+### 2.1 基本フロー（翻訳時にMarkdown生成）
+
 ```
 PDF
  │
@@ -39,6 +41,25 @@ PDF
 └─────────────────────────────────────────┘
  │
  │  paragraphs (with translated_text, category)
+ ├──────────────────────────────┐
+ ▼                              ▼
+┌──────────────────┐    ┌──────────────────┐
+│ MarkdownWriter   │    │ TranslatedDoc    │
+│  → .md file      │    │  → .json file    │
+└──────────────────┘    └──────────────────┘
+```
+
+### 2.2 再生成フロー（中間データからMarkdown生成）
+
+```
+.json file (TranslatedDocument)
+ │
+ ▼
+┌─────────────────────────────────────────┐
+│ TranslatedDocument.from_json()           │
+│  → paragraphs: list[Paragraph]          │
+└─────────────────────────────────────────┘
+ │
  ▼
 ┌─────────────────────────────────────────┐
 │ MarkdownWriter                           │
@@ -47,8 +68,10 @@ PDF
 └─────────────────────────────────────────┘
  │
  ▼
-Markdown File
+Markdown File (再翻訳なしで生成)
 ```
+
+**ポイント**: 中間データ（JSON）を保存することで、再翻訳なしにMarkdown再生成が可能
 
 ---
 
@@ -147,6 +170,209 @@ class PipelineConfig:
     markdown_include_page_breaks: bool = True
 ```
 
+### 3.4 中間データ形式（再翻訳なしMarkdown生成用）
+
+#### Paragraph シリアライズ拡張
+
+```python
+# src/pdf_translator/core/models.py に追加
+
+@dataclass
+class Paragraph:
+    # 既存フィールド...
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "page_number": self.page_number,
+            "text": self.text,
+            "block_bbox": self.block_bbox.to_dict(),
+            "line_count": self.line_count,
+            "original_font_size": self.original_font_size,
+            "is_bold": self.is_bold,
+            "is_italic": self.is_italic,
+            "rotation": self.rotation,
+            "alignment": self.alignment,
+        }
+        # Optional fields
+        if self.category is not None:
+            result["category"] = self.category
+        if self.category_confidence is not None:
+            result["category_confidence"] = self.category_confidence
+        if self.translated_text is not None:
+            result["translated_text"] = self.translated_text
+        if self.adjusted_font_size is not None:
+            result["adjusted_font_size"] = self.adjusted_font_size
+        if self.font_name is not None:
+            result["font_name"] = self.font_name
+        if self.text_color is not None:
+            result["text_color"] = self.text_color.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Paragraph:
+        """Create from dictionary."""
+        text_color = (
+            Color.from_dict(data["text_color"])
+            if "text_color" in data
+            else None
+        )
+        return cls(
+            id=data["id"],
+            page_number=int(data["page_number"]),
+            text=data["text"],
+            block_bbox=BBox.from_dict(data["block_bbox"]),
+            line_count=int(data["line_count"]),
+            original_font_size=float(data.get("original_font_size", 12.0)),
+            category=data.get("category"),
+            category_confidence=data.get("category_confidence"),
+            translated_text=data.get("translated_text"),
+            adjusted_font_size=data.get("adjusted_font_size"),
+            is_bold=data.get("is_bold", False),
+            is_italic=data.get("is_italic", False),
+            font_name=data.get("font_name"),
+            text_color=text_color,
+            rotation=float(data.get("rotation", 0.0)),
+            alignment=data.get("alignment", "left"),
+        )
+```
+
+#### TranslatedDocument クラス
+
+```python
+# src/pdf_translator/output/translated_document.py
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from pdf_translator.core.models import Paragraph
+
+TRANSLATED_DOC_VERSION = "1.0.0"
+
+
+@dataclass
+class TranslatedDocumentMetadata:
+    """翻訳済みドキュメントのメタデータ"""
+    source_file: str
+    source_lang: str
+    target_lang: str
+    translated_at: str
+    translator_backend: str
+    page_count: int
+    paragraph_count: int
+    translated_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_file": self.source_file,
+            "source_lang": self.source_lang,
+            "target_lang": self.target_lang,
+            "translated_at": self.translated_at,
+            "translator_backend": self.translator_backend,
+            "page_count": self.page_count,
+            "paragraph_count": self.paragraph_count,
+            "translated_count": self.translated_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TranslatedDocumentMetadata":
+        return cls(**data)
+
+
+@dataclass
+class TranslatedDocument:
+    """翻訳済みドキュメント（中間データ形式）
+
+    翻訳結果を保存し、再翻訳なしでMarkdown等を再生成可能にする。
+    """
+    metadata: TranslatedDocumentMetadata
+    paragraphs: list[Paragraph]
+
+    def to_json(self, indent: int = 2) -> str:
+        """Export to JSON string."""
+        data = {
+            "version": TRANSLATED_DOC_VERSION,
+            "metadata": self.metadata.to_dict(),
+            "paragraphs": [p.to_dict() for p in self.paragraphs],
+        }
+        return json.dumps(data, indent=indent, ensure_ascii=False)
+
+    def save(self, path: Path) -> None:
+        """Save to JSON file."""
+        path.write_text(self.to_json(), encoding="utf-8")
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "TranslatedDocument":
+        """Create from JSON string."""
+        data = json.loads(json_str)
+        version = data.get("version", "unknown")
+        if version != TRANSLATED_DOC_VERSION:
+            raise ValueError(
+                f"Unsupported version: {version} (expected {TRANSLATED_DOC_VERSION})"
+            )
+        return cls(
+            metadata=TranslatedDocumentMetadata.from_dict(data["metadata"]),
+            paragraphs=[Paragraph.from_dict(p) for p in data["paragraphs"]],
+        )
+
+    @classmethod
+    def load(cls, path: Path) -> "TranslatedDocument":
+        """Load from JSON file."""
+        return cls.from_json(path.read_text(encoding="utf-8"))
+
+    @classmethod
+    def from_pipeline_result(
+        cls,
+        paragraphs: list[Paragraph],
+        source_file: str,
+        source_lang: str,
+        target_lang: str,
+        translator_backend: str,
+    ) -> "TranslatedDocument":
+        """Create from pipeline result."""
+        page_numbers = {p.page_number for p in paragraphs}
+        translated_count = sum(1 for p in paragraphs if p.translated_text)
+        metadata = TranslatedDocumentMetadata(
+            source_file=source_file,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            translated_at=datetime.now().isoformat(),
+            translator_backend=translator_backend,
+            page_count=len(page_numbers),
+            paragraph_count=len(paragraphs),
+            translated_count=translated_count,
+        )
+        return cls(metadata=metadata, paragraphs=paragraphs)
+```
+
+#### 使用例
+
+```python
+# 翻訳時に中間データを保存
+result = await pipeline.translate(pdf_path)
+doc = TranslatedDocument.from_pipeline_result(
+    paragraphs=result.paragraphs,
+    source_file="sample.pdf",
+    source_lang="en",
+    target_lang="ja",
+    translator_backend="openai",
+)
+doc.save(Path("sample_translated.json"))
+
+# 後からMarkdownを生成（再翻訳なし）
+doc = TranslatedDocument.load(Path("sample_translated.json"))
+writer = MarkdownWriter(MarkdownConfig(
+    source_lang=doc.metadata.source_lang,
+    target_lang=doc.metadata.target_lang,
+    source_filename=doc.metadata.source_file,
+))
+markdown = writer.write(doc.paragraphs)
+```
+
 ---
 
 ## 4. カテゴリ → Markdown マッピング
@@ -242,70 +468,107 @@ This is a body paragraph. The translated text appears here.
 src/pdf_translator/
 ├── output/                          # NEW
 │   ├── __init__.py
-│   └── markdown_writer.py
+│   ├── markdown_writer.py           # MarkdownWriter, MarkdownConfig
+│   └── translated_document.py       # TranslatedDocument (中間データ)
 ├── pipeline/
 │   └── translation_pipeline.py      # 変更: TranslationResult拡張
 └── core/
-    └── models.py                    # 参照のみ
+    └── models.py                    # 変更: Paragraph.to_dict/from_dict追加
 
 tests/
-└── test_markdown_writer.py          # NEW
+├── test_markdown_writer.py          # NEW
+└── test_translated_document.py      # NEW
 ```
 
 ---
 
 ## 7. 実装ステップ
 
+### Phase 0: 中間データ形式（前提条件）
+
+0. **Paragraph シリアライズ対応**
+   - `models.py` に `Paragraph.to_dict()` / `from_dict()` 追加
+   - 既存のシリアライズパターン（TextObject, LayoutBlock等）に準拠
+
+1. **TranslatedDocument 実装**
+   - `output/translated_document.py` 新規作成
+   - `TranslatedDocumentMetadata` クラス
+   - JSON保存/読み込み機能
+
+2. **中間データテスト**
+   - シリアライズ/デシリアライズ往復テスト
+   - バージョン互換性テスト
+
 ### Phase 1: 基本実装
 
-1. **`output/` モジュール作成**
+3. **`output/` モジュール作成**
    - `__init__.py`
    - `markdown_writer.py` (MarkdownWriter, MarkdownConfig, MarkdownOutputMode)
 
-2. **カテゴリ→Markdown変換ロジック**
+4. **カテゴリ→Markdown変換ロジック**
    - `_category_to_heading_level()`
    - `_paragraph_to_markdown()`
 
-3. **基本テスト**
+5. **基本テスト**
    - 単一段落の変換
    - 複数段落の変換
    - カテゴリ別変換
 
 ### Phase 2: パイプライン統合
 
-4. **TranslationResult 拡張**
+6. **TranslationResult 拡張**
    - `paragraphs` フィールド追加
    - `markdown` フィールド追加
 
-5. **PipelineConfig 拡張**
+7. **PipelineConfig 拡張**
    - `markdown_output` オプション追加
    - `markdown_mode` オプション追加
+   - `save_intermediate` オプション追加（中間データ保存）
 
-6. **パイプライン統合テスト**
+8. **パイプライン統合テスト**
 
 ### Phase 3: 出力オプション
 
-7. **メタデータ生成**
+9. **メタデータ生成**
    - YAMLフロントマター
    - 翻訳情報
 
-8. **ページ区切り**
-   - ページ番号に基づく区切り挿入
+10. **ページ区切り**
+    - ページ番号に基づく区切り挿入
 
-9. **並列出力モード**
-   - 原文/訳文の並列表示
+11. **並列出力モード**
+    - 原文/訳文の並列表示
 
 ### Phase 4: CLI統合
 
-10. **CLIオプション追加**
+12. **CLIオプション追加**
     - `--markdown` フラグ
     - `--markdown-mode` オプション
+    - `--save-json` フラグ（中間データ保存）
+    - `--from-json` オプション（中間データから生成）
 
 ---
 
 ## 8. テスト計画
 
-### 8.1 単体テスト
+### 8.1 中間データ形式テスト
+
+```python
+class TestParagraphSerialization:
+    def test_paragraph_to_dict(self): ...
+    def test_paragraph_from_dict(self): ...
+    def test_paragraph_roundtrip(self): ...
+    def test_paragraph_optional_fields(self): ...
+
+class TestTranslatedDocument:
+    def test_to_json(self): ...
+    def test_from_json(self): ...
+    def test_save_and_load(self): ...
+    def test_from_pipeline_result(self): ...
+    def test_version_mismatch_raises_error(self): ...
+```
+
+### 8.2 Markdown Writer テスト
 
 ```python
 class TestMarkdownWriter:
@@ -322,12 +585,14 @@ class TestMarkdownWriter:
     def test_translated_only_mode(self): ...
 ```
 
-### 8.2 統合テスト
+### 8.3 統合テスト
 
 ```python
 class TestMarkdownIntegration:
     def test_pipeline_with_markdown_output(self): ...
     def test_markdown_file_output(self): ...
+    def test_save_intermediate_and_regenerate(self): ...  # 中間データから再生成
+    def test_from_json_without_retranslation(self): ...   # 再翻訳なしテスト
 ```
 
 ---
