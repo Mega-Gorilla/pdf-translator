@@ -72,7 +72,7 @@ class PipelineConfig:
     source_lang: str = "en"
     target_lang: str = "ja"
 
-    use_layout_analysis: bool = True
+    pdf_layout_analysis: bool = True  # Use layout analysis for PDF output
     layout_containment_threshold: float = 0.5
 
     # Categories to translate (raw_category strings)
@@ -118,6 +118,11 @@ class PipelineConfig:
     markdown_include_metadata: bool = True
     markdown_include_page_breaks: bool = True
     markdown_heading_offset: int = 0  # 0-5, shifts heading levels
+    # Categories to skip in Markdown output
+    # None: use DEFAULT_MARKDOWN_SKIP_CATEGORIES
+    # frozenset(): include all categories (skip nothing)
+    # frozenset({...}): use custom skip categories
+    markdown_skip_categories: frozenset[str] | None = None
     save_intermediate: bool = False  # Save intermediate JSON file
 
     # Image extraction options (only when markdown_output=True)
@@ -257,7 +262,11 @@ class TranslationPipeline:
         return paragraphs
 
     async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
-        if not self._config.use_layout_analysis:
+        # Layout analysis is required for:
+        # 1. PDF layout-aware rendering (when pdf_layout_analysis=True)
+        # 2. Markdown output (image/table extraction requires layout blocks)
+        need_layout = self._config.pdf_layout_analysis or self._config.markdown_output
+        if not need_layout:
             logger.warning(
                 "Layout analysis disabled. All paragraphs will be translated. "
                 "Formulas, tables, and figures may be incorrectly translated."
@@ -584,6 +593,7 @@ class TranslationPipeline:
             source_lang=self._config.source_lang,
             target_lang=self._config.target_lang,
             source_filename=pdf_path.name,
+            skip_categories=self._config.markdown_skip_categories,
         )
         writer = MarkdownWriter(config)
         markdown = writer.write(paragraphs, extracted_images, extracted_tables)

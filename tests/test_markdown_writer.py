@@ -75,7 +75,7 @@ class TestMarkdownWriter:
         md = writer.write(paras)
 
         assert "# Document Title" in md
-        assert "> これは概要です。" in md
+        assert "これは概要です。" in md  # abstract is now treated as p (not blockquote)
         assert "本文はここです。" in md
 
     def test_write_with_page_breaks(self) -> None:
@@ -367,7 +367,8 @@ class TestCategoryMapping:
         writer = MarkdownWriter(MarkdownConfig(include_metadata=False))
         md = writer.write([para])
 
-        assert md.strip() == "> Abstract content"
+        # abstract is now treated as p (not blockquote)
+        assert md.strip() == "Abstract content"
 
     def test_default_mapping_skip_categories(self) -> None:
         """Test skip categories are not output."""

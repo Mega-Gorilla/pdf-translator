@@ -13,6 +13,7 @@ from pdf_translator.output.image_extractor import (
 )
 from pdf_translator.output.markdown_writer import (
     DEFAULT_CATEGORY_MAPPING,
+    DEFAULT_MARKDOWN_SKIP_CATEGORIES,
     DEFAULT_NONE_CATEGORY_MAPPING,
     MarkdownConfig,
     MarkdownOutputMode,
@@ -48,6 +49,7 @@ __all__ = [
     "MarkdownConfig",
     "MarkdownOutputMode",
     "DEFAULT_CATEGORY_MAPPING",
+    "DEFAULT_MARKDOWN_SKIP_CATEGORIES",
     "DEFAULT_NONE_CATEGORY_MAPPING",
     # Translated document
     "TRANSLATED_DOC_VERSION",

@@ -176,6 +176,20 @@ Environment Variables:
         choices=[0, 1, 2, 3, 4, 5],
         help="Heading level offset (default: 0)",
     )
+    md_group.add_argument(
+        "--markdown-include-all",
+        action="store_true",
+        help="Include all categories in Markdown output (disable default skipping)",
+    )
+    md_group.add_argument(
+        "--markdown-skip",
+        type=str,
+        metavar="CATEGORIES",
+        help=(
+            "Comma-separated categories to skip in Markdown output. "
+            "Default: header,footer,page_number,aside_text,footnote,etc."
+        ),
+    )
 
     # Image extraction options (for Markdown)
     img_group = parser.add_argument_group("Image extraction options (with --markdown)")
@@ -350,6 +364,27 @@ def get_markdown_mode(mode_str: str) -> MarkdownOutputMode:
     return mode_map[mode_str]
 
 
+def get_markdown_skip_categories(args: argparse.Namespace) -> frozenset[str] | None:
+    """Get markdown skip categories from CLI arguments.
+
+    Args:
+        args: Command line arguments.
+
+    Returns:
+        frozenset of categories to skip, or None for default.
+    """
+    if args.markdown_include_all:
+        # Include all categories (skip nothing)
+        return frozenset()
+    elif args.markdown_skip:
+        # Custom skip categories
+        categories = [cat.strip() for cat in args.markdown_skip.split(",") if cat.strip()]
+        return frozenset(categories)
+    else:
+        # Use default (None will use DEFAULT_MARKDOWN_SKIP_CATEGORIES)
+        return None
+
+
 async def run(args: argparse.Namespace) -> int:
     """Execute translation pipeline.
 
@@ -393,6 +428,7 @@ async def run(args: argparse.Namespace) -> int:
         markdown_include_metadata=not args.markdown_no_metadata,
         markdown_include_page_breaks=not args.markdown_no_page_breaks,
         markdown_heading_offset=args.markdown_heading_offset,
+        markdown_skip_categories=get_markdown_skip_categories(args),
         save_intermediate=args.save_intermediate,
         # Image extraction options
         extract_images=not args.no_extract_images,

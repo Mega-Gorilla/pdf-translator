@@ -327,7 +327,7 @@ class TestPipelineIntegrationMarkdown:
             markdown_output=True,
             source_lang="en",
             target_lang="ja",
-            use_layout_analysis=False,  # Skip for simplicity
+            # Note: markdown_output=True forces layout analysis, so we mock it
         )
         pipeline = TranslationPipeline(mock_translator, config)
 
@@ -348,6 +348,9 @@ class TestPipelineIntegrationMarkdown:
             patch(
                 "pdf_translator.pipeline.translation_pipeline.PDFProcessor"
             ) as mock_processor,
+            patch.object(
+                pipeline._analyzer, "analyze_all", return_value={}
+            ),
             tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f,
         ):
             f.write(b"%PDF-1.4 dummy")
@@ -381,7 +384,7 @@ class TestPipelineIntegrationMarkdown:
             markdown_output=False,  # Disabled
             source_lang="en",
             target_lang="ja",
-            use_layout_analysis=False,
+            pdf_layout_analysis=False,
         )
         pipeline = TranslationPipeline(mock_translator, config)
 

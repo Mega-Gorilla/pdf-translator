@@ -31,7 +31,7 @@ DEFAULT_CATEGORY_MAPPING: dict[str, str] = {
     "paragraph_title": "h2",
     "text": "p",
     "vertical_text": "p",
-    "abstract": "blockquote",
+    "abstract": "p",
     "aside_text": "blockquote",
     # Figure/table categories
     "figure_title": "caption",
@@ -42,26 +42,48 @@ DEFAULT_CATEGORY_MAPPING: dict[str, str] = {
     "inline_formula": "code",
     "display_formula": "code_block",
     "algorithm": "code_block",
-    "formula_number": "skip",
+    "formula_number": "p",
     # Reference categories
     "reference": "p",
     "reference_content": "p",
     "footnote": "p",
     "vision_footnote": "p",
-    # Navigation categories (skip)
-    "header": "skip",
-    "header_image": "skip",
-    "footer": "skip",
-    "footer_image": "skip",
-    "number": "skip",
+    # Navigation categories
+    "header": "p",
+    "header_image": "image",
+    "footer": "p",
+    "footer_image": "image",
+    "number": "p",
     # Other
-    "seal": "skip",
+    "seal": "p",
     "content": "p",
     "unknown": "p",
 }
 
 # Default for None category
 DEFAULT_NONE_CATEGORY_MAPPING: str = "p"
+
+# Default categories to skip in Markdown output
+# These are typically layout elements not part of the main document content
+DEFAULT_MARKDOWN_SKIP_CATEGORIES: frozenset[str] = frozenset({
+    # Layout elements (PDF page structure)
+    "header",
+    "header_image",
+    "footer",
+    "footer_image",
+    "page_number",
+    "number",
+    # Supplementary text
+    "aside_text",
+    "footnote",
+    "vision_footnote",
+    # Reference sections
+    "reference",
+    "reference_content",
+    # Other
+    "formula_number",
+    "seal",
+})
 
 
 @dataclass
@@ -76,6 +98,11 @@ class MarkdownConfig:
     target_lang: Optional[str] = None
     source_filename: Optional[str] = None
     category_mapping_overrides: Optional[dict[str, str]] = None
+    # Categories to skip in output
+    # None: use DEFAULT_MARKDOWN_SKIP_CATEGORIES
+    # frozenset(): include all categories (skip nothing)
+    # frozenset({...}): use custom skip categories
+    skip_categories: Optional[frozenset[str]] = None
 
 
 class MarkdownWriter:
@@ -265,11 +292,11 @@ class MarkdownWriter:
         Returns:
             Markdown string.
         """
-        element_type = self._get_element_type(paragraph.category)
-
-        # Skip if element type is "skip"
-        if element_type == "skip":
+        # Skip if category is in skip list
+        if self._should_skip_category(paragraph.category):
             return ""
+
+        element_type = self._get_element_type(paragraph.category)
 
         # Get text based on output mode
         text = self._get_display_text(paragraph)
@@ -443,6 +470,26 @@ class MarkdownWriter:
 
         # Use default mapping
         return DEFAULT_CATEGORY_MAPPING.get(category, "p")
+
+    def _should_skip_category(self, category: str | None) -> bool:
+        """Check if category should be skipped.
+
+        Args:
+            category: Category string.
+
+        Returns:
+            True if category should be skipped.
+        """
+        if category is None:
+            return False
+
+        # Get effective skip categories
+        if self._config.skip_categories is not None:
+            skip_categories = self._config.skip_categories
+        else:
+            skip_categories = DEFAULT_MARKDOWN_SKIP_CATEGORIES
+
+        return category in skip_categories
 
     def _apply_heading_offset(self, level: int) -> int:
         """Apply heading offset.
