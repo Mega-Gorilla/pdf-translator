@@ -68,9 +68,60 @@ GPU count: 1
 
 ## Usage
 
+### Basic Translation
+
 ```bash
+# Basic translation (Google Translate, EN → JA)
 translate-pdf paper.pdf
+
+# Specify output file
+translate-pdf paper.pdf -o ./output/translated.pdf
+
+# Use different backend
+translate-pdf paper.pdf --backend deepl
+translate-pdf paper.pdf --backend openai
 ```
+
+### Markdown Output
+
+```bash
+# Generate Markdown alongside PDF
+translate-pdf paper.pdf --markdown
+
+# Markdown with original + translation (parallel mode)
+translate-pdf paper.pdf -m --markdown-mode parallel
+
+# Include all categories in Markdown (headers, footers, etc.)
+translate-pdf paper.pdf -m --markdown-include-all
+```
+
+### Translation Category Control
+
+By default, only body text categories are translated (`text`, `abstract`, etc.).
+Titles, formulas, and figures are kept in the original language.
+
+```bash
+# Translate all categories (including titles, formulas)
+translate-pdf paper.pdf --translate-all
+
+# Specify custom categories to translate
+translate-pdf paper.pdf --translate-categories "text,abstract,doc_title"
+```
+
+### Advanced Options
+
+```bash
+# Debug mode (draw bounding boxes)
+translate-pdf paper.pdf --debug
+
+# Side-by-side comparison PDF
+translate-pdf paper.pdf --side-by-side
+
+# Save intermediate JSON for later regeneration
+translate-pdf paper.pdf --save-intermediate
+```
+
+See `translate-pdf --help` for all options.
 
 ## License
 
