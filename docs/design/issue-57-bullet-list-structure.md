@@ -142,8 +142,8 @@ from dataclasses import dataclass
 # 箇条書き記号
 BULLET_CHARS = frozenset("•◦○●◆◇▸▹‣⁃")
 
-# 番号付きリストのパターン
-NUMBERED_PATTERN = re.compile(r"^(\d+)\.$")
+# 番号付きリストのパターン（1-999のみ、年号2019.等を除外）
+NUMBERED_PATTERN = re.compile(r"^([1-9]\d{0,2})\.$")
 
 # マーカーspan幅の閾値
 MAX_MARKER_SPAN_WIDTH_ABSOLUTE = 30.0  # 絶対上限（pt）
@@ -218,6 +218,7 @@ def _detect_list_marker(
 - bbox 構造を利用することで物理的な分離を検出
 - 絶対値 + 相対値の閾値で様々なフォントサイズに対応
 - 番号を数値として保持し、連番検出に活用
+- 番号パターンを1-999に制限し、年号（2019., 2020.等）の誤検出を防止
 
 ### 2. Paragraph モデルの拡張
 
@@ -1177,6 +1178,54 @@ class TestListExtractionE2E:
 
 ---
 
+## 検証結果
+
+`tests/fixtures/sample_autogen_paper.pdf` を使用して検出ロジックを検証:
+
+### テスト対象
+
+| ページ | 対象 | 内容 |
+|--------|------|------|
+| 16 | 箇条書き | "Ease of use", "Modularity" 等 |
+| 5, 16 | 番号付きリスト | "1. Unified interfaces...", "2. Control by fusion..." 等 |
+| 11, 12 | 年号参照 | "2019.", "2020." 等（誤検出対象） |
+
+### 結果
+
+```
+✅ Bullet list detection: 31 items correctly detected
+   - Span structure: • (3.5pt) + ' ' + content
+
+✅ Numbered list detection: 24 items correctly detected
+   - Span structure: 1. (7.5pt) + ' ' + content
+
+✅ Year false positive prevention: 7 year references correctly rejected
+   - Pattern r'^([1-9]\d{0,2})\.$' limits to 1-999
+```
+
+### 検証されたspan構造
+
+```
+=== 箇条書き (Page 16) ===
+Span 0: x0=108.0, width=3.5pt, text='•'
+Span 1: x0=111.5, width=0.0pt, text=' '
+Span 2: x0=116.5, width=47.6pt, text='Ease of use'
+→ ✅ DETECTED: bullet '•'
+
+=== 番号付きリスト (Page 5) ===
+Span 0: x0=108.0, width=7.5pt, text='1.'
+Span 1: x0=115.5, width=0.0pt, text=' '
+Span 2: x0=120.5, width=330.1pt, text='Unified interfaces...'
+→ ✅ DETECTED: numbered '1.' (num=1)
+
+=== 年号参照 (Page 11) - 正しく除外 ===
+Span 0: x0=118.0, width=22.4pt, text='2019.'
+Span 1: x0=140.4, width=0.0pt, text='\n'
+→ ❌ Correctly rejected (4-digit year pattern)
+```
+
+---
+
 ## 将来対応（別 Issue）
 
 1. **ネストリスト対応**
@@ -1199,8 +1248,9 @@ class TestListExtractionE2E:
 - [Issue #57](https://github.com/Mega-Gorilla/pdf-translator/issues/57)
 - [PR #58](https://github.com/Mega-Gorilla/pdf-translator/pull/58) - paragraph_merger 改行対応
 - `tests/fixtures/sample_autogen_paper.pdf`
-  - ページ 10: 箇条書きリスト
-  - ページ 21: 番号付きリスト
+  - ページ 16: 箇条書きリスト（"Ease of use", "Modularity" 等）
+  - ページ 5, 16: 番号付きリスト（"1. Unified interfaces..." 等）
+  - ページ 11, 12: 年号参照（誤検出テスト用）
 
 ---
 
@@ -1210,3 +1260,4 @@ class TestListExtractionE2E:
 |------|---------|
 | 2026-01-09 | 初版作成（テキストパース → span構造分析に変更） |
 | 2026-01-09 | レビューFB対応: 行単位Paragraph分割、シリアライズ追加、相対閾値導入 |
+| 2026-01-09 | 実PDF検証: 年号誤検出防止のためパターンを1-999に制限、検証結果セクション追加 |
