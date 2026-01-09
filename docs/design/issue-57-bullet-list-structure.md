@@ -452,13 +452,15 @@ def _process_block_with_continuation(
     continuations of the previous list item.
 
     When continuation lines are merged:
-    - bbox: Union of all merged lines' bboxes
+    - bbox: Union of all merged lines' bboxes (with PDF coordinate conversion)
     - line_count: Sum of merged lines
+    - id: Deterministic format para_p{page}_b{block}_i{item}
     """
     paragraphs: list[Paragraph] = []
     current_marker: ListMarker | None = None
     current_content: list[str] = []
     current_lines: list[dict] = []  # 継続行を含む全ての行を保持
+    item_idx = 0  # ブロック内のアイテムインデックス
 
     for marker, content, line in line_data:
         if not content:
@@ -469,11 +471,14 @@ def _process_block_with_continuation(
             if current_content and current_marker is not None:
                 paragraphs.append(self._create_paragraph(
                     text=" ".join(current_content),
-                    lines=current_lines,  # 全行を渡す
+                    lines=current_lines,
                     page_idx=page_idx,
                     block_idx=block_idx,
+                    item_idx=item_idx,
+                    page_height=page_height,
                     list_marker=current_marker,
                 ))
+                item_idx += 1
             # Start new item
             current_marker = marker
             current_content = [content]
@@ -490,16 +495,21 @@ def _process_block_with_continuation(
                 lines=[line],
                 page_idx=page_idx,
                 block_idx=block_idx,
+                item_idx=item_idx,
+                page_height=page_height,
                 list_marker=None,
             ))
+            item_idx += 1
 
     # Flush final item
     if current_content and current_marker is not None:
         paragraphs.append(self._create_paragraph(
             text=" ".join(current_content),
-            lines=current_lines,  # 全行を渡す
+            lines=current_lines,
             page_idx=page_idx,
             block_idx=block_idx,
+            item_idx=item_idx,
+            page_height=page_height,
             list_marker=current_marker,
         ))
 
@@ -512,6 +522,8 @@ def _create_paragraph(
     lines: list[dict],
     page_idx: int,
     block_idx: int,
+    item_idx: int,
+    page_height: float,
     list_marker: ListMarker | None,
 ) -> Paragraph:
     """Create a Paragraph from one or more lines.
@@ -521,22 +533,33 @@ def _create_paragraph(
         lines: List of line dictionaries (may contain multiple for continuations).
         page_idx: Page index.
         block_idx: Block index.
+        item_idx: Item index within block (for deterministic ID).
+        page_height: Page height for PDF coordinate conversion.
         list_marker: List marker if detected.
 
     Returns:
         Paragraph with bbox union and correct line_count.
     """
-    # Calculate bbox as union of all lines
-    bboxes = [BBox(*line["bbox"]) for line in lines if "bbox" in line]
-    if bboxes:
-        merged_bbox = bboxes[0]
-        for bbox in bboxes[1:]:
-            merged_bbox = merged_bbox.union(bbox)
+    # Calculate bbox as union of all lines (in pdftext top-left coordinates)
+    raw_bboxes = [line["bbox"] for line in lines if "bbox" in line]
+    if raw_bboxes:
+        x0 = min(b[0] for b in raw_bboxes)
+        y0_top = min(b[1] for b in raw_bboxes)
+        x1 = max(b[2] for b in raw_bboxes)
+        y1_bottom = max(b[3] for b in raw_bboxes)
+
+        # Convert to PDF coordinates (origin at bottom-left)
+        # pdftext uses top-left origin, PDF uses bottom-left
+        pdf_y0 = page_height - float(y1_bottom)
+        pdf_y1 = page_height - float(y0_top)
+        merged_bbox = BBox(x0=float(x0), y0=pdf_y0, x1=float(x1), y1=pdf_y1)
     else:
         merged_bbox = BBox(0, 0, 0, 0)
 
+    # Deterministic ID: page_idx + block_idx + item_idx
+    # Ensures stable IDs across runs for debugging and intermediate JSON
     return Paragraph(
-        id=f"para_p{page_idx}_b{block_idx}_{id(lines[0])}",
+        id=f"para_p{page_idx}_b{block_idx}_i{item_idx}",
         page_number=page_idx,
         text=text,
         block_bbox=merged_bbox,
