@@ -236,15 +236,34 @@ class TestKinsokuRules:
 
 
 class TestParagraphBreaks:
-    """Tests for paragraph break handling in TextLayoutEngine."""
+    """Tests for paragraph break handling in TextLayoutEngine.
 
-    def test_wrap_text_with_newlines(
+    Note: `\\n\\n` creates paragraph breaks (with spacing),
+    `\\n` creates line breaks (no extra spacing).
+    """
+
+    def test_wrap_text_with_single_newline(
         self,
         layout_engine: TextLayoutEngine,
         helvetica_font: ctypes.c_void_p,
     ) -> None:
-        """Newlines should be converted to paragraph break markers."""
-        text = "First paragraph.\nSecond paragraph."
+        """Single newline is a line break, not paragraph break."""
+        text = "First line.\nSecond line."
+        lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
+
+        # Should have 2 lines, no paragraph break marker
+        assert len(lines) == 2
+        assert lines[0] == "First line."
+        assert lines[1] == "Second line."
+        assert PARAGRAPH_BREAK_MARKER not in lines
+
+    def test_wrap_text_with_double_newline(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Double newline creates paragraph break marker."""
+        text = "First paragraph.\n\nSecond paragraph."
         lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
 
         # Should have: text, marker, text
@@ -253,18 +272,18 @@ class TestParagraphBreaks:
         assert lines[1] == PARAGRAPH_BREAK_MARKER
         assert lines[2] == "Second paragraph."
 
-    def test_wrap_text_multiple_newlines(
+    def test_wrap_text_multiple_paragraphs(
         self,
         layout_engine: TextLayoutEngine,
         helvetica_font: ctypes.c_void_p,
     ) -> None:
-        """Multiple newlines should create multiple paragraph breaks."""
-        text = "Para 1.\nPara 2.\nPara 3."
+        """Multiple double newlines create multiple paragraph breaks."""
+        text = "Para 1.\n\nPara 2.\n\nPara 3."
         lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
 
         # Should have: text, marker, text, marker, text
         assert len(lines) == 5
-        markers = [l for l in lines if l == PARAGRAPH_BREAK_MARKER]
+        markers = [line for line in lines if line == PARAGRAPH_BREAK_MARKER]
         assert len(markers) == 2
 
     def test_wrap_text_no_trailing_marker(
@@ -273,34 +292,38 @@ class TestParagraphBreaks:
         helvetica_font: ctypes.c_void_p,
     ) -> None:
         """Trailing newlines should not result in trailing markers."""
-        text = "First paragraph.\n"
+        text = "First paragraph.\n\n"
         lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
 
-        # Should have just the text, no marker
+        # Should have just the text, no trailing marker
         assert len(lines) == 1
         assert lines[0] == "First paragraph."
 
-    def test_wrap_text_empty_segments(
+    def test_wrap_text_mixed_breaks(
         self,
         layout_engine: TextLayoutEngine,
         helvetica_font: ctypes.c_void_p,
     ) -> None:
-        """Empty segments between newlines should result in markers."""
-        text = "Para 1.\n\nPara 2."
+        """Mixed line breaks and paragraph breaks."""
+        text = "Line 1\nLine 2\n\nPara 2 Line 1\nPara 2 Line 2"
         lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
 
-        # Should have: text, marker, marker, text (two markers for double newline)
-        markers = [l for l in lines if l == PARAGRAPH_BREAK_MARKER]
-        assert len(markers) == 2
+        # Should have 5 items: 2 lines, 1 marker, 2 lines
+        assert len(lines) == 5
+        assert lines[0] == "Line 1"
+        assert lines[1] == "Line 2"
+        assert lines[2] == PARAGRAPH_BREAK_MARKER
+        assert lines[3] == "Para 2 Line 1"
+        assert lines[4] == "Para 2 Line 2"
 
-    def test_wrap_text_long_segments_with_newlines(
+    def test_wrap_text_long_segments_with_paragraphs(
         self,
         layout_engine: TextLayoutEngine,
         helvetica_font: ctypes.c_void_p,
     ) -> None:
-        """Long segments should wrap and have markers between them."""
+        """Long segments should wrap and have markers between paragraphs."""
         text = (
-            "This is a long first paragraph that should wrap.\n"
+            "This is a long first paragraph that should wrap.\n\n"
             "This is a long second paragraph that should also wrap."
         )
         lines = layout_engine.wrap_text(text, 100.0, helvetica_font, 12.0)
@@ -308,7 +331,7 @@ class TestParagraphBreaks:
         # Should have multiple wrapped lines with markers between paragraphs
         assert PARAGRAPH_BREAK_MARKER in lines
         # Text from both paragraphs should be present
-        full_text = " ".join([l for l in lines if l != PARAGRAPH_BREAK_MARKER])
+        full_text = " ".join([line for line in lines if line != PARAGRAPH_BREAK_MARKER])
         assert "first" in full_text
         assert "second" in full_text
 
@@ -319,13 +342,28 @@ class TestParagraphBreaks:
     ) -> None:
         """fit_text_in_bbox should handle paragraph breaks correctly."""
         bbox = BBox(x0=0, y0=0, x1=200, y1=100)
-        text = "First paragraph.\nSecond paragraph."
+        text = "First paragraph.\n\nSecond paragraph."
         result = layout_engine.fit_text_in_bbox(text, bbox, helvetica_font, 12.0)
 
         # Should have 2 text lines (markers are not included in result.lines)
         assert len(result.lines) == 2
         assert result.lines[0].text == "First paragraph."
         assert result.lines[1].text == "Second paragraph."
+
+    def test_fit_text_with_line_breaks(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """fit_text_in_bbox should handle line breaks without extra spacing."""
+        bbox = BBox(x0=0, y0=0, x1=200, y1=100)
+        text = "First line.\nSecond line."
+        result = layout_engine.fit_text_in_bbox(text, bbox, helvetica_font, 12.0)
+
+        # Should have 2 text lines
+        assert len(result.lines) == 2
+        assert result.lines[0].text == "First line."
+        assert result.lines[1].text == "Second line."
 
     def test_fit_text_paragraph_spacing(
         self,
@@ -335,26 +373,24 @@ class TestParagraphBreaks:
         """Paragraph breaks should have additional vertical spacing."""
         bbox = BBox(x0=0, y0=0, x1=200, y1=200)
 
-        # Text without newline
-        text_no_break = "First line. Second line."
-        result_no_break = layout_engine.fit_text_in_bbox(
-            text_no_break, bbox, helvetica_font, 12.0
+        # Text with line break (no extra spacing)
+        text_line_break = "First line.\nSecond line."
+        result_line_break = layout_engine.fit_text_in_bbox(
+            text_line_break, bbox, helvetica_font, 12.0
         )
 
-        # Text with newline
-        text_with_break = "First line.\nSecond line."
-        result_with_break = layout_engine.fit_text_in_bbox(
-            text_with_break, bbox, helvetica_font, 12.0
+        # Text with paragraph break (extra spacing)
+        text_para_break = "First line.\n\nSecond line."
+        result_para_break = layout_engine.fit_text_in_bbox(
+            text_para_break, bbox, helvetica_font, 12.0
         )
 
         # Both should have 2 lines of text
-        if len(result_no_break.lines) == 1:
-            # If no break fits in one line, compare total heights
-            pass
-        else:
-            # The version with paragraph break should have greater total height
-            # due to paragraph spacing
-            assert result_with_break.total_height >= result_no_break.total_height
+        assert len(result_line_break.lines) == 2
+        assert len(result_para_break.lines) == 2
+
+        # The version with paragraph break should have greater total height
+        assert result_para_break.total_height > result_line_break.total_height
 
     def test_paragraph_spacing_factor(
         self,
@@ -363,7 +399,7 @@ class TestParagraphBreaks:
         """Paragraph spacing factor should affect total height."""
         font = pdfium.raw.FPDFText_LoadStandardFont(pdf_doc, b"Helvetica")
         bbox = BBox(x0=0, y0=0, x1=200, y1=200)
-        text = "Para 1.\nPara 2."
+        text = "Para 1.\n\nPara 2."  # Use double newline for paragraph break
 
         # Engine with no paragraph spacing
         engine_no_space = TextLayoutEngine(paragraph_spacing_factor=0.0)

@@ -6,10 +6,44 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pdf_translator.core.models import BBox, Color, Paragraph
+from pdf_translator.core.models import BBox, Color, ListMarker, Paragraph
+
+
+# =============================================================================
+# リスト検出用定数
+# =============================================================================
+
+# 箇条書きマーカー文字
+BULLET_CHARS: frozenset[str] = frozenset("•◦○●◆◇▸▹‣⁃")
+
+# 丸数字（①〜⑳）- 誤検知リスクが極めて低い
+CIRCLED_NUMBERS: frozenset[str] = frozenset("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳")
+CIRCLED_NUMBERS_STR = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+
+# 番号付きリストのパターン
+NUMBERED_DOT_PATTERN = re.compile(r"^([1-9]\d{0,2})\.$")  # 1., 2., 3. (1-999)
+NUMBERED_PAREN_PATTERN = re.compile(r"^([1-9]\d{0,2})\)$")  # 1), 2), 3) (1-999)
+
+# マーカーspan幅の閾値
+MAX_MARKER_SPAN_WIDTH_ABSOLUTE = 30.0  # 絶対上限 (pt)
+MAX_MARKER_SPAN_WIDTH_RATIO = 2.5  # font_size に対する比率
+
+
+@dataclass
+class ExtractorConfig:
+    """Configuration for paragraph extraction.
+
+    Attributes:
+        detect_lists: Enable list marker detection and line-level splitting.
+            When True (default), list items are extracted as separate paragraphs.
+            When False, all lines are merged with spaces (legacy behavior).
+    """
+
+    detect_lists: bool = True
 
 
 class ParagraphExtractor:
@@ -22,16 +56,21 @@ class ParagraphExtractor:
         self,
         pdftext_result: list[dict[str, Any]],
         page_range: list[int] | None = None,
+        config: ExtractorConfig | None = None,
     ) -> list[Paragraph]:
         """Generate Paragraph list from pdftext output.
 
         Args:
             pdftext_result: Output of pdftext.dictionary_output().
             page_range: Optional page index list to include.
+            config: Extraction configuration. Uses defaults if None.
 
         Returns:
             List of Paragraphs.
         """
+        if config is None:
+            config = ExtractorConfig()
+
         paragraphs: list[Paragraph] = []
         page_filter = set(page_range) if page_range is not None else None
         page_numbers = (
@@ -57,14 +96,14 @@ class ParagraphExtractor:
             blocks = page_data.get("blocks", [])
 
             for block_idx, block in enumerate(blocks):
-                paragraph = self._process_block(
+                block_paragraphs = self._process_block(
                     block,
                     page_number,
                     block_idx,
                     page_height,
+                    config,
                 )
-                if paragraph is not None:
-                    paragraphs.append(paragraph)
+                paragraphs.extend(block_paragraphs)
 
         return paragraphs
 
@@ -72,12 +111,14 @@ class ParagraphExtractor:
     def extract_from_pdf(
         pdf_path: str | Path,
         page_range: list[int] | None = None,
+        config: ExtractorConfig | None = None,
     ) -> list[Paragraph]:
         """Extract Paragraphs directly from a PDF file.
 
         Args:
             pdf_path: PDF file path.
             page_range: Optional page index list.
+            config: Extraction configuration. Uses defaults if None.
 
         Returns:
             List of Paragraphs.
@@ -101,7 +142,7 @@ class ParagraphExtractor:
             page_heights = {}
 
         extractor = ParagraphExtractor(page_heights=page_heights)
-        return extractor.extract(result, page_range)
+        return extractor.extract(result, page_range, config)
 
     def _process_block(
         self,
@@ -109,32 +150,20 @@ class ParagraphExtractor:
         page_idx: int,
         block_idx: int,
         page_height: float,
-    ) -> Paragraph | None:
-        """Convert a single block to Paragraph."""
-        lines: list[str] = []
-        for line in block.get("lines", []):
-            spans = line.get("spans", [])
-            line_text = "".join(span.get("text", "") for span in spans)
-            line_text = line_text.strip()
-            if line_text:
-                lines.append(line_text)
+        config: ExtractorConfig,
+    ) -> list[Paragraph]:
+        """Convert a single block to Paragraph(s) with list marker detection.
 
+        Returns:
+            List of Paragraphs. For list blocks with detect_lists=True, uses
+            continuation line handling. For regular text, all lines are merged
+            into one Paragraph.
+        """
+        lines = block.get("lines", [])
         if not lines:
-            return None
+            return []
 
-        merged_text = " ".join(lines)
-        merged_text = re.sub(r"\s+", " ", merged_text).strip()
-        if not merged_text:
-            return None
-
-        block_bbox = block.get("bbox")
-        if not block_bbox or len(block_bbox) < 4:
-            return None
-
-        x0, y0_top, x1, y1_bottom = block_bbox
-        pdf_y0 = page_height - float(y1_bottom)
-        pdf_y1 = page_height - float(y0_top)
-
+        # Get block-level attributes
         font_size = self._estimate_font_size(block)
         is_bold = self._estimate_is_bold(block)
         is_italic = self._estimate_is_italic(block)
@@ -143,11 +172,243 @@ class ParagraphExtractor:
         rotation = self._estimate_rotation(block)
         alignment = self._estimate_alignment(block, rotation)
 
+        # First pass: detect markers and extract content for each line
+        line_data: list[tuple[ListMarker | None, str, dict[str, Any]]] = []
+
+        for line in lines:
+            spans = line.get("spans", [])
+            line_font_size = self._estimate_line_font_size(spans) or font_size
+
+            # Only detect markers if feature is enabled
+            marker = None
+            if config.detect_lists:
+                marker = self._detect_list_marker(line, line_font_size)
+
+            # Extract content text (skipping marker if present)
+            content = self._extract_content_after_marker(spans, marker is not None)
+            content = content.rstrip()  # 末尾空白のみ除去、先頭は保持
+
+            if content or marker:
+                line_data.append((marker, content, line))
+
+        if not line_data:
+            return []
+
+        # Check if any line has a list marker
+        has_list = any(m for m, _, _ in line_data)
+
+        if has_list and config.detect_lists:
+            # List block: use continuation line handling
+            return self._process_block_with_continuation(
+                line_data,
+                page_idx,
+                block_idx,
+                page_height,
+                font_size,
+                is_bold,
+                is_italic,
+                font_name,
+                text_color,
+                rotation,
+                alignment,
+            )
+        else:
+            # Regular block: merge all lines into one Paragraph
+            merged_text = " ".join(content for _, content, _ in line_data if content)
+            merged_text = re.sub(r"\s+", " ", merged_text).strip()
+
+            if not merged_text:
+                return []
+
+            block_bbox = block.get("bbox")
+            if not block_bbox or len(block_bbox) < 4:
+                return []
+
+            x0, y0_top, x1, y1_bottom = block_bbox
+            pdf_y0 = page_height - float(y1_bottom)
+            pdf_y1 = page_height - float(y0_top)
+
+            para = Paragraph(
+                id=f"para_p{page_idx}_b{block_idx}_i0",
+                page_number=page_idx,
+                text=merged_text,
+                block_bbox=BBox(x0=float(x0), y0=pdf_y0, x1=float(x1), y1=pdf_y1),
+                line_count=len(line_data),
+                original_font_size=font_size,
+                is_bold=is_bold,
+                is_italic=is_italic,
+                font_name=font_name,
+                text_color=text_color,
+                rotation=rotation,
+                alignment=alignment,
+            )
+            return [para]
+
+    def _process_block_with_continuation(
+        self,
+        line_data: list[tuple[ListMarker | None, str, dict[str, Any]]],
+        page_idx: int,
+        block_idx: int,
+        page_height: float,
+        font_size: float,
+        is_bold: bool,
+        is_italic: bool,
+        font_name: str | None,
+        text_color: Color | None,
+        rotation: float,
+        alignment: str,
+    ) -> list[Paragraph]:
+        """Process lines with continuation line handling.
+
+        Lines without markers that follow a marker line are treated as
+        continuations of the previous list item.
+
+        When continuation lines are merged:
+        - bbox: Union of all merged lines' bboxes (with PDF coordinate conversion)
+        - line_count: Sum of merged lines
+        - id: Deterministic format para_p{page}_b{block}_i{item}
+        """
+        paragraphs: list[Paragraph] = []
+        current_marker: ListMarker | None = None
+        current_content: list[str] = []
+        current_lines: list[dict[str, Any]] = []
+        item_idx = 0
+
+        for marker, content, line in line_data:
+            if not content:
+                continue
+
+            if marker is not None:
+                # New list item - flush previous if exists
+                if current_content and current_marker is not None:
+                    para = self._create_paragraph_from_lines(
+                        current_lines,
+                        " ".join(current_content),
+                        page_idx,
+                        block_idx,
+                        item_idx,
+                        page_height,
+                        font_size,
+                        is_bold,
+                        is_italic,
+                        font_name,
+                        text_color,
+                        rotation,
+                        alignment,
+                        current_marker,
+                    )
+                    paragraphs.append(para)
+                    item_idx += 1
+
+                # Start new item
+                current_marker = marker
+                current_content = [content]
+                current_lines = [line]
+            elif current_marker is not None:
+                # Continuation line - append to current item
+                current_content.append(content)
+                current_lines.append(line)
+            else:
+                # Regular text line (no active list context)
+                para = self._create_paragraph_from_lines(
+                    [line],
+                    content,
+                    page_idx,
+                    block_idx,
+                    item_idx,
+                    page_height,
+                    font_size,
+                    is_bold,
+                    is_italic,
+                    font_name,
+                    text_color,
+                    rotation,
+                    alignment,
+                    None,
+                )
+                paragraphs.append(para)
+                item_idx += 1
+
+        # Flush final item
+        if current_content and current_marker is not None:
+            para = self._create_paragraph_from_lines(
+                current_lines,
+                " ".join(current_content),
+                page_idx,
+                block_idx,
+                item_idx,
+                page_height,
+                font_size,
+                is_bold,
+                is_italic,
+                font_name,
+                text_color,
+                rotation,
+                alignment,
+                current_marker,
+            )
+            paragraphs.append(para)
+
+        return paragraphs
+
+    def _create_paragraph_from_lines(
+        self,
+        lines: list[dict[str, Any]],
+        text: str,
+        page_idx: int,
+        block_idx: int,
+        item_idx: int,
+        page_height: float,
+        font_size: float,
+        is_bold: bool,
+        is_italic: bool,
+        font_name: str | None,
+        text_color: Color | None,
+        rotation: float,
+        alignment: str,
+        list_marker: ListMarker | None,
+    ) -> Paragraph:
+        """Create a Paragraph from one or more lines.
+
+        Args:
+            lines: List of line dictionaries (may contain multiple for continuations).
+            text: Merged text content.
+            page_idx: Page index.
+            block_idx: Block index.
+            item_idx: Item index within block (for deterministic ID).
+            page_height: Page height for PDF coordinate conversion.
+            font_size: Font size in points.
+            is_bold: Whether text is bold.
+            is_italic: Whether text is italic.
+            font_name: Font name.
+            text_color: Text color.
+            rotation: Text rotation in degrees.
+            alignment: Text alignment.
+            list_marker: List marker if detected.
+
+        Returns:
+            Paragraph with bbox union and correct line_count.
+        """
+        # Calculate bbox as union of all lines (in pdftext top-left coordinates)
+        raw_bboxes = [line["bbox"] for line in lines if "bbox" in line]
+        if raw_bboxes:
+            x0 = min(b[0] for b in raw_bboxes)
+            y0_top = min(b[1] for b in raw_bboxes)
+            x1 = max(b[2] for b in raw_bboxes)
+            y1_bottom = max(b[3] for b in raw_bboxes)
+
+            # Convert to PDF coordinates (origin at bottom-left)
+            pdf_y0 = page_height - float(y1_bottom)
+            pdf_y1 = page_height - float(y0_top)
+            merged_bbox = BBox(x0=float(x0), y0=pdf_y0, x1=float(x1), y1=pdf_y1)
+        else:
+            merged_bbox = BBox(0, 0, 0, 0)
+
         return Paragraph(
-            id=f"para_p{page_idx}_b{block_idx}",
+            id=f"para_p{page_idx}_b{block_idx}_i{item_idx}",
             page_number=page_idx,
-            text=merged_text,
-            block_bbox=BBox(x0=float(x0), y0=pdf_y0, x1=float(x1), y1=pdf_y1),
+            text=text,
+            block_bbox=merged_bbox,
             line_count=len(lines),
             original_font_size=font_size,
             is_bold=is_bold,
@@ -156,7 +417,156 @@ class ParagraphExtractor:
             text_color=text_color,
             rotation=rotation,
             alignment=alignment,
+            list_marker=list_marker,
         )
+
+    @staticmethod
+    def _is_marker_span_width(span_width: float, font_size: float) -> bool:
+        """Check if span width is within marker threshold.
+
+        Uses both absolute and relative thresholds:
+        - Absolute: span_width <= MAX_MARKER_SPAN_WIDTH_ABSOLUTE
+        - Relative: span_width <= font_size * MAX_MARKER_SPAN_WIDTH_RATIO
+
+        Args:
+            span_width: Width of the span in points.
+            font_size: Font size in points.
+
+        Returns:
+            True if span width is acceptable for a marker.
+        """
+        absolute_ok = span_width <= MAX_MARKER_SPAN_WIDTH_ABSOLUTE
+        relative_ok = span_width <= font_size * MAX_MARKER_SPAN_WIDTH_RATIO
+        return absolute_ok and relative_ok
+
+    @staticmethod
+    def _detect_list_marker(
+        line: dict[str, Any],
+        font_size: float,
+    ) -> ListMarker | None:
+        """Detect list marker from span structure.
+
+        Analyzes the first span of a line to detect bullet or numbered markers.
+        Markers must be in a separate, narrow span.
+
+        Args:
+            line: Line dictionary from pdftext.
+            font_size: Font size for relative width check.
+
+        Returns:
+            ListMarker if detected, None otherwise.
+        """
+        spans = line.get("spans", [])
+        if len(spans) < 2:
+            # Need at least 2 spans (marker + content)
+            return None
+
+        first_span = spans[0]
+        first_text = first_span.get("text", "").strip()
+        if not first_text:
+            return None
+
+        # Check span width
+        first_bbox = first_span.get("bbox", [])
+        if len(first_bbox) >= 4:
+            span_width = first_bbox[2] - first_bbox[0]
+            if not ParagraphExtractor._is_marker_span_width(span_width, font_size):
+                return None
+
+        # Check for bullet markers
+        if first_text in BULLET_CHARS:
+            return ListMarker(
+                marker_type="bullet",
+                marker_text=first_text,
+                number=None,
+            )
+
+        # Check for circled numbers (①, ②, など)
+        if first_text in CIRCLED_NUMBERS:
+            circled_index = CIRCLED_NUMBERS_STR.index(first_text) + 1
+            return ListMarker(
+                marker_type="numbered",
+                marker_text=first_text,
+                number=circled_index,
+            )
+
+        # Check for numbered list: 1., 2., etc.
+        match = NUMBERED_DOT_PATTERN.match(first_text)
+        if match:
+            return ListMarker(
+                marker_type="numbered",
+                marker_text=first_text,
+                number=int(match.group(1)),
+            )
+
+        # Check for numbered list: 1), 2), etc.
+        match = NUMBERED_PAREN_PATTERN.match(first_text)
+        if match:
+            return ListMarker(
+                marker_type="numbered",
+                marker_text=first_text,
+                number=int(match.group(1)),
+            )
+
+        return None
+
+    @staticmethod
+    def _extract_content_after_marker(
+        spans: list[dict[str, Any]],
+        has_marker: bool,
+    ) -> str:
+        """Extract text content, skipping marker span if present.
+
+        Args:
+            spans: List of span dictionaries.
+            has_marker: Whether first span is a list marker.
+
+        Returns:
+            Concatenated text content.
+        """
+        if has_marker and len(spans) > 1:
+            # Skip marker span and optional space span
+            start_idx = 1
+            if len(spans) > 2:
+                second_text = spans[1].get("text", "").strip()
+                if not second_text:  # Second span is just whitespace
+                    start_idx = 2
+            content_spans = spans[start_idx:]
+        else:
+            content_spans = spans
+
+        return "".join(span.get("text", "") for span in content_spans)
+
+    @staticmethod
+    def _estimate_line_font_size(spans: list[dict[str, Any]]) -> float | None:
+        """Estimate font size for a single line from its spans.
+
+        Args:
+            spans: List of span dictionaries.
+
+        Returns:
+            Estimated font size or None if not determinable.
+        """
+        size_weights: dict[float, int] = defaultdict(int)
+        for span in spans:
+            text = span.get("text", "") or ""
+            if not text:
+                continue
+            font = span.get("font", {})
+            size = font.get("size")
+            if size is None:
+                continue
+            normalized = round(float(size), 1)
+            size_weights[normalized] += len(text)
+
+        if not size_weights:
+            return None
+
+        best_size, _ = max(
+            size_weights.items(),
+            key=lambda item: (item[1], -item[0]),
+        )
+        return float(best_size)
 
     @staticmethod
     def _estimate_font_size(block: dict[str, Any]) -> float:

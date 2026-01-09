@@ -3,7 +3,7 @@
 
 import pytest
 
-from pdf_translator.core.models import BBox, Paragraph
+from pdf_translator.core.models import BBox, ListMarker, Paragraph
 from pdf_translator.core.paragraph_merger import (
     MergeConfig,
     _calc_x_overlap,
@@ -302,6 +302,44 @@ class TestCanMerge:
         # Should merge even with Japanese sentence-ending punctuation
         assert _can_merge(para1, para2, config) is True
 
+    def test_cannot_merge_list_items(self) -> None:
+        """Paragraphs with list_marker should not merge."""
+        para1 = make_paragraph(text="Item 1", y0=50, y1=100)
+        para1.list_marker = ListMarker(marker_type="bullet", marker_text="•")
+
+        para2 = make_paragraph(text="Item 2", y0=0, y1=48)
+        para2.list_marker = ListMarker(marker_type="bullet", marker_text="•")
+
+        config = MergeConfig()
+
+        # List items should not merge
+        assert _can_merge(para1, para2, config) is False
+
+    def test_cannot_merge_list_item_with_regular(self) -> None:
+        """List item should not merge with regular paragraph."""
+        para1 = make_paragraph(text="Regular paragraph", y0=50, y1=100)
+
+        para2 = make_paragraph(text="Item 1", y0=0, y1=48)
+        para2.list_marker = ListMarker(marker_type="bullet", marker_text="•")
+
+        config = MergeConfig()
+
+        # Should not merge when one has list_marker
+        assert _can_merge(para1, para2, config) is False
+        assert _can_merge(para2, para1, config) is False
+
+    def test_numbered_list_items_not_merged(self) -> None:
+        """Numbered list items should not be merged."""
+        para1 = make_paragraph(text="First item", y0=50, y1=100)
+        para1.list_marker = ListMarker(marker_type="numbered", marker_text="1.", number=1)
+
+        para2 = make_paragraph(text="Second item", y0=0, y1=48)
+        para2.list_marker = ListMarker(marker_type="numbered", marker_text="2.", number=2)
+
+        config = MergeConfig()
+
+        assert _can_merge(para1, para2, config) is False
+
 
 # =============================================================================
 # Tests for _merge_two_paragraphs()
@@ -318,7 +356,7 @@ class TestMergeTwoParagraphs:
 
         merged = _merge_two_paragraphs(para1, para2)
 
-        assert merged.text == "First part\nsecond part"
+        assert merged.text == "First part\n\nsecond part"
 
     def test_merged_bbox_is_union(self) -> None:
         """Merged bbox should be union of original bboxes."""
@@ -435,7 +473,7 @@ class TestMergeAdjacentParagraphs:
         result = merge_adjacent_paragraphs([para1, para2])
 
         assert len(result) == 1
-        assert result[0].text == "First part\nsecond part"
+        assert result[0].text == "First part\n\nsecond part"
 
     def test_merge_chain_of_three(self) -> None:
         """Three adjacent paragraphs should merge into one."""
@@ -458,7 +496,7 @@ class TestMergeAdjacentParagraphs:
         result = merge_adjacent_paragraphs([para1, para2, para3])
 
         assert len(result) == 1
-        assert result[0].text == "First\nsecond\nthird"
+        assert result[0].text == "First\n\nsecond\n\nthird"
 
     def test_merge_partial_chain(self) -> None:
         """Chain broken by category change."""
@@ -588,7 +626,7 @@ class TestMergeAdjacentParagraphs:
         result = merge_adjacent_paragraphs([para3, para1, para2])
 
         assert len(result) == 1
-        assert result[0].text == "Top paragraph\nmiddle\nbottom"
+        assert result[0].text == "Top paragraph\n\nmiddle\n\nbottom"
 
 
 # =============================================================================
@@ -697,7 +735,7 @@ class TestMergeColumn:
         result = _merge_column([para1, para2], config)
 
         assert len(result) == 1
-        assert result[0].text == "First\nsecond"
+        assert result[0].text == "First\n\nsecond"
 
     def test_merge_three_in_column(self) -> None:
         """Three adjacent paragraphs in same column should merge."""
@@ -709,7 +747,7 @@ class TestMergeColumn:
         result = _merge_column([para1, para2, para3], config)
 
         assert len(result) == 1
-        assert result[0].text == "First\nsecond\nthird"
+        assert result[0].text == "First\n\nsecond\n\nthird"
 
     def test_no_merge_different_categories(self) -> None:
         """Different categories should not merge within column."""
@@ -769,8 +807,8 @@ class TestMultiColumnMerge:
 
         # Check merged texts
         texts = {p.text for p in result}
-        assert "Left top\nleft bottom" in texts
-        assert "Right top\nright bottom" in texts
+        assert "Left top\n\nleft bottom" in texts
+        assert "Right top\n\nright bottom" in texts
 
     def test_two_column_no_cross_merge(self) -> None:
         """Paragraphs in different columns should NOT merge.
@@ -864,8 +902,8 @@ class TestMultiColumnMerge:
         assert len(result) == 2
 
         texts = {p.text for p in result}
-        assert "Left para 1\nleft para 2" in texts
-        assert "Right para 1\nright para 2" in texts
+        assert "Left para 1\n\nleft para 2" in texts
+        assert "Right para 1\n\nright para 2" in texts
 
     def test_sidebar_layout(self) -> None:
         """Sidebar with main content should be treated as separate columns."""
@@ -889,4 +927,4 @@ class TestMultiColumnMerge:
         assert len(result) == 2
 
         merged_main = next(p for p in result if "Main" in p.text)
-        assert merged_main.text == "Main top\nmain bottom"
+        assert merged_main.text == "Main top\n\nmain bottom"

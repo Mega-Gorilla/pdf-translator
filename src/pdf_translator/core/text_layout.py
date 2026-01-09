@@ -351,12 +351,12 @@ class TextLayoutEngine:
     ) -> list[str]:
         """Wrap text to fit within a maximum width.
 
-        Handles explicit newlines (\\n) as paragraph breaks. Each paragraph
-        is wrapped independently, and paragraph breaks are marked with
-        PARAGRAPH_BREAK_MARKER in the output.
+        Handles line breaks:
+        - \\n\\n: Paragraph break (adds spacing via PARAGRAPH_BREAK_MARKER)
+        - \\n: Line break within paragraph (no extra spacing)
 
         Args:
-            text: Text to wrap (may contain newlines for paragraph breaks).
+            text: Text to wrap (may contain newlines).
             max_width: Maximum line width in points.
             font_handle: PDFium font handle.
             font_size: Font size in points.
@@ -368,19 +368,27 @@ class TextLayoutEngine:
         if not text:
             return []
 
-        # Split by newlines to handle paragraph breaks
-        segments = text.split("\n")
-
         all_lines: list[str] = []
-        for i, segment in enumerate(segments):
-            segment = segment.strip()
-            if segment:
-                # Wrap this segment
-                wrapped = self._wrap_segment(segment, max_width, font_handle, font_size)
-                all_lines.extend(wrapped)
 
-            # Add paragraph break marker between segments (not after last)
-            if i < len(segments) - 1:
+        # Split by paragraph breaks (\n\n)
+        paragraphs = text.split("\n\n")
+
+        for para_idx, paragraph in enumerate(paragraphs):
+            if not paragraph.strip():
+                continue
+
+            # Split by line breaks within paragraph (\n)
+            lines = paragraph.split("\n")
+
+            for line in lines:
+                line = line.strip()
+                if line:
+                    # Wrap this line
+                    wrapped = self._wrap_segment(line, max_width, font_handle, font_size)
+                    all_lines.extend(wrapped)
+
+            # Add paragraph break marker between paragraphs (not after last)
+            if para_idx < len(paragraphs) - 1:
                 all_lines.append(PARAGRAPH_BREAK_MARKER)
 
         # Remove trailing paragraph break markers
@@ -478,11 +486,12 @@ class TextLayoutEngine:
     ) -> LayoutResult:
         """Fit text within a bounding box, adjusting font size if necessary.
 
-        Handles explicit newlines in text as paragraph breaks, adding extra
-        vertical spacing between paragraphs.
+        Handles line breaks:
+        - \\n\\n: Paragraph break (adds extra vertical spacing)
+        - \\n: Line break within paragraph (no extra spacing)
 
         Args:
-            text: Text to layout (may contain newlines for paragraph breaks).
+            text: Text to layout (may contain newlines).
             bbox: Bounding box to fit text into.
             font_handle: PDFium font handle.
             initial_font_size: Starting font size in points.
