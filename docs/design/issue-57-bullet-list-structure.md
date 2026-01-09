@@ -130,6 +130,45 @@ class ListMarker:
 
 ## 技術的決定事項
 
+### 0. 機能の有効化/無効化
+
+**決定: リスト検出機能はデフォルト有効、設定で無効化可能**
+
+```python
+@dataclass
+class ExtractorConfig:
+    """Configuration for paragraph extraction.
+
+    Attributes:
+        detect_lists: Enable list marker detection and line-level splitting.
+            When True (default), list items are extracted as separate paragraphs.
+            When False, all lines are merged with spaces (legacy behavior).
+    """
+    detect_lists: bool = True
+```
+
+**理由:**
+- デフォルト有効: 新機能の恩恵を自動的に受けられる
+- 無効化オプション: 既存ワークフローとの互換性、特殊なPDFでの問題回避
+- 段階的導入: ユーザーが機能を評価してから本格採用できる
+
+**CLI オプション:**
+
+```bash
+# デフォルト（リスト検出有効）
+uv run translate-pdf paper.pdf
+
+# リスト検出を無効化
+uv run translate-pdf paper.pdf --no-detect-lists
+```
+
+**影響範囲:**
+
+| 設定 | 動作 |
+|------|------|
+| `detect_lists=True` | リスト項目を行単位で分割、`list_marker` を設定 |
+| `detect_lists=False` | 従来通り全行をスペース結合、`list_marker` は常に `None` |
+
 ### 1. リストマーカー検出ロジック
 
 **決定: 最初の span を分析してリストマーカーを検出（相対閾値使用）**
@@ -639,22 +678,30 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
 
 **ファイル:** `src/pdf_translator/core/paragraph_extractor.py`
 
-1. 定数追加
+1. `ExtractorConfig` dataclass 追加
+   ```python
+   @dataclass
+   class ExtractorConfig:
+       detect_lists: bool = True  # リスト検出の有効/無効
+   ```
+
+2. 定数追加
    - `BULLET_CHARS`, `NUMBERED_PATTERN`
    - `MAX_MARKER_SPAN_WIDTH_ABSOLUTE`, `MAX_MARKER_SPAN_WIDTH_RATIO`
 
-2. 検出メソッド追加
+3. 検出メソッド追加
    - `_is_marker_span_width()`: 相対閾値チェック
    - `_detect_list_marker()`: span構造からマーカー検出
    - `_extract_content_after_marker()`: マーカー以降のテキスト抽出
 
-3. `_process_block()` 修正
+4. `_process_block()` 修正
    - 戻り値を `Paragraph | None` → `list[Paragraph]` に変更
-   - リストブロックは行ごとに別Paragraphを生成
-   - 通常ブロックは従来通り1つのParagraphに結合
+   - `config.detect_lists=True`: リストブロックは行ごとに別Paragraphを生成
+   - `config.detect_lists=False`: 従来通り全行をスペース結合（レガシー動作）
 
-4. 呼び出し元の修正
+5. 呼び出し元の修正
    - `extract_paragraphs()` で `_process_block()` の戻り値を展開
+   - `config` パラメータを追加（デフォルト: `ExtractorConfig()`）
 
 ### Phase 3: paragraph_merger.py 修正
 
@@ -688,9 +735,29 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
    - `list_marker` がある場合は専用フォーマット
    - parallel モード対応
 
-### Phase 6: テスト
+### Phase 6: CLI オプション追加
 
-#### 6.1 models テスト
+**ファイル:** `src/pdf_translator/cli.py`
+
+1. `--no-detect-lists` オプション追加
+   ```python
+   @click.option(
+       "--no-detect-lists",
+       is_flag=True,
+       default=False,
+       help="Disable list detection (legacy behavior)",
+   )
+   ```
+
+2. オプションを `ExtractorConfig` に渡す
+   ```python
+   config = ExtractorConfig(detect_lists=not no_detect_lists)
+   paragraphs = extractor.extract_paragraphs(config=config)
+   ```
+
+### Phase 7: テスト
+
+#### 7.1 models テスト
 
 **ファイル:** `tests/test_models.py`
 
@@ -764,7 +831,7 @@ class TestParagraphListMarker:
         assert para.list_marker.number == 1
 ```
 
-#### 6.2 paragraph_extractor テスト
+#### 7.2 paragraph_extractor テスト
 
 **ファイル:** `tests/test_paragraph_extractor.py`
 
@@ -884,9 +951,41 @@ class TestBlockToMultipleParagraphs:
         assert len(paragraphs) == 1
         assert paragraphs[0].text == "Line one. Line two."
         assert paragraphs[0].list_marker is None
+
+
+class TestExtractorConfig:
+    """Tests for ExtractorConfig feature toggle."""
+
+    def test_detect_lists_disabled(self) -> None:
+        """When detect_lists=False, list markers should not be detected."""
+        block = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "•", "bbox": [100, 200, 108, 212]},
+                        {"text": " ", "bbox": [108, 200, 111, 212]},
+                        {"text": "Item", "bbox": [111, 200, 150, 212]},
+                    ]
+                },
+            ]
+        }
+        config = ExtractorConfig(detect_lists=False)
+        extractor = ParagraphExtractor()
+        paragraphs = extractor._process_block(
+            block, page_idx=0, block_idx=0, page_height=800, config=config
+        )
+
+        # Should merge with space, not split by lines
+        assert len(paragraphs) == 1
+        assert paragraphs[0].list_marker is None  # No marker when disabled
+
+    def test_detect_lists_enabled_default(self) -> None:
+        """Default config should have detect_lists=True."""
+        config = ExtractorConfig()
+        assert config.detect_lists is True
 ```
 
-#### 6.3 markdown_writer テスト
+#### 7.3 markdown_writer テスト
 
 **ファイル:** `tests/test_markdown_writer.py`
 
@@ -945,7 +1044,7 @@ class TestListFormatting:
         assert result.startswith("`")
 ```
 
-#### 6.4 TextLayoutEngine テスト
+#### 7.4 TextLayoutEngine テスト
 
 **ファイル:** `tests/test_text_layout.py`
 
@@ -999,7 +1098,7 @@ class TestParagraphAndLineBreaks:
         assert len(text_lines) == 4  # Intro, Item1, Item2, Conclusion
 ```
 
-#### 6.5 paragraph_merger テスト
+#### 7.5 paragraph_merger テスト
 
 **ファイル:** `tests/test_paragraph_merger.py`
 
@@ -1064,7 +1163,7 @@ class TestListItemMerging:
         assert "First paragraph.\n\nSecond paragraph." == result[0].text
 ```
 
-#### 6.6 E2E テスト
+#### 7.6 E2E テスト
 
 **ファイル:** `tests/test_list_e2e.py`
 
@@ -1148,12 +1247,13 @@ class TestListExtractionE2E:
 | ファイル | 変更内容 |
 |---------|---------|
 | `src/pdf_translator/core/models.py` | `ListMarker` dataclass 追加（`to_dict/from_dict`含む）、`Paragraph.list_marker` フィールド追加 |
-| `src/pdf_translator/core/paragraph_extractor.py` | span構造からのリストマーカー検出、行単位Paragraph分割 |
+| `src/pdf_translator/core/paragraph_extractor.py` | `ExtractorConfig` 追加、span構造からのリストマーカー検出、行単位Paragraph分割 |
 | `src/pdf_translator/core/paragraph_merger.py` | リスト項目マージ防止、`\n` → `\n\n` 結合変更 |
 | `src/pdf_translator/core/text_layout.py` | `\n\n`=段落区切り、`\n`=行区切りに変更 |
 | `src/pdf_translator/output/markdown_writer.py` | `list_marker` に基づくMarkdown変換 |
+| `src/pdf_translator/cli.py` | `--no-detect-lists` オプション追加 |
 | `tests/test_models.py` | `ListMarker` テスト、シリアライズテスト追加 |
-| `tests/test_paragraph_extractor.py` | **新規** - リストマーカー検出、行単位分割テスト |
+| `tests/test_paragraph_extractor.py` | **新規** - リストマーカー検出、行単位分割、`ExtractorConfig`テスト |
 | `tests/test_paragraph_merger.py` | リスト項目マージ防止テスト追加 |
 | `tests/test_text_layout.py` | `\n\n`/`\n` 区別テスト追加 |
 | `tests/test_markdown_writer.py` | リストフォーマットテスト追加 |
@@ -1261,3 +1361,4 @@ Span 1: x0=140.4, width=0.0pt, text='\n'
 | 2026-01-09 | 初版作成（テキストパース → span構造分析に変更） |
 | 2026-01-09 | レビューFB対応: 行単位Paragraph分割、シリアライズ追加、相対閾値導入 |
 | 2026-01-09 | 実PDF検証: 年号誤検出防止のためパターンを1-999に制限、検証結果セクション追加 |
+| 2026-01-09 | 機能トグル追加: `ExtractorConfig.detect_lists`、`--no-detect-lists` CLIオプション |
