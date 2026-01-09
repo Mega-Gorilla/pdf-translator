@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 SCHEMA_VERSION = "1.0.0"
 
@@ -440,6 +440,40 @@ class LayoutBlock:
 
 
 @dataclass
+class ListMarker:
+    """List marker information for bullet or numbered lists.
+
+    Extracted from PDF span structure where markers appear as separate spans.
+
+    Attributes:
+        marker_type: Type of list ("bullet" or "numbered").
+        marker_text: Original marker text (e.g., "•", "1.", "①").
+        number: Numeric value for numbered lists, None for bullets.
+    """
+
+    marker_type: Literal["bullet", "numbered"]
+    marker_text: str
+    number: Optional[int] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "marker_type": self.marker_type,
+            "marker_text": self.marker_text,
+            "number": self.number,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ListMarker:
+        """Create from dictionary."""
+        return cls(
+            marker_type=data["marker_type"],
+            marker_text=data["marker_text"],
+            number=data.get("number"),
+        )
+
+
+@dataclass
 class Paragraph:
     """Paragraph extracted from pdftext blocks.
 
@@ -463,6 +497,7 @@ class Paragraph:
     text_color: Optional[Color] = None
     rotation: float = 0.0
     alignment: str = "left"  # "left", "center", "right", "justify"
+    list_marker: Optional[ListMarker] = None  # リストマーカー情報（箇条書き/番号付き）
 
     def is_translatable(
         self,
@@ -512,6 +547,8 @@ class Paragraph:
             result["font_name"] = self.font_name
         if self.text_color is not None:
             result["text_color"] = self.text_color.to_dict()
+        if self.list_marker is not None:
+            result["list_marker"] = self.list_marker.to_dict()
         return result
 
     @classmethod
@@ -519,6 +556,9 @@ class Paragraph:
         """Create from dictionary."""
         text_color = (
             Color.from_dict(data["text_color"]) if "text_color" in data else None
+        )
+        list_marker = (
+            ListMarker.from_dict(data["list_marker"]) if "list_marker" in data else None
         )
         return cls(
             id=data["id"],
@@ -538,6 +578,7 @@ class Paragraph:
             text_color=text_color,
             rotation=float(data.get("rotation", 0.0)),
             alignment=data.get("alignment", "left"),
+            list_marker=list_marker,
         )
 
 

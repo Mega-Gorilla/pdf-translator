@@ -9,7 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from pdf_translator.core.models import BBox, Paragraph
+from pdf_translator.core.models import BBox, ListMarker, Paragraph
 
 if TYPE_CHECKING:
     from pdf_translator.output.image_extractor import ExtractedImage
@@ -80,6 +80,13 @@ DEFAULT_MARKDOWN_SKIP_CATEGORIES: frozenset[str] = frozenset({
     # Other
     "formula_number",
     "seal",
+})
+
+# Element types where list conversion should be skipped
+# These elements have their own formatting that shouldn't be prefixed with list markers
+SKIP_LIST_CONVERSION: frozenset[str] = frozenset({
+    "code",
+    "code_block",
 })
 
 
@@ -345,8 +352,77 @@ class MarkdownWriter:
             # Final fallback: output as paragraph
             return self._format_text(text, "p")
 
+        # Handle list items (skip for code elements)
+        if paragraph.list_marker and element_type not in SKIP_LIST_CONVERSION:
+            return self._format_list_item(paragraph)
+
         # Format text based on element type
         return self._format_text(text, element_type, paragraph)
+
+    def _format_as_list_item(
+        self,
+        text: str,
+        list_marker: ListMarker | None,
+    ) -> str:
+        """Format text as a Markdown list item if applicable.
+
+        Args:
+            text: Text content to format.
+            list_marker: List marker info, or None for regular text.
+
+        Returns:
+            Formatted text with Markdown list syntax if applicable.
+        """
+        if not list_marker:
+            return text
+
+        if list_marker.marker_type == "bullet":
+            # Bullet list: "- item"
+            return f"- {text}"
+
+        elif list_marker.marker_type == "numbered":
+            # Numbered list: "N. item"
+            num = list_marker.number if list_marker.number is not None else 1
+            return f"{num}. {text}"
+
+        return text
+
+    def _format_list_item(self, paragraph: Paragraph) -> str:
+        """Format a list item paragraph to Markdown.
+
+        Handles both regular and parallel output modes.
+
+        Args:
+            paragraph: Paragraph with list_marker to format.
+
+        Returns:
+            Markdown string for the list item.
+        """
+        list_marker = paragraph.list_marker
+        text = self._get_display_text(paragraph)
+
+        # Apply styling
+        styled_text = self._apply_style(text, paragraph)
+
+        # Format as list item
+        formatted = self._format_as_list_item(styled_text, list_marker)
+
+        # Handle parallel mode
+        if (
+            self._config.output_mode == MarkdownOutputMode.PARALLEL
+            and paragraph.translated_text
+        ):
+            original = self._format_as_list_item(
+                self._apply_style(paragraph.text, paragraph),
+                list_marker,
+            )
+            translated = self._format_as_list_item(
+                self._apply_style(paragraph.translated_text, paragraph),
+                list_marker,
+            )
+            return f"{original}\n{translated}\n"
+
+        return formatted + "\n"
 
     def _get_display_text(self, paragraph: Paragraph) -> str:
         """Get text to display based on output mode.

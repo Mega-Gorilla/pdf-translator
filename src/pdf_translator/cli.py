@@ -162,6 +162,14 @@ Environment Variables:
         ),
     )
 
+    # List detection options
+    list_group = parser.add_argument_group("List detection options")
+    list_group.add_argument(
+        "--no-detect-lists",
+        action="store_true",
+        help="Disable list marker detection (use legacy line merging)",
+    )
+
     # Markdown options
     md_group = parser.add_argument_group("Markdown output options")
     md_group.add_argument(
@@ -465,6 +473,8 @@ async def run(args: argparse.Namespace) -> int:
         target_lang=args.target,
         # Translation category options
         translatable_categories=get_translatable_categories(args),
+        # List detection options
+        detect_lists=not args.no_detect_lists,
         # Markdown options
         markdown_output=args.markdown,
         markdown_mode=get_markdown_mode(args.markdown_mode),

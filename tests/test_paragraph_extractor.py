@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ParagraphExtractor."""
 
-from pdf_translator.core.paragraph_extractor import ParagraphExtractor
+from pdf_translator.core.paragraph_extractor import (
+    ExtractorConfig,
+    ParagraphExtractor,
+)
 
 
 def test_extract_merges_lines_and_converts_coords():
@@ -380,3 +383,303 @@ def test_alignment_left_with_first_line_indent():
     paragraphs = extractor.extract(pdftext_result)
     # Should be detected as left-aligned (middle lines have consistent left edge)
     assert paragraphs[0].alignment == "left"
+
+
+# === List marker detection tests ===
+
+
+def test_detect_bullet_marker():
+    """Bullet in separate span should be detected."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "•", "bbox": [100, 200, 108, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [108, 200, 111, 212], "font": {"size": 12}},
+                                {"text": "Item content", "bbox": [111, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is not None
+    assert paragraphs[0].list_marker.marker_type == "bullet"
+    assert paragraphs[0].list_marker.marker_text == "•"
+    assert paragraphs[0].text == "Item content"
+
+
+def test_detect_numbered_marker():
+    """Number with period should be detected."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "1.", "bbox": [100, 200, 115, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [115, 200, 118, 212], "font": {"size": 12}},
+                                {"text": "First item", "bbox": [118, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is not None
+    assert paragraphs[0].list_marker.marker_type == "numbered"
+    assert paragraphs[0].list_marker.number == 1
+
+
+def test_detect_numbered_paren_marker():
+    """Number with parenthesis should be detected."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "2)", "bbox": [100, 200, 115, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [115, 200, 118, 212], "font": {"size": 12}},
+                                {"text": "Second item", "bbox": [118, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is not None
+    assert paragraphs[0].list_marker.marker_type == "numbered"
+    assert paragraphs[0].list_marker.number == 2
+
+
+def test_detect_circled_number_marker():
+    """Circled number should be detected."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "③", "bbox": [100, 200, 112, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [112, 200, 115, 212], "font": {"size": 12}},
+                                {"text": "Third item", "bbox": [115, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is not None
+    assert paragraphs[0].list_marker.marker_type == "numbered"
+    assert paragraphs[0].list_marker.number == 3
+
+
+def test_list_block_creates_multiple_paragraphs():
+    """Block with list items should create separate paragraphs."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 180, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 212],
+                            "spans": [
+                                {"text": "•", "bbox": [100, 200, 108, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [108, 200, 111, 212], "font": {"size": 12}},
+                                {"text": "First item", "bbox": [111, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        },
+                        {
+                            "bbox": [100, 180, 400, 192],
+                            "spans": [
+                                {"text": "•", "bbox": [100, 180, 108, 192], "font": {"size": 12}},
+                                {"text": " ", "bbox": [108, 180, 111, 192], "font": {"size": 12}},
+                                {"text": "Second item", "bbox": [111, 180, 400, 192], "font": {"size": 12}},
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 2
+    assert paragraphs[0].list_marker is not None
+    assert paragraphs[0].text == "First item"
+    assert paragraphs[1].list_marker is not None
+    assert paragraphs[1].text == "Second item"
+
+
+def test_regular_block_no_list_marker():
+    """Block without list markers should not have list_marker."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "Regular paragraph text", "bbox": [100, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is None
+    assert paragraphs[0].text == "Regular paragraph text"
+
+
+def test_single_span_not_list():
+    """Single span line should not be detected as list."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "• Item without separation", "bbox": [100, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is None
+
+
+def test_detect_lists_disabled():
+    """When detect_lists=False, list markers should not be detected."""
+    extractor = ParagraphExtractor()
+    config = ExtractorConfig(detect_lists=False)
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 200, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 220],
+                            "spans": [
+                                {"text": "•", "bbox": [100, 200, 108, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [108, 200, 111, 212], "font": {"size": 12}},
+                                {"text": "Item", "bbox": [111, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result, config=config)
+    assert len(paragraphs) == 1
+    assert paragraphs[0].list_marker is None
+
+
+def test_continuation_line_merged():
+    """List item with continuation line should be merged."""
+    extractor = ParagraphExtractor()
+    pdftext_result = [
+        {
+            "bbox": [0, 0, 600, 800],
+            "blocks": [
+                {
+                    "bbox": [100, 160, 400, 220],
+                    "lines": [
+                        {
+                            "bbox": [100, 200, 400, 212],
+                            "spans": [
+                                {"text": "•", "bbox": [100, 200, 108, 212], "font": {"size": 12}},
+                                {"text": " ", "bbox": [108, 200, 111, 212], "font": {"size": 12}},
+                                {"text": "First part of item", "bbox": [111, 200, 400, 212], "font": {"size": 12}},
+                            ],
+                        },
+                        {
+                            "bbox": [111, 180, 400, 192],
+                            "spans": [
+                                {"text": "continuation text", "bbox": [111, 180, 400, 192], "font": {"size": 12}},
+                            ],
+                        },
+                        {
+                            "bbox": [100, 160, 400, 172],
+                            "spans": [
+                                {"text": "•", "bbox": [100, 160, 108, 172], "font": {"size": 12}},
+                                {"text": " ", "bbox": [108, 160, 111, 172], "font": {"size": 12}},
+                                {"text": "Second item", "bbox": [111, 160, 400, 172], "font": {"size": 12}},
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+
+    paragraphs = extractor.extract(pdftext_result)
+    # Should create 2 paragraphs (continuation merged with first item)
+    assert len(paragraphs) == 2
+    assert paragraphs[0].list_marker is not None
+    assert "First part of item" in paragraphs[0].text
+    assert "continuation text" in paragraphs[0].text
+    assert paragraphs[1].text == "Second item"

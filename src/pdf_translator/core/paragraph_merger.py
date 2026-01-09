@@ -328,6 +328,10 @@ def _can_merge(
         if width_ratio < config.width_tolerance:
             return False
 
+    # 9. List items should not be merged (preserve list structure)
+    if para1.list_marker is not None or para2.list_marker is not None:
+        return False
+
     return True
 
 
@@ -380,8 +384,9 @@ def _merge_two_paragraphs(para1: Paragraph, para2: Paragraph) -> Paragraph:
     Returns:
         New merged Paragraph instance.
     """
-    # Combine text with newline to preserve paragraph structure
-    merged_text = para1.text + "\n" + para2.text
+    # Combine text with double newline to mark paragraph boundaries
+    # Note: List items never reach here (blocked by _can_merge)
+    merged_text = para1.text + "\n\n" + para2.text
 
     # Union of bounding boxes
     merged_bbox = para1.block_bbox.union(para2.block_bbox)

@@ -19,7 +19,7 @@ from pdf_translator.core.font_subsetter import (
 from pdf_translator.core.layout_analyzer import LayoutAnalyzer
 from pdf_translator.core.layout_utils import assign_categories
 from pdf_translator.core.models import LayoutBlock, Paragraph
-from pdf_translator.core.paragraph_extractor import ParagraphExtractor
+from pdf_translator.core.paragraph_extractor import ExtractorConfig, ParagraphExtractor
 from pdf_translator.core.paragraph_merger import MergeConfig, merge_adjacent_paragraphs
 from pdf_translator.core.pdf_processor import PDFProcessor
 from pdf_translator.core.side_by_side import (
@@ -135,6 +135,9 @@ class PipelineConfig:
     extract_tables: bool = True  # Extract tables from PDF
     table_mode: str = "heuristic"  # heuristic, pdfplumber, or image
 
+    # List detection options
+    detect_lists: bool = True  # Detect and preserve list structure
+
 
 @dataclass
 class TranslationResult:
@@ -249,7 +252,8 @@ class TranslationPipeline:
 
     async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
         try:
-            paragraphs = ParagraphExtractor.extract_from_pdf(pdf_path)
+            extractor_config = ExtractorConfig(detect_lists=self._config.detect_lists)
+            paragraphs = ParagraphExtractor.extract_from_pdf(pdf_path, config=extractor_config)
         except Exception as exc:
             raise ExtractionError(
                 "Paragraph extraction failed", stage="extract", cause=exc

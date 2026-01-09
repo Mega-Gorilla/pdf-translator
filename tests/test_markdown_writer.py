@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pdf_translator.core.models import BBox, Paragraph
+from pdf_translator.core.models import BBox, ListMarker, Paragraph
 from pdf_translator.output.markdown_writer import (
     DEFAULT_CATEGORY_MAPPING,
     DEFAULT_NONE_CATEGORY_MAPPING,
@@ -595,3 +595,129 @@ class TestCategoryMappingConstants:
     def test_default_none_mapping(self) -> None:
         """Test default None category mapping is 'p'."""
         assert DEFAULT_NONE_CATEGORY_MAPPING == "p"
+
+
+class TestListFormatting:
+    """Test list item formatting in Markdown output."""
+
+    def test_bullet_list_item(self) -> None:
+        """Test bullet list item formatting."""
+        para = Paragraph(
+            id="p1",
+            page_number=0,
+            text="Item content",
+            block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+            line_count=1,
+            category="text",
+            list_marker=ListMarker(marker_type="bullet", marker_text="•"),
+        )
+        writer = MarkdownWriter(MarkdownConfig(include_metadata=False))
+        md = writer.write([para])
+
+        assert md.strip() == "- Item content"
+
+    def test_numbered_list_item(self) -> None:
+        """Test numbered list item formatting."""
+        para = Paragraph(
+            id="p1",
+            page_number=0,
+            text="First item",
+            block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+            line_count=1,
+            category="text",
+            list_marker=ListMarker(marker_type="numbered", marker_text="1.", number=1),
+        )
+        writer = MarkdownWriter(MarkdownConfig(include_metadata=False))
+        md = writer.write([para])
+
+        assert md.strip() == "1. First item"
+
+    def test_numbered_list_multiple_items(self) -> None:
+        """Test multiple numbered list items."""
+        paras = [
+            Paragraph(
+                id="p1",
+                page_number=0,
+                text="First item",
+                block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+                line_count=1,
+                category="text",
+                list_marker=ListMarker(marker_type="numbered", marker_text="1.", number=1),
+            ),
+            Paragraph(
+                id="p2",
+                page_number=0,
+                text="Second item",
+                block_bbox=BBox(x0=0, y0=20, x1=100, y1=40),
+                line_count=1,
+                category="text",
+                list_marker=ListMarker(marker_type="numbered", marker_text="2.", number=2),
+            ),
+        ]
+        writer = MarkdownWriter(MarkdownConfig(include_metadata=False))
+        md = writer.write(paras)
+
+        assert "1. First item" in md
+        assert "2. Second item" in md
+
+    def test_bullet_list_with_translation(self) -> None:
+        """Test bullet list item with translated text."""
+        para = Paragraph(
+            id="p1",
+            page_number=0,
+            text="English item",
+            block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+            line_count=1,
+            category="text",
+            translated_text="日本語項目",
+            list_marker=ListMarker(marker_type="bullet", marker_text="•"),
+        )
+        writer = MarkdownWriter(
+            MarkdownConfig(
+                include_metadata=False,
+                output_mode=MarkdownOutputMode.TRANSLATED_ONLY,
+            )
+        )
+        md = writer.write([para])
+
+        assert md.strip() == "- 日本語項目"
+
+    def test_list_item_parallel_mode(self) -> None:
+        """Test list item in parallel mode."""
+        para = Paragraph(
+            id="p1",
+            page_number=0,
+            text="English",
+            block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+            line_count=1,
+            category="text",
+            translated_text="日本語",
+            list_marker=ListMarker(marker_type="bullet", marker_text="•"),
+        )
+        writer = MarkdownWriter(
+            MarkdownConfig(
+                include_metadata=False,
+                output_mode=MarkdownOutputMode.PARALLEL,
+            )
+        )
+        md = writer.write([para])
+
+        assert "- English" in md
+        assert "- 日本語" in md
+
+    def test_list_item_no_marker_fallback(self) -> None:
+        """Test paragraph without list_marker is not formatted as list."""
+        para = Paragraph(
+            id="p1",
+            page_number=0,
+            text="Regular paragraph",
+            block_bbox=BBox(x0=0, y0=0, x1=100, y1=20),
+            line_count=1,
+            category="text",
+        )
+        writer = MarkdownWriter(MarkdownConfig(include_metadata=False))
+        md = writer.write([para])
+
+        assert md.strip() == "Regular paragraph"
+        assert not md.strip().startswith("-")
+        assert not md.strip().startswith("1.")
