@@ -134,13 +134,14 @@ class TestTranslatableCategories:
 
     def test_translatable_categories_defined(self) -> None:
         """Verify translatable categories are correct."""
-        # Only body text categories are translatable by default
-        # Title categories (doc_title, paragraph_title, figure_title) are preserved
+        # Body text and figure captions are translatable by default
+        # Title categories (doc_title, paragraph_title) are preserved
         expected = {
             "text",
             "vertical_text",
             "abstract",
             "aside_text",
+            "figure_title",
         }
         assert DEFAULT_TRANSLATABLE_RAW_CATEGORIES == expected
 
@@ -154,10 +155,13 @@ class TestTranslatableCategories:
         assert "aside_text" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
     def test_title_categories_are_not_translatable(self) -> None:
-        """Title categories should NOT be translatable (preserved in original)."""
+        """Title categories (except figure_title) should NOT be translatable."""
         assert "paragraph_title" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
         assert "doc_title" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
-        assert "figure_title" not in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
+
+    def test_figure_title_is_translatable(self) -> None:
+        """Figure titles should be translatable (captions are useful translated)."""
+        assert "figure_title" in DEFAULT_TRANSLATABLE_RAW_CATEGORIES
 
     def test_formula_is_not_translatable(self) -> None:
         """Formula categories should not be translatable."""

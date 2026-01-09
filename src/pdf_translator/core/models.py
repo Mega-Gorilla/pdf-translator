@@ -83,6 +83,8 @@ DEFAULT_TRANSLATABLE_RAW_CATEGORIES: frozenset[str] = frozenset(
         "vertical_text",
         "abstract",
         "aside_text",
+        # 図のキャプション
+        "figure_title",
     }
 )
 
