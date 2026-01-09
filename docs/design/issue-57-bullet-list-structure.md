@@ -376,9 +376,98 @@ def _detect_numbered_list_sequence(
 - 2つ以上の連続した番号がある場合のみリストとして扱う
 - 番号の飛び（1, 3, 4, 5 など）も許容
 
-### 4. テキスト抽出ロジック（行単位分割）
+### 4. リスト項目の継続行処理
 
-**決定: リストマーカー検出時は行ごとに別 Paragraph を生成**
+**問題**: リスト項目が長くPDF内で2行以上に折り返す場合、2行目以降は `list_marker=None` の独立 Paragraph となり、Markdown でリストから外れる可能性がある。
+
+**解決策**: マーカー無し行は直前の `list_marker` 付き Paragraph に連結する。
+
+```python
+def _process_block_with_continuation(
+    self,
+    line_data: list[tuple[ListMarker | None, str, dict]],
+    page_idx: int,
+    block_idx: int,
+    page_height: float,
+) -> list[Paragraph]:
+    """Process lines with continuation line handling.
+
+    Lines without markers that follow a marker line are treated as
+    continuations of the previous list item.
+    """
+    paragraphs: list[Paragraph] = []
+    current_marker: ListMarker | None = None
+    current_content: list[str] = []
+    current_line: dict | None = None
+
+    for marker, content, line in line_data:
+        if not content:
+            continue
+
+        if marker is not None:
+            # New list item - flush previous if exists
+            if current_content and current_marker is not None:
+                paragraphs.append(self._create_paragraph(
+                    text=" ".join(current_content),
+                    line=current_line,
+                    page_idx=page_idx,
+                    block_idx=block_idx,
+                    list_marker=current_marker,
+                ))
+            # Start new item
+            current_marker = marker
+            current_content = [content]
+            current_line = line
+        elif current_marker is not None:
+            # Continuation line - append to current item
+            current_content.append(content)
+        else:
+            # Regular text line (no active list context)
+            # This shouldn't happen in a list block, but handle gracefully
+            paragraphs.append(self._create_paragraph(
+                text=content,
+                line=line,
+                page_idx=page_idx,
+                block_idx=block_idx,
+                list_marker=None,
+            ))
+
+    # Flush final item
+    if current_content and current_marker is not None:
+        paragraphs.append(self._create_paragraph(
+            text=" ".join(current_content),
+            line=current_line,
+            page_idx=page_idx,
+            block_idx=block_idx,
+            list_marker=current_marker,
+        ))
+
+    return paragraphs
+```
+
+**動作例**:
+
+```
+PDF 内の構造:
+  Line 0: Span[•] + Span[Privacy and Data Protection: The framework allows...]
+  Line 1: Span[organizations to define custom privacy policies...]  ← 折り返し行
+  Line 2: Span[•] + Span[Bias and Fairness: LLMs have been shown...]
+
+処理結果:
+  Paragraph 1: text="Privacy and Data Protection: ... custom privacy policies..."
+               list_marker=bullet
+  Paragraph 2: text="Bias and Fairness: ..."
+               list_marker=bullet
+```
+
+**判定基準**:
+- マーカー無し行が直前のマーカー付き行と**同一ブロック内**にある場合、継続行として扱う
+- **インデント差分**による判定は不要（pdftext のブロック構造を信頼）
+- ブロックをまたぐ継続は想定しない（PDFのブロック分割を尊重）
+
+### 5. テキスト抽出ロジック（行単位分割）
+
+**決定: リストマーカー検出時は行ごとに別 Paragraph を生成（継続行処理あり）**
 
 ```python
 def _process_block(
@@ -693,15 +782,23 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
    - `_is_marker_span_width()`: 相対閾値チェック
    - `_detect_list_marker()`: span構造からマーカー検出
    - `_extract_content_after_marker()`: マーカー以降のテキスト抽出
+   - `_process_block_with_continuation()`: 継続行処理（マーカー無し行を直前の項目に連結）
 
 4. `_process_block()` 修正
    - 戻り値を `Paragraph | None` → `list[Paragraph]` に変更
-   - `config.detect_lists=True`: リストブロックは行ごとに別Paragraphを生成
+   - `config.detect_lists=True`: リストブロックは行ごとに別Paragraphを生成（継続行処理あり）
    - `config.detect_lists=False`: 従来通り全行をスペース結合（レガシー動作）
 
 5. 呼び出し元の修正
    - `extract_paragraphs()` で `_process_block()` の戻り値を展開
    - `config` パラメータを追加（デフォルト: `ExtractorConfig()`）
+
+6. 連番検出（オプション、将来対応）
+   - `_detect_numbered_list_sequence()` は **Phase 2 完了後の後処理として適用**
+   - 適用タイミング: `extract_paragraphs()` が全 Paragraph を収集した後
+   - 用途: 単独の `1.` を通常テキストとして扱うか、リストとして扱うかの判定補助
+   - **初期実装ではスキップ可能**: マーカー検出自体で十分な精度が得られるため、
+     連番検出は将来の拡張として実装を保留してもよい
 
 ### Phase 3: paragraph_merger.py 修正
 
@@ -951,6 +1048,42 @@ class TestBlockToMultipleParagraphs:
         assert len(paragraphs) == 1
         assert paragraphs[0].text == "Line one. Line two."
         assert paragraphs[0].list_marker is None
+
+    def test_list_item_with_continuation_line(self) -> None:
+        """List item wrapping to multiple lines should be combined."""
+        block = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "•", "bbox": [100, 200, 108, 212]},
+                        {"text": " ", "bbox": [108, 200, 111, 212]},
+                        {"text": "Privacy and Data Protection: The framework", "bbox": [111, 200, 400, 212]},
+                    ]
+                },
+                {
+                    # Continuation line - no marker
+                    "spans": [
+                        {"text": "allows organizations to define custom policies.", "bbox": [111, 180, 400, 192]},
+                    ]
+                },
+                {
+                    "spans": [
+                        {"text": "•", "bbox": [100, 160, 108, 172]},
+                        {"text": " ", "bbox": [108, 160, 111, 172]},
+                        {"text": "Bias and Fairness: LLMs have been shown...", "bbox": [111, 160, 400, 172]},
+                    ]
+                },
+            ]
+        }
+        extractor = ParagraphExtractor()
+        paragraphs = extractor._process_block(block, page_idx=0, block_idx=0, page_height=800)
+
+        # Should create 2 paragraphs (continuation line merged with first item)
+        assert len(paragraphs) == 2
+        assert "Privacy and Data Protection" in paragraphs[0].text
+        assert "allows organizations" in paragraphs[0].text  # Continuation merged
+        assert paragraphs[0].list_marker is not None
+        assert paragraphs[1].list_marker is not None
 
 
 class TestExtractorConfig:
@@ -1362,3 +1495,4 @@ Span 1: x0=140.4, width=0.0pt, text='\n'
 | 2026-01-09 | レビューFB対応: 行単位Paragraph分割、シリアライズ追加、相対閾値導入 |
 | 2026-01-09 | 実PDF検証: 年号誤検出防止のためパターンを1-999に制限、検証結果セクション追加 |
 | 2026-01-09 | 機能トグル追加: `ExtractorConfig.detect_lists`、`--no-detect-lists` CLIオプション |
+| 2026-01-09 | Re-Review対応: 継続行処理ルール追加、`_detect_numbered_list_sequence`適用タイミング明記 |
