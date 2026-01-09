@@ -12,6 +12,7 @@ from pdf_translator.core.models import BBox
 from pdf_translator.core.text_layout import (
     KINSOKU_NOT_AT_LINE_END,
     KINSOKU_NOT_AT_LINE_START,
+    PARAGRAPH_BREAK_MARKER,
     TextLayoutEngine,
 )
 
@@ -232,3 +233,145 @@ class TestKinsokuRules:
         assert "っ" in KINSOKU_NOT_AT_LINE_START
         assert "ゃ" in KINSOKU_NOT_AT_LINE_START
         assert "ッ" in KINSOKU_NOT_AT_LINE_START
+
+
+class TestParagraphBreaks:
+    """Tests for paragraph break handling in TextLayoutEngine."""
+
+    def test_wrap_text_with_newlines(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Newlines should be converted to paragraph break markers."""
+        text = "First paragraph.\nSecond paragraph."
+        lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
+
+        # Should have: text, marker, text
+        assert len(lines) == 3
+        assert lines[0] == "First paragraph."
+        assert lines[1] == PARAGRAPH_BREAK_MARKER
+        assert lines[2] == "Second paragraph."
+
+    def test_wrap_text_multiple_newlines(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Multiple newlines should create multiple paragraph breaks."""
+        text = "Para 1.\nPara 2.\nPara 3."
+        lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
+
+        # Should have: text, marker, text, marker, text
+        assert len(lines) == 5
+        markers = [l for l in lines if l == PARAGRAPH_BREAK_MARKER]
+        assert len(markers) == 2
+
+    def test_wrap_text_no_trailing_marker(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Trailing newlines should not result in trailing markers."""
+        text = "First paragraph.\n"
+        lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
+
+        # Should have just the text, no marker
+        assert len(lines) == 1
+        assert lines[0] == "First paragraph."
+
+    def test_wrap_text_empty_segments(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Empty segments between newlines should result in markers."""
+        text = "Para 1.\n\nPara 2."
+        lines = layout_engine.wrap_text(text, 200.0, helvetica_font, 12.0)
+
+        # Should have: text, marker, marker, text (two markers for double newline)
+        markers = [l for l in lines if l == PARAGRAPH_BREAK_MARKER]
+        assert len(markers) == 2
+
+    def test_wrap_text_long_segments_with_newlines(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Long segments should wrap and have markers between them."""
+        text = (
+            "This is a long first paragraph that should wrap.\n"
+            "This is a long second paragraph that should also wrap."
+        )
+        lines = layout_engine.wrap_text(text, 100.0, helvetica_font, 12.0)
+
+        # Should have multiple wrapped lines with markers between paragraphs
+        assert PARAGRAPH_BREAK_MARKER in lines
+        # Text from both paragraphs should be present
+        full_text = " ".join([l for l in lines if l != PARAGRAPH_BREAK_MARKER])
+        assert "first" in full_text
+        assert "second" in full_text
+
+    def test_fit_text_with_paragraph_breaks(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """fit_text_in_bbox should handle paragraph breaks correctly."""
+        bbox = BBox(x0=0, y0=0, x1=200, y1=100)
+        text = "First paragraph.\nSecond paragraph."
+        result = layout_engine.fit_text_in_bbox(text, bbox, helvetica_font, 12.0)
+
+        # Should have 2 text lines (markers are not included in result.lines)
+        assert len(result.lines) == 2
+        assert result.lines[0].text == "First paragraph."
+        assert result.lines[1].text == "Second paragraph."
+
+    def test_fit_text_paragraph_spacing(
+        self,
+        layout_engine: TextLayoutEngine,
+        helvetica_font: ctypes.c_void_p,
+    ) -> None:
+        """Paragraph breaks should have additional vertical spacing."""
+        bbox = BBox(x0=0, y0=0, x1=200, y1=200)
+
+        # Text without newline
+        text_no_break = "First line. Second line."
+        result_no_break = layout_engine.fit_text_in_bbox(
+            text_no_break, bbox, helvetica_font, 12.0
+        )
+
+        # Text with newline
+        text_with_break = "First line.\nSecond line."
+        result_with_break = layout_engine.fit_text_in_bbox(
+            text_with_break, bbox, helvetica_font, 12.0
+        )
+
+        # Both should have 2 lines of text
+        if len(result_no_break.lines) == 1:
+            # If no break fits in one line, compare total heights
+            pass
+        else:
+            # The version with paragraph break should have greater total height
+            # due to paragraph spacing
+            assert result_with_break.total_height >= result_no_break.total_height
+
+    def test_paragraph_spacing_factor(
+        self,
+        pdf_doc: pdfium.PdfDocument,
+    ) -> None:
+        """Paragraph spacing factor should affect total height."""
+        font = pdfium.raw.FPDFText_LoadStandardFont(pdf_doc, b"Helvetica")
+        bbox = BBox(x0=0, y0=0, x1=200, y1=200)
+        text = "Para 1.\nPara 2."
+
+        # Engine with no paragraph spacing
+        engine_no_space = TextLayoutEngine(paragraph_spacing_factor=0.0)
+        result_no_space = engine_no_space.fit_text_in_bbox(text, bbox, font, 12.0)
+
+        # Engine with paragraph spacing
+        engine_with_space = TextLayoutEngine(paragraph_spacing_factor=0.5)
+        result_with_space = engine_with_space.fit_text_in_bbox(text, bbox, font, 12.0)
+
+        # With spacing should have greater total height
+        assert result_with_space.total_height > result_no_space.total_height

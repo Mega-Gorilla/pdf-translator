@@ -19,6 +19,10 @@ from pdf_translator.core import (
     TextObject,
     Transform,
 )
+from pdf_translator.core.pdf_processor import (
+    normalize_text,
+    normalize_text_preserve_newlines,
+)
 
 # Test fixtures path
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -475,6 +479,41 @@ class TestPDFProcessorParagraphs:
             assert isinstance(pdf_bytes, bytes)
             assert len(pdf_bytes) > 0
 
+    def test_apply_paragraphs_handles_newlines_for_pdf(self):
+        """Newlines in translated_text should be handled as paragraph breaks.
+
+        The original translated_text is preserved, and newlines are rendered
+        as paragraph breaks with additional spacing in the PDF output.
+        """
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            doc = processor.extract_text_objects()
+            page = doc.pages[0]
+            first_obj = page.text_objects[0]
+
+            # Create paragraph with newlines in translated_text
+            text_with_newlines = "First paragraph.\nSecond paragraph."
+            paragraph = Paragraph(
+                id="para_p0_b0",
+                page_number=0,
+                text=first_obj.text,
+                block_bbox=first_obj.bbox,
+                line_count=2,
+                original_font_size=first_obj.font.size if first_obj.font else 12.0,
+                translated_text=text_with_newlines,
+            )
+
+            # Apply paragraphs - should not raise error due to newlines
+            processor.apply_paragraphs([paragraph])
+
+            # Verify original translated_text is preserved (not modified)
+            assert paragraph.translated_text == text_with_newlines
+            assert "\n" in paragraph.translated_text
+
+            # Verify PDF bytes are generated successfully
+            pdf_bytes = processor.to_bytes()
+            assert isinstance(pdf_bytes, bytes)
+            assert len(pdf_bytes) > 0
+
     def test_find_font_variant(self, tmp_path):
         """Test font variant detection for Bold/Italic styles."""
         # Create mock font files
@@ -640,3 +679,51 @@ class TestHybridApproach:
         # Verify output is valid PDF
         assert modified_pdf_bytes[:4] == b"%PDF", "Output should be valid PDF"
         assert len(modified_pdf_bytes) > 0, "Output should not be empty"
+
+
+class TestNormalizeText:
+    """Tests for text normalization functions."""
+
+    def test_normalize_text_removes_control_chars(self) -> None:
+        """Control characters should be normalized."""
+        # Tab -> space
+        assert normalize_text("hello\tworld") == "hello world"
+        # Newline -> space
+        assert normalize_text("hello\nworld") == "hello world"
+        # NUL -> removed
+        assert normalize_text("hello\x00world") == "helloworld"
+
+    def test_normalize_text_preserves_regular_text(self) -> None:
+        """Regular text should be unchanged."""
+        text = "Hello, World! This is a test."
+        assert normalize_text(text) == text
+
+    def test_normalize_text_soft_hyphen(self) -> None:
+        """STX (0x02) should be converted to hyphen."""
+        assert normalize_text("auto\x02gen") == "auto-gen"
+
+    def test_normalize_text_preserve_newlines_basic(self) -> None:
+        """normalize_text_preserve_newlines should keep newlines."""
+        text = "First paragraph.\nSecond paragraph."
+        result = normalize_text_preserve_newlines(text)
+        assert result == "First paragraph.\nSecond paragraph."
+        assert "\n" in result
+
+    def test_normalize_text_preserve_newlines_normalizes_other_chars(self) -> None:
+        """Other control chars should still be normalized."""
+        text = "Hello\tworld\nGoodbye\tworld"
+        result = normalize_text_preserve_newlines(text)
+        assert result == "Hello world\nGoodbye world"
+        assert "\t" not in result
+        assert "\n" in result
+
+    def test_normalize_text_preserve_newlines_multiple(self) -> None:
+        """Multiple newlines should all be preserved."""
+        text = "Para 1.\nPara 2.\nPara 3."
+        result = normalize_text_preserve_newlines(text)
+        assert result.count("\n") == 2
+
+    def test_normalize_text_preserve_newlines_no_newlines(self) -> None:
+        """Without newlines, should behave like normalize_text."""
+        text = "Hello\tworld"
+        assert normalize_text_preserve_newlines(text) == normalize_text(text)

@@ -312,13 +312,13 @@ class TestMergeTwoParagraphs:
     """Tests for _merge_two_paragraphs() function."""
 
     def test_merged_text_concatenation(self) -> None:
-        """Merged text should be joined with space."""
+        """Merged text should be joined with newline."""
         para1 = make_paragraph(text="First part")
         para2 = make_paragraph(text="second part")
 
         merged = _merge_two_paragraphs(para1, para2)
 
-        assert merged.text == "First part second part"
+        assert merged.text == "First part\nsecond part"
 
     def test_merged_bbox_is_union(self) -> None:
         """Merged bbox should be union of original bboxes."""
@@ -435,7 +435,7 @@ class TestMergeAdjacentParagraphs:
         result = merge_adjacent_paragraphs([para1, para2])
 
         assert len(result) == 1
-        assert result[0].text == "First part second part"
+        assert result[0].text == "First part\nsecond part"
 
     def test_merge_chain_of_three(self) -> None:
         """Three adjacent paragraphs should merge into one."""
@@ -458,7 +458,7 @@ class TestMergeAdjacentParagraphs:
         result = merge_adjacent_paragraphs([para1, para2, para3])
 
         assert len(result) == 1
-        assert result[0].text == "First second third"
+        assert result[0].text == "First\nsecond\nthird"
 
     def test_merge_partial_chain(self) -> None:
         """Chain broken by category change."""
@@ -588,7 +588,7 @@ class TestMergeAdjacentParagraphs:
         result = merge_adjacent_paragraphs([para3, para1, para2])
 
         assert len(result) == 1
-        assert result[0].text == "Top paragraph middle bottom"
+        assert result[0].text == "Top paragraph\nmiddle\nbottom"
 
 
 # =============================================================================
@@ -697,7 +697,7 @@ class TestMergeColumn:
         result = _merge_column([para1, para2], config)
 
         assert len(result) == 1
-        assert result[0].text == "First second"
+        assert result[0].text == "First\nsecond"
 
     def test_merge_three_in_column(self) -> None:
         """Three adjacent paragraphs in same column should merge."""
@@ -709,7 +709,7 @@ class TestMergeColumn:
         result = _merge_column([para1, para2, para3], config)
 
         assert len(result) == 1
-        assert result[0].text == "First second third"
+        assert result[0].text == "First\nsecond\nthird"
 
     def test_no_merge_different_categories(self) -> None:
         """Different categories should not merge within column."""
@@ -769,8 +769,8 @@ class TestMultiColumnMerge:
 
         # Check merged texts
         texts = {p.text for p in result}
-        assert "Left top left bottom" in texts
-        assert "Right top right bottom" in texts
+        assert "Left top\nleft bottom" in texts
+        assert "Right top\nright bottom" in texts
 
     def test_two_column_no_cross_merge(self) -> None:
         """Paragraphs in different columns should NOT merge.
@@ -864,8 +864,8 @@ class TestMultiColumnMerge:
         assert len(result) == 2
 
         texts = {p.text for p in result}
-        assert "Left para 1 left para 2" in texts
-        assert "Right para 1 right para 2" in texts
+        assert "Left para 1\nleft para 2" in texts
+        assert "Right para 1\nright para 2" in texts
 
     def test_sidebar_layout(self) -> None:
         """Sidebar with main content should be treated as separate columns."""
@@ -889,4 +889,4 @@ class TestMultiColumnMerge:
         assert len(result) == 2
 
         merged_main = next(p for p in result if "Main" in p.text)
-        assert merged_main.text == "Main top main bottom"
+        assert merged_main.text == "Main top\nmain bottom"

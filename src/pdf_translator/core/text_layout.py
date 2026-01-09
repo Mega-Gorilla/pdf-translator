@@ -38,6 +38,9 @@ KINSOKU_NOT_AT_LINE_END: set[str] = {
     "（", "「", "『", "【", "〈", "《", "〔", "［", "｛", "(",
 }
 
+# Marker for paragraph breaks in wrapped text
+PARAGRAPH_BREAK_MARKER = "\x00"  # NUL character as internal marker
+
 
 @dataclass
 class LayoutLine:
@@ -70,6 +73,7 @@ class TextLayoutEngine:
         min_font_size: float = 6.0,
         font_size_step: float = 0.5,
         line_height_factor: float = 1.2,
+        paragraph_spacing_factor: float = 0.5,
     ) -> None:
         """Initialize TextLayoutEngine.
 
@@ -77,10 +81,13 @@ class TextLayoutEngine:
             min_font_size: Minimum allowed font size in points.
             font_size_step: Step size for font size reduction.
             line_height_factor: Multiplier for line height (1.0 = tight, 1.5 = loose).
+            paragraph_spacing_factor: Additional spacing between paragraphs as a
+                multiple of line height (0.5 = half line extra spacing).
         """
         self._min_font_size = min_font_size
         self._font_size_step = font_size_step
         self._line_height_factor = line_height_factor
+        self._paragraph_spacing_factor = paragraph_spacing_factor
 
     def calculate_text_width(
         self,
@@ -290,17 +297,17 @@ class TextLayoutEngine:
 
         return break_point
 
-    def wrap_text(
+    def _wrap_segment(
         self,
         text: str,
         max_width: float,
         font_handle: ctypes.c_void_p,
         font_size: float,
     ) -> list[str]:
-        """Wrap text to fit within a maximum width.
+        """Wrap a single text segment (no newlines) to fit within max width.
 
         Args:
-            text: Text to wrap.
+            text: Text segment to wrap (should not contain newlines).
             max_width: Maximum line width in points.
             font_handle: PDFium font handle.
             font_size: Font size in points.
@@ -335,6 +342,132 @@ class TextLayoutEngine:
 
         return lines
 
+    def wrap_text(
+        self,
+        text: str,
+        max_width: float,
+        font_handle: ctypes.c_void_p,
+        font_size: float,
+    ) -> list[str]:
+        """Wrap text to fit within a maximum width.
+
+        Handles explicit newlines (\\n) as paragraph breaks. Each paragraph
+        is wrapped independently, and paragraph breaks are marked with
+        PARAGRAPH_BREAK_MARKER in the output.
+
+        Args:
+            text: Text to wrap (may contain newlines for paragraph breaks).
+            max_width: Maximum line width in points.
+            font_handle: PDFium font handle.
+            font_size: Font size in points.
+
+        Returns:
+            List of lines. Lines containing PARAGRAPH_BREAK_MARKER indicate
+            paragraph breaks and should receive additional vertical spacing.
+        """
+        if not text:
+            return []
+
+        # Split by newlines to handle paragraph breaks
+        segments = text.split("\n")
+
+        all_lines: list[str] = []
+        for i, segment in enumerate(segments):
+            segment = segment.strip()
+            if segment:
+                # Wrap this segment
+                wrapped = self._wrap_segment(segment, max_width, font_handle, font_size)
+                all_lines.extend(wrapped)
+
+            # Add paragraph break marker between segments (not after last)
+            if i < len(segments) - 1:
+                all_lines.append(PARAGRAPH_BREAK_MARKER)
+
+        # Remove trailing paragraph break markers
+        while all_lines and all_lines[-1] == PARAGRAPH_BREAK_MARKER:
+            all_lines.pop()
+
+        return all_lines
+
+    def _calculate_layout_height(
+        self,
+        wrapped_lines: list[str],
+        line_height: float,
+    ) -> float:
+        """Calculate total height of wrapped lines including paragraph spacing.
+
+        Args:
+            wrapped_lines: Lines from wrap_text() (may contain PARAGRAPH_BREAK_MARKER).
+            line_height: Height of a single line.
+
+        Returns:
+            Total height in points.
+        """
+        if not wrapped_lines:
+            return 0.0
+
+        # Count actual text lines and paragraph breaks
+        text_line_count = 0
+        paragraph_break_count = 0
+
+        for line in wrapped_lines:
+            if line == PARAGRAPH_BREAK_MARKER:
+                paragraph_break_count += 1
+            else:
+                text_line_count += 1
+
+        # Calculate height: text lines + paragraph spacing
+        paragraph_spacing = line_height * self._paragraph_spacing_factor
+        total_height = (
+            line_height * text_line_count
+            + paragraph_spacing * paragraph_break_count
+        )
+
+        return total_height
+
+    def _create_layout_lines(
+        self,
+        wrapped_lines: list[str],
+        font_handle: ctypes.c_void_p,
+        font_size: float,
+        line_height: float,
+        start_y: float,
+    ) -> list[LayoutLine]:
+        """Create LayoutLine objects from wrapped lines.
+
+        Handles paragraph break markers by adding extra vertical spacing
+        without creating a LayoutLine for the break itself.
+
+        Args:
+            wrapped_lines: Lines from wrap_text().
+            font_handle: PDFium font handle.
+            font_size: Font size in points.
+            line_height: Height of a single line.
+            start_y: Starting Y position (top of text area).
+
+        Returns:
+            List of LayoutLine objects (excludes paragraph breaks).
+        """
+        lines: list[LayoutLine] = []
+        y = start_y
+        paragraph_spacing = line_height * self._paragraph_spacing_factor
+
+        for line_text in wrapped_lines:
+            if line_text == PARAGRAPH_BREAK_MARKER:
+                # Add extra spacing for paragraph break
+                y -= paragraph_spacing
+            else:
+                # Create layout line for text
+                line_width = self.calculate_text_width(line_text, font_handle, font_size)
+                lines.append(LayoutLine(
+                    text=line_text,
+                    width=line_width,
+                    y_position=y,
+                ))
+                y -= line_height
+
+        return lines
+
     def fit_text_in_bbox(
         self,
         text: str,
@@ -345,8 +478,11 @@ class TextLayoutEngine:
     ) -> LayoutResult:
         """Fit text within a bounding box, adjusting font size if necessary.
 
+        Handles explicit newlines in text as paragraph breaks, adding extra
+        vertical spacing between paragraphs.
+
         Args:
-            text: Text to layout.
+            text: Text to layout (may contain newlines for paragraph breaks).
             bbox: Bounding box to fit text into.
             font_handle: PDFium font handle.
             initial_font_size: Starting font size in points.
@@ -384,28 +520,18 @@ class TextLayoutEngine:
             if not wrapped_lines:
                 break
 
-            # Calculate total height
+            # Calculate total height (including paragraph spacing)
             line_height = self.get_line_height(font_handle, font_size)
-            total_height = line_height * len(wrapped_lines)
+            total_height = self._calculate_layout_height(wrapped_lines, line_height)
 
             if total_height <= bbox_height:
-                # Text fits! Calculate y positions (top to bottom)
+                # Text fits! Create layout lines
                 ascent = self.get_ascent(font_handle, font_size)
-                lines: list[LayoutLine] = []
+                start_y = bbox.y1 - ascent
 
-                # Start from top of bbox, offset by ascent for first line
-                y = bbox.y1 - ascent
-
-                for line_text in wrapped_lines:
-                    line_width = self.calculate_text_width(
-                        line_text, font_handle, font_size
-                    )
-                    lines.append(LayoutLine(
-                        text=line_text,
-                        width=line_width,
-                        y_position=y,
-                    ))
-                    y -= line_height
+                lines = self._create_layout_lines(
+                    wrapped_lines, font_handle, font_size, line_height, start_y
+                )
 
                 return LayoutResult(
                     lines=lines,
@@ -422,24 +548,16 @@ class TextLayoutEngine:
         wrapped_lines = self.wrap_text(text, bbox_width, font_handle, self._min_font_size)
         line_height = self.get_line_height(font_handle, self._min_font_size)
         ascent = self.get_ascent(font_handle, self._min_font_size)
+        start_y = bbox.y1 - ascent
 
-        lines = []
-        y = bbox.y1 - ascent
-
-        for line_text in wrapped_lines:
-            line_width = self.calculate_text_width(
-                line_text, font_handle, self._min_font_size
-            )
-            lines.append(LayoutLine(
-                text=line_text,
-                width=line_width,
-                y_position=y,
-            ))
-            y -= line_height
+        lines = self._create_layout_lines(
+            wrapped_lines, font_handle, self._min_font_size, line_height, start_y
+        )
+        total_height = self._calculate_layout_height(wrapped_lines, line_height)
 
         return LayoutResult(
             lines=lines,
             font_size=self._min_font_size,
-            total_height=line_height * len(wrapped_lines),
+            total_height=total_height,
             fits_in_bbox=False,
         )

@@ -179,6 +179,29 @@ def normalize_text(text: str, ascii_fallback: bool = False) -> str:
     return "".join(result)
 
 
+def normalize_text_preserve_newlines(text: str, ascii_fallback: bool = False) -> str:
+    """Normalize text while preserving newline characters.
+
+    Similar to normalize_text(), but treats newlines (\\n) as paragraph
+    boundaries that should be preserved for PDF layout. Each segment
+    between newlines is normalized independently.
+
+    Args:
+        text: Raw text that may contain newlines as paragraph separators
+        ascii_fallback: If True, also convert unsupported Unicode characters
+                       to ASCII equivalents for standard PDF font compatibility
+
+    Returns:
+        Normalized text with newlines preserved
+    """
+    if "\n" not in text:
+        return normalize_text(text, ascii_fallback)
+
+    segments = text.split("\n")
+    normalized_segments = [normalize_text(seg, ascii_fallback) for seg in segments]
+    return "\n".join(normalized_segments)
+
+
 class PDFProcessor:
     """PDF processor using pypdfium2.
 
@@ -1410,8 +1433,10 @@ class PDFProcessor:
                 else para.original_font_size
             ) or 12.0
 
-            # Load font (use bold/italic variants if paragraph has those styles)
-            text = para.translated_text
+            # Normalize text for PDF rendering while preserving paragraph breaks
+            # Newlines are preserved and handled by TextLayoutEngine as explicit
+            # line breaks with additional paragraph spacing
+            display_text = normalize_text_preserve_newlines(para.translated_text or "")
             font_handle = None
             if font_path:
                 base_font_path = Path(font_path) if isinstance(font_path, str) else font_path
@@ -1446,7 +1471,7 @@ class PDFProcessor:
                     ctypes.c_float(initial_font_size),
                 )
                 if text_obj:
-                    text_ws = to_widestring(text)
+                    text_ws = to_widestring(display_text)
                     pdfium.raw.FPDFText_SetText(text_obj, text_ws)
                     pdfium.raw.FPDFPageObj_Transform(
                         text_obj,
@@ -1462,7 +1487,7 @@ class PDFProcessor:
 
             # Use TextLayoutEngine to calculate layout
             layout_result = self._layout_engine.fit_text_in_bbox(
-                text=text,
+                text=display_text,
                 bbox=para.block_bbox,
                 font_handle=font_handle,
                 initial_font_size=initial_font_size,
