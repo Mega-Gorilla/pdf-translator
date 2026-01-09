@@ -73,6 +73,16 @@ SIDE_BY_SIDE_GAP = 10.0
 # - False: 全てのテキストを翻訳（数式や図のキャプションも翻訳される可能性あり）
 LAYOUT_ANALYSIS = True
 
+# 翻訳カテゴリ設定
+# - None: デフォルト（text, vertical_text, abstract, aside_text のみ翻訳）
+# - frozenset({"text", "abstract", "doc_title"}): カスタムカテゴリを指定
+# - "all": 全カテゴリを翻訳（タイトル、数式、表も含む）
+TRANSLATE_CATEGORIES: frozenset[str] | str | None = None
+
+# Markdown出力設定
+MARKDOWN_OUTPUT = True  # Markdown出力を生成
+MARKDOWN_MODE = "translated_only"  # "translated_only" | "original_only" | "parallel"
+
 # 厳格モード: 翻訳失敗時の動作
 # - False: 失敗したテキストは原文のまま保持（推奨）
 # - True: 1つでも失敗したらエラーを発生
@@ -139,6 +149,39 @@ def get_side_by_side_order(order: str) -> SideBySideOrder:
         sys.exit(1)
 
 
+def get_translatable_categories(
+    setting: frozenset[str] | str | None,
+) -> frozenset[str] | None:
+    """翻訳カテゴリ設定を変換する。"""
+    if setting is None:
+        return None
+    elif setting == "all":
+        from pdf_translator.core.models import RawLayoutCategory
+
+        return frozenset(cat.value for cat in RawLayoutCategory)
+    elif isinstance(setting, frozenset):
+        return setting
+    else:
+        print(f"Error: Invalid TRANSLATE_CATEGORIES: {setting}")
+        sys.exit(1)
+
+
+def get_markdown_mode(mode: str):
+    """Markdownモードを取得する。"""
+    from pdf_translator.output.markdown_writer import MarkdownOutputMode
+
+    mode_map = {
+        "translated_only": MarkdownOutputMode.TRANSLATED_ONLY,
+        "original_only": MarkdownOutputMode.ORIGINAL_ONLY,
+        "parallel": MarkdownOutputMode.PARALLEL,
+    }
+    if mode not in mode_map:
+        print(f"Error: Unknown MARKDOWN_MODE: {mode}")
+        print("Available options: translated_only, original_only, parallel")
+        sys.exit(1)
+    return mode_map[mode]
+
+
 async def main() -> None:
     """メイン処理。"""
     from pdf_translator.pipeline.translation_pipeline import (
@@ -173,6 +216,9 @@ async def main() -> None:
     print(f"Translator:  {TRANSLATOR}")
     print(f"Languages:   {SOURCE_LANG} -> {TARGET_LANG}")
     print(f"Layout analysis: {LAYOUT_ANALYSIS}")
+    if TRANSLATE_CATEGORIES:
+        print(f"Translate:   {TRANSLATE_CATEGORIES}")
+    print(f"Markdown:    {MARKDOWN_OUTPUT} (mode: {MARKDOWN_MODE})")
     print(f"Debug bbox:  {DEBUG_DRAW_BBOX}")
     print(f"Side-by-side: {SIDE_BY_SIDE}")
     if SIDE_BY_SIDE:
@@ -190,6 +236,9 @@ async def main() -> None:
         source_lang=SOURCE_LANG,
         target_lang=TARGET_LANG,
         layout_analysis=LAYOUT_ANALYSIS,
+        translatable_categories=get_translatable_categories(TRANSLATE_CATEGORIES),
+        markdown_output=MARKDOWN_OUTPUT,
+        markdown_mode=get_markdown_mode(MARKDOWN_MODE),
         debug_draw_bbox=DEBUG_DRAW_BBOX,
         side_by_side=SIDE_BY_SIDE,
         side_by_side_order=get_side_by_side_order(SIDE_BY_SIDE_ORDER),
@@ -212,6 +261,13 @@ async def main() -> None:
         print(f"Paragraphs skipped:    {result.stats['skipped_paragraphs']}")
     print(f"Output file:           {output_pdf}")
     print(f"File size:             {output_pdf.stat().st_size / 1024:.1f} KB")
+
+    # Markdown出力確認
+    if MARKDOWN_OUTPUT and result.markdown:
+        md_path = output_pdf.with_suffix(".md")
+        print(f"Markdown file:         {md_path}")
+        if md_path.exists():
+            print(f"Markdown size:         {md_path.stat().st_size / 1024:.1f} KB")
 
     # 見開きPDF確認（パイプラインが自動的に _side_by_side.pdf を生成）
     if SIDE_BY_SIDE:
