@@ -81,7 +81,12 @@ TRANSLATE_CATEGORIES: frozenset[str] | str | None = None
 
 # Markdown出力設定
 MARKDOWN_OUTPUT = True  # Markdown出力を生成
-MARKDOWN_MODE = "translated_only"  # "translated_only" | "original_only" | "parallel"
+
+# Markdownモード:
+# - "translated_only": 翻訳テキストのみ（デフォルト、翻訳がない場合は原文にフォールバック）
+# - "original_only": 原文テキストのみ（翻訳なしで構造化Markdownが欲しい場合）
+# - "parallel": 原文と翻訳を両方出力（比較・品質チェック・学習用）
+MARKDOWN_MODE = "translated_only"
 
 # 厳格モード: 翻訳失敗時の動作
 # - False: 失敗したテキストは原文のまま保持（推奨）

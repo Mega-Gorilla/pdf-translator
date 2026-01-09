@@ -95,6 +95,41 @@ translate-pdf paper.pdf -m --markdown-mode parallel
 translate-pdf paper.pdf -m --markdown-include-all
 ```
 
+#### Markdown Output Modes
+
+| Mode | Original | Translation | Use Case |
+|------|----------|-------------|----------|
+| `translated_only` | Fallback only | Yes | Read translated content (default) |
+| `original_only` | Yes | No | Structured Markdown of source |
+| `parallel` | Yes | Yes | Compare, review, or learn |
+
+**`translated_only`** (default): Outputs translated text only. Falls back to original if translation is unavailable.
+
+```markdown
+## Abstract
+AutoGenは、開発者が相互に対話してタスクを実行できる複数のエージェントを介して
+LLMアプリケーションを構築できるオープンソースフレームワークです。
+```
+
+**`original_only`**: Outputs original text only. Useful for extracting structured content without translation.
+
+```markdown
+## Abstract
+AutoGen is an open-source framework that allows developers to build LLM applications
+via multiple agents that can converse with each other to accomplish tasks.
+```
+
+**`parallel`**: Outputs both original and translation for each paragraph. Ideal for comparison or quality review.
+
+```markdown
+## Abstract
+AutoGen is an open-source framework that allows developers to build LLM applications
+via multiple agents that can converse with each other to accomplish tasks.
+
+AutoGenは、開発者が相互に対話してタスクを実行できる複数のエージェントを介して
+LLMアプリケーションを構築できるオープンソースフレームワークです。
+```
+
 ### Translation Category Control
 
 By default, only body text categories are translated (`text`, `abstract`, etc.).
