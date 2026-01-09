@@ -450,11 +450,15 @@ def _process_block_with_continuation(
 
     Lines without markers that follow a marker line are treated as
     continuations of the previous list item.
+
+    When continuation lines are merged:
+    - bbox: Union of all merged lines' bboxes
+    - line_count: Sum of merged lines
     """
     paragraphs: list[Paragraph] = []
     current_marker: ListMarker | None = None
     current_content: list[str] = []
-    current_line: dict | None = None
+    current_lines: list[dict] = []  # 継続行を含む全ての行を保持
 
     for marker, content, line in line_data:
         if not content:
@@ -465,7 +469,7 @@ def _process_block_with_continuation(
             if current_content and current_marker is not None:
                 paragraphs.append(self._create_paragraph(
                     text=" ".join(current_content),
-                    line=current_line,
+                    lines=current_lines,  # 全行を渡す
                     page_idx=page_idx,
                     block_idx=block_idx,
                     list_marker=current_marker,
@@ -473,16 +477,17 @@ def _process_block_with_continuation(
             # Start new item
             current_marker = marker
             current_content = [content]
-            current_line = line
+            current_lines = [line]
         elif current_marker is not None:
             # Continuation line - append to current item
             current_content.append(content)
+            current_lines.append(line)  # 継続行も追加
         else:
             # Regular text line (no active list context)
             # This shouldn't happen in a list block, but handle gracefully
             paragraphs.append(self._create_paragraph(
                 text=content,
-                line=line,
+                lines=[line],
                 page_idx=page_idx,
                 block_idx=block_idx,
                 list_marker=None,
@@ -492,13 +497,53 @@ def _process_block_with_continuation(
     if current_content and current_marker is not None:
         paragraphs.append(self._create_paragraph(
             text=" ".join(current_content),
-            line=current_line,
+            lines=current_lines,  # 全行を渡す
             page_idx=page_idx,
             block_idx=block_idx,
             list_marker=current_marker,
         ))
 
     return paragraphs
+
+
+def _create_paragraph(
+    self,
+    text: str,
+    lines: list[dict],
+    page_idx: int,
+    block_idx: int,
+    list_marker: ListMarker | None,
+) -> Paragraph:
+    """Create a Paragraph from one or more lines.
+
+    Args:
+        text: Merged text content.
+        lines: List of line dictionaries (may contain multiple for continuations).
+        page_idx: Page index.
+        block_idx: Block index.
+        list_marker: List marker if detected.
+
+    Returns:
+        Paragraph with bbox union and correct line_count.
+    """
+    # Calculate bbox as union of all lines
+    bboxes = [BBox(*line["bbox"]) for line in lines if "bbox" in line]
+    if bboxes:
+        merged_bbox = bboxes[0]
+        for bbox in bboxes[1:]:
+            merged_bbox = merged_bbox.union(bbox)
+    else:
+        merged_bbox = BBox(0, 0, 0, 0)
+
+    return Paragraph(
+        id=f"para_p{page_idx}_b{block_idx}_{id(lines[0])}",
+        page_number=page_idx,
+        text=text,
+        block_bbox=merged_bbox,
+        line_count=len(lines),  # 結合した全行数
+        list_marker=list_marker,
+        # ... other fields from line spans ...
+    )
 ```
 
 **動作例**:
@@ -846,12 +891,12 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
    - `config.detect_lists=False`: 従来通り全行をスペース結合（レガシー動作）
 
 5. 呼び出し元の修正
-   - `extract_paragraphs()` で `_process_block()` の戻り値を展開
+   - `extract()` / `extract_from_pdf()` で `_process_block()` の戻り値を展開
    - `config` パラメータを追加（デフォルト: `ExtractorConfig()`）
 
 6. 連番検出（オプション、将来対応）
    - `_detect_numbered_list_sequence()` は **Phase 2 完了後の後処理として適用**
-   - 適用タイミング: `extract_paragraphs()` が全 Paragraph を収集した後
+   - 適用タイミング: `extract()` / `extract_from_pdf()` が全 Paragraph を収集した後
    - 用途: 単独の `1.` を通常テキストとして扱うか、リストとして扱うかの判定補助
    - **初期実装ではスキップ可能**: マーカー検出自体で十分な精度が得られるため、
      連番検出は将来の拡張として実装を保留してもよい
