@@ -213,8 +213,12 @@ from dataclasses import dataclass
 # 箇条書き記号
 BULLET_CHARS = frozenset("•◦○●◆◇▸▹‣⁃")
 
+# 丸数字（①〜⑳）- 誤検知リスクが極めて低い
+CIRCLED_NUMBERS = frozenset("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳")
+
 # 番号付きリストのパターン（1-999のみ、年号2019.等を除外）
-NUMBERED_PATTERN = re.compile(r"^([1-9]\d{0,2})\.$")
+NUMBERED_DOT_PATTERN = re.compile(r"^([1-9]\d{0,2})\.$")    # 1., 2., 3.
+NUMBERED_PAREN_PATTERN = re.compile(r"^([1-9]\d{0,2})\)$")  # 1), 2), 3)
 
 # マーカーspan幅の閾値
 MAX_MARKER_SPAN_WIDTH_ABSOLUTE = 30.0  # 絶対上限（pt）
@@ -273,8 +277,27 @@ def _detect_list_marker(
             number=None,
         )
 
-    # 番号付きリスト (1., 2., など)
-    match = NUMBERED_PATTERN.match(first_text)
+    # 丸数字 (①, ②, など)
+    if first_text in CIRCLED_NUMBERS:
+        # 丸数字から番号を取得（①=1, ②=2, ...）
+        circled_index = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳".index(first_text) + 1
+        return ListMarker(
+            marker_type="numbered",
+            marker_text=first_text,
+            number=circled_index,
+        )
+
+    # 番号付きリスト: 1., 2., など
+    match = NUMBERED_DOT_PATTERN.match(first_text)
+    if match:
+        return ListMarker(
+            marker_type="numbered",
+            marker_text=first_text,
+            number=int(match.group(1)),
+        )
+
+    # 番号付きリスト: 1), 2), など
+    match = NUMBERED_PAREN_PATTERN.match(first_text)
     if match:
         return ListMarker(
             marker_type="numbered",
@@ -290,6 +313,7 @@ def _detect_list_marker(
 - 絶対値 + 相対値の閾値で様々なフォントサイズに対応
 - 番号を数値として保持し、連番検出に活用
 - 番号パターンを1-999に制限し、年号（2019., 2020.等）の誤検出を防止
+- 丸数字と括弧形式は誤検知リスクが低いため本実装に含める
 
 ### 2. Paragraph モデルの拡張
 
@@ -804,7 +828,10 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
    ```
 
 2. 定数追加
-   - `BULLET_CHARS`, `NUMBERED_PATTERN`
+   - `BULLET_CHARS`: 箇条書き記号セット
+   - `CIRCLED_NUMBERS`: 丸数字セット（①〜⑳）
+   - `NUMBERED_DOT_PATTERN`: `1.`, `2.` 形式の正規表現
+   - `NUMBERED_PAREN_PATTERN`: `1)`, `2)` 形式の正規表現
    - `MAX_MARKER_SPAN_WIDTH_ABSOLUTE`, `MAX_MARKER_SPAN_WIDTH_RATIO`
 
 3. 検出メソッド追加
@@ -1014,6 +1041,34 @@ class TestListMarkerDetection:
         assert marker is not None
         assert marker.marker_type == "numbered"
         assert marker.number == 1
+
+    def test_detect_numbered_paren_marker(self) -> None:
+        """Number with parenthesis should be detected."""
+        line = {
+            "spans": [
+                {"text": "2)", "bbox": [100, 200, 115, 212]},
+                {"text": " ", "bbox": [115, 200, 118, 212]},
+                {"text": "Second item", "bbox": [118, 200, 200, 212]},
+            ]
+        }
+        marker = ParagraphExtractor._detect_list_marker(line, font_size=12.0)
+        assert marker is not None
+        assert marker.marker_type == "numbered"
+        assert marker.number == 2
+
+    def test_detect_circled_number_marker(self) -> None:
+        """Circled number should be detected."""
+        line = {
+            "spans": [
+                {"text": "③", "bbox": [100, 200, 112, 212]},
+                {"text": " ", "bbox": [112, 200, 115, 212]},
+                {"text": "Third item", "bbox": [115, 200, 200, 212]},
+            ]
+        }
+        marker = ParagraphExtractor._detect_list_marker(line, font_size=12.0)
+        assert marker is not None
+        assert marker.marker_type == "numbered"
+        assert marker.number == 3
 
     def test_wide_span_not_marker(self) -> None:
         """Wide first span should not be detected as marker."""
@@ -1513,18 +1568,117 @@ Span 1: x0=140.4, width=0.0pt, text='\n'
 
 ## 将来対応（別 Issue）
 
-1. **ネストリスト対応**
-   - bbox x0 の差分からインデントレベルを推定
-   - Markdown のネストリスト記法に対応
+### 概要
 
-2. **追加のリストパターン**
-   - `1)`, `a)`, `A.` などの番号形式
-   - `①`, `②` などの丸数字
-   - ローマ数字 (i, ii, iii)
+本 Issue では以下のパターンを対応:
+- 箇条書き記号（`•`, `◦`, `●` 等）
+- 番号付きリスト（`1.`, `2.`, `1)`, `2)`, `①`, `②` 等）
 
-3. **リストグループ化**
-   - 連続したリスト項目を単一の構造として管理
-   - リスト全体の前後に適切なスペースを挿入
+以下は別 Issue として対応予定。
+
+---
+
+### 1. ネストリスト対応
+
+| 項目 | 内容 |
+|------|------|
+| **難易度** | 中〜高 |
+| **概要** | bbox x0 の差分からインデントレベルを推定し、Markdown のネストリスト記法に対応 |
+
+**必要な変更:**
+
+```python
+# ListMarker 拡張
+@dataclass
+class ListMarker:
+    marker_type: Literal["bullet", "numbered"]
+    marker_text: str
+    number: int | None = None
+    indent_level: int = 0  # 新規: 0=トップレベル, 1=1段ネスト...
+
+# インデント検出の後処理
+def _detect_indent_levels(paragraphs: list[Paragraph]) -> None:
+    """連続するリスト項目の x0 差分からインデントレベルを計算"""
+    pass
+
+# Markdown出力
+def _format_as_list_item(self, text: str, marker: ListMarker) -> str:
+    indent = "  " * marker.indent_level  # 2スペース/レベル
+    return f"{indent}- {text}"
+```
+
+**課題:**
+- 閾値問題: 何pt以上の x0 差分で1レベル増とするか（PDFごとに異なる）
+- フォントサイズに比例した相対閾値が必要
+- サンプルPDFにネストリストがないため検証困難
+
+---
+
+### 2. 追加のリストパターン（高リスク）
+
+| 項目 | 内容 |
+|------|------|
+| **難易度** | 低〜中 |
+| **概要** | 誤検知リスクの高いパターンの追加対応 |
+
+**対象パターン:**
+
+| パターン | 例 | 誤検知リスク | 対応方針 |
+|----------|-----|-------------|---------|
+| `a.`, `b.` | 小文字+ピリオド | **高** | 文中の省略形と衝突 |
+| `A.`, `B.` | 大文字+ピリオド | **中** | Section A. 等と混同 |
+| `i.`, `ii.` | ローマ数字 | **高** | "i.e." 等と衝突 |
+| `a)`, `b)` | 小文字+括弧 | **中** | 括弧形式は比較的安全 |
+
+**誤検知対策案:**
+- span 分離 + 幅閾値を厳格化
+- 連番パターン検出との併用（2項目以上で有効化）
+- 前後の文脈を考慮（ブロック先頭のみ許可）
+
+---
+
+### 3. リストグループ化
+
+| 項目 | 内容 |
+|------|------|
+| **難易度** | 高 |
+| **概要** | 連続したリスト項目を単一の構造として管理し、前後に適切なスペース挿入 |
+
+**必要な変更:**
+
+```python
+# 新しいデータ構造
+@dataclass
+class ListGroup:
+    """A group of consecutive list items."""
+    id: str
+    items: list[Paragraph]  # list_marker を持つ段落群
+    list_type: Literal["bullet", "numbered"]
+    start_number: int | None = None
+
+# 後処理
+def group_list_items(
+    paragraphs: list[Paragraph],
+) -> list[Paragraph | ListGroup]:
+    """連続するリスト項目をグループ化"""
+    pass
+```
+
+**課題:**
+- アーキテクチャ変更が大きい（`list[Paragraph]` → `list[Paragraph | ListGroup]`）
+- 翻訳、PDF出力、シリアライズ全てに影響
+- ページをまたぐリストの扱い
+- 効果が限定的（主に見た目の改善）
+
+---
+
+### 推奨実装順序
+
+| 順位 | 機能 | 理由 |
+|------|------|------|
+| 1 | 追加パターン（高リスク） | 実装シンプル、誤検知対策を慎重に |
+| 2 | ネストリスト | 需要あり、テストデータ確保が課題 |
+| 3 | リストグループ化 | アーキテクチャ影響大、優先度低 |
 
 ---
 
@@ -1549,3 +1703,4 @@ Span 1: x0=140.4, width=0.0pt, text='\n'
 | 2026-01-09 | 機能トグル追加: `ExtractorConfig.detect_lists`、`--no-detect-lists` CLIオプション |
 | 2026-01-09 | Re-Review対応: 継続行処理ルール追加、`_detect_numbered_list_sequence`適用タイミング明記 |
 | 2026-01-09 | Re-Review 3対応: `_process_block()`で継続行処理を使用、CLI→Pipeline経路を明記 |
+| 2026-01-09 | 追加パターン（`1)`, `①`）を本実装に含める、将来対応に難易度分析追記 |
