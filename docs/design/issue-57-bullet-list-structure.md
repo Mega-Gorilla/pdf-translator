@@ -162,6 +162,38 @@ uv run translate-pdf paper.pdf
 uv run translate-pdf paper.pdf --no-detect-lists
 ```
 
+**設定の伝播経路:**
+
+```
+CLI (--no-detect-lists)
+    ↓
+PipelineConfig.detect_lists: bool = True  # 新規フィールド
+    ↓
+TranslationPipeline._stage_extract()
+    ↓
+ParagraphExtractor.extract_from_pdf(config=ExtractorConfig)
+    ↓
+_process_block(config=ExtractorConfig)
+```
+
+具体的な変更:
+
+```python
+# pipeline/translation_pipeline.py
+@dataclass
+class PipelineConfig:
+    # ... 既存フィールド ...
+    detect_lists: bool = True  # リスト検出の有効/無効
+
+# _stage_extract() 内
+async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
+    extractor_config = ExtractorConfig(detect_lists=self._config.detect_lists)
+    paragraphs = ParagraphExtractor.extract_from_pdf(
+        pdf_path, config=extractor_config
+    )
+    # ...
+```
+
 **影響範囲:**
 
 | 設定 | 動作 |
@@ -467,7 +499,7 @@ PDF 内の構造:
 
 ### 5. テキスト抽出ロジック（行単位分割）
 
-**決定: リストマーカー検出時は行ごとに別 Paragraph を生成（継続行処理あり）**
+**決定: リストマーカー検出時は継続行処理を経由して Paragraph を生成**
 
 ```python
 def _process_block(
@@ -476,13 +508,17 @@ def _process_block(
     page_idx: int,
     block_idx: int,
     page_height: float,
+    config: ExtractorConfig | None = None,
 ) -> list[Paragraph]:
     """Convert a single block to Paragraph(s) with list marker detection.
 
     Returns:
-        List of Paragraphs. For list blocks, each line becomes a separate
-        Paragraph. For regular text, all lines are merged into one Paragraph.
+        List of Paragraphs. For list blocks, uses continuation line handling.
+        For regular text, all lines are merged into one Paragraph.
     """
+    if config is None:
+        config = ExtractorConfig()
+
     lines = block.get("lines", [])
     if not lines:
         return []
@@ -493,7 +529,11 @@ def _process_block(
     for line in lines:
         spans = line.get("spans", [])
         font_size = self._estimate_font_size(spans)
-        marker = self._detect_list_marker(line, font_size)
+
+        # Only detect markers if feature is enabled
+        marker = None
+        if config.detect_lists:
+            marker = self._detect_list_marker(line, font_size)
 
         # Extract content text (skipping marker if present)
         content = self._extract_content_after_marker(spans, marker is not None)
@@ -509,22 +549,11 @@ def _process_block(
     has_list = any(m for m, _, _ in line_data)
 
     if has_list:
-        # List block: create separate Paragraph for each line
-        paragraphs: list[Paragraph] = []
-        for idx, (marker, content, line) in enumerate(line_data):
-            if not content:
-                continue
-
-            para = self._create_paragraph(
-                text=content,
-                line=line,
-                page_idx=page_idx,
-                block_idx=block_idx,
-                line_idx=idx,
-                list_marker=marker,
-            )
-            paragraphs.append(para)
-        return paragraphs
+        # List block: use continuation line handling
+        # (マーカー無し行は直前のマーカー付き項目に連結)
+        return self._process_block_with_continuation(
+            line_data, page_idx, block_idx, page_height
+        )
     else:
         # Regular block: merge all lines into one Paragraph
         merged_text = " ".join(content for _, content, _ in line_data if content)
@@ -832,11 +861,13 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
    - `list_marker` がある場合は専用フォーマット
    - parallel モード対応
 
-### Phase 6: CLI オプション追加
+### Phase 6: CLI オプションと Pipeline 連携
 
-**ファイル:** `src/pdf_translator/cli.py`
+**ファイル:**
+- `src/pdf_translator/cli.py`
+- `src/pdf_translator/pipeline/translation_pipeline.py`
 
-1. `--no-detect-lists` オプション追加
+1. `--no-detect-lists` オプション追加（cli.py）
    ```python
    @click.option(
        "--no-detect-lists",
@@ -846,10 +877,30 @@ def _can_merge(para1: Paragraph, para2: Paragraph, config: MergeConfig) -> bool:
    )
    ```
 
-2. オプションを `ExtractorConfig` に渡す
+2. `PipelineConfig` にフィールド追加（translation_pipeline.py）
    ```python
-   config = ExtractorConfig(detect_lists=not no_detect_lists)
-   paragraphs = extractor.extract_paragraphs(config=config)
+   @dataclass
+   class PipelineConfig:
+       # ... 既存フィールド ...
+       detect_lists: bool = True  # リスト検出の有効/無効
+   ```
+
+3. CLI から `PipelineConfig` への伝播（cli.py）
+   ```python
+   config = PipelineConfig(
+       # ... 既存オプション ...
+       detect_lists=not args.no_detect_lists,
+   )
+   ```
+
+4. `_stage_extract()` での `ExtractorConfig` 生成（translation_pipeline.py）
+   ```python
+   async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
+       extractor_config = ExtractorConfig(detect_lists=self._config.detect_lists)
+       paragraphs = ParagraphExtractor.extract_from_pdf(
+           pdf_path, config=extractor_config
+       )
+       # ...
    ```
 
 ### Phase 7: テスト
@@ -1380,13 +1431,14 @@ class TestListExtractionE2E:
 | ファイル | 変更内容 |
 |---------|---------|
 | `src/pdf_translator/core/models.py` | `ListMarker` dataclass 追加（`to_dict/from_dict`含む）、`Paragraph.list_marker` フィールド追加 |
-| `src/pdf_translator/core/paragraph_extractor.py` | `ExtractorConfig` 追加、span構造からのリストマーカー検出、行単位Paragraph分割 |
+| `src/pdf_translator/core/paragraph_extractor.py` | `ExtractorConfig` 追加、span構造からのリストマーカー検出、継続行処理付き行単位Paragraph分割 |
 | `src/pdf_translator/core/paragraph_merger.py` | リスト項目マージ防止、`\n` → `\n\n` 結合変更 |
 | `src/pdf_translator/core/text_layout.py` | `\n\n`=段落区切り、`\n`=行区切りに変更 |
 | `src/pdf_translator/output/markdown_writer.py` | `list_marker` に基づくMarkdown変換 |
-| `src/pdf_translator/cli.py` | `--no-detect-lists` オプション追加 |
+| `src/pdf_translator/pipeline/translation_pipeline.py` | `PipelineConfig.detect_lists` 追加、`_stage_extract()` で `ExtractorConfig` 生成 |
+| `src/pdf_translator/cli.py` | `--no-detect-lists` オプション追加、`PipelineConfig` への伝播 |
 | `tests/test_models.py` | `ListMarker` テスト、シリアライズテスト追加 |
-| `tests/test_paragraph_extractor.py` | **新規** - リストマーカー検出、行単位分割、`ExtractorConfig`テスト |
+| `tests/test_paragraph_extractor.py` | **新規** - リストマーカー検出、継続行処理、`ExtractorConfig`テスト |
 | `tests/test_paragraph_merger.py` | リスト項目マージ防止テスト追加 |
 | `tests/test_text_layout.py` | `\n\n`/`\n` 区別テスト追加 |
 | `tests/test_markdown_writer.py` | リストフォーマットテスト追加 |
@@ -1496,3 +1548,4 @@ Span 1: x0=140.4, width=0.0pt, text='\n'
 | 2026-01-09 | 実PDF検証: 年号誤検出防止のためパターンを1-999に制限、検証結果セクション追加 |
 | 2026-01-09 | 機能トグル追加: `ExtractorConfig.detect_lists`、`--no-detect-lists` CLIオプション |
 | 2026-01-09 | Re-Review対応: 継続行処理ルール追加、`_detect_numbered_list_sequence`適用タイミング明記 |
+| 2026-01-09 | Re-Review 3対応: `_process_block()`で継続行処理を使用、CLI→Pipeline経路を明記 |
