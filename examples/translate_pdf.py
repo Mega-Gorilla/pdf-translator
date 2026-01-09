@@ -94,7 +94,7 @@ MARKDOWN_MODE = "translated_only"
 STRICT_MODE = False
 
 # 入出力パス
-INPUT_PDF = PROJECT_ROOT / "tests" / "fixtures" / "sample_llama.pdf"
+# INPUT_PDF = PROJECT_ROOT / "tests" / "fixtures" / "sample_llama.pdf"
 INPUT_PDF = PROJECT_ROOT / "tests" / "fixtures" / "sample_autogen_paper.pdf"
 OUTPUT_DIR = Path(__file__).parent / "outputs"
 
