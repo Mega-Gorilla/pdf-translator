@@ -77,9 +77,6 @@ DEFAULT_MARKDOWN_SKIP_CATEGORIES: frozenset[str] = frozenset({
     "aside_text",
     "footnote",
     "vision_footnote",
-    # Reference sections
-    "reference",
-    "reference_content",
     # Other
     "formula_number",
     "seal",
