@@ -145,6 +145,23 @@ Environment Variables:
         help="File containing custom system prompt for OpenAI",
     )
 
+    # Translation category options
+    cat_group = parser.add_argument_group("Translation category options")
+    cat_group.add_argument(
+        "--translate-all",
+        action="store_true",
+        help="Translate all categories (including titles, formulas, etc.)",
+    )
+    cat_group.add_argument(
+        "--translate-categories",
+        type=str,
+        metavar="CATEGORIES",
+        help=(
+            "Comma-separated categories to translate. "
+            "Default: text,vertical_text,abstract,aside_text"
+        ),
+    )
+
     # Markdown options
     md_group = parser.add_argument_group("Markdown output options")
     md_group.add_argument(
@@ -385,6 +402,30 @@ def get_markdown_skip_categories(args: argparse.Namespace) -> frozenset[str] | N
         return None
 
 
+def get_translatable_categories(args: argparse.Namespace) -> frozenset[str] | None:
+    """Get translatable categories from CLI arguments.
+
+    Args:
+        args: Command line arguments.
+
+    Returns:
+        frozenset of categories to translate, or None for default.
+    """
+    if args.translate_all:
+        # Import all known categories from RawLayoutCategory
+        from pdf_translator.core.models import RawLayoutCategory
+
+        # Include all known categories (translate everything)
+        return frozenset(cat.value for cat in RawLayoutCategory)
+    elif args.translate_categories:
+        # Custom translatable categories
+        categories = [cat.strip() for cat in args.translate_categories.split(",") if cat.strip()]
+        return frozenset(categories)
+    else:
+        # Use default (None will use DEFAULT_TRANSLATABLE_RAW_CATEGORIES)
+        return None
+
+
 async def run(args: argparse.Namespace) -> int:
     """Execute translation pipeline.
 
@@ -422,6 +463,8 @@ async def run(args: argparse.Namespace) -> int:
     config = PipelineConfig(
         source_lang=args.source,
         target_lang=args.target,
+        # Translation category options
+        translatable_categories=get_translatable_categories(args),
         # Markdown options
         markdown_output=args.markdown,
         markdown_mode=get_markdown_mode(args.markdown_mode),
@@ -451,6 +494,10 @@ async def run(args: argparse.Namespace) -> int:
     if args.backend == "openai":
         print(f"Model: {args.openai_model}")
     print(f"Translation: {args.source.upper()} -> {args.target.upper()}")
+    if args.translate_all:
+        print("Translate: all categories")
+    elif args.translate_categories:
+        print(f"Translate: {args.translate_categories}")
     if args.markdown:
         print(f"Markdown: enabled (mode: {args.markdown_mode})")
     if args.save_intermediate:

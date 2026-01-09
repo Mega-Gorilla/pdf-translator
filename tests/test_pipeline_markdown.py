@@ -384,7 +384,7 @@ class TestPipelineIntegrationMarkdown:
             markdown_output=False,  # Disabled
             source_lang="en",
             target_lang="ja",
-            pdf_layout_analysis=False,
+            layout_analysis=False,
         )
         pipeline = TranslationPipeline(mock_translator, config)
 

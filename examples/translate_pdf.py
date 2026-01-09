@@ -71,7 +71,7 @@ SIDE_BY_SIDE_GAP = 10.0
 # - True: PP-DocLayoutでレイアウト解析を行い、テキスト/タイトルのみ翻訳（推奨）
 #         図、表、数式などは自動的にスキップされます
 # - False: 全てのテキストを翻訳（数式や図のキャプションも翻訳される可能性あり）
-PDF_LAYOUT_ANALYSIS = True
+LAYOUT_ANALYSIS = True
 
 # 厳格モード: 翻訳失敗時の動作
 # - False: 失敗したテキストは原文のまま保持（推奨）
@@ -172,7 +172,7 @@ async def main() -> None:
     print(f"Output:      {output_pdf}")
     print(f"Translator:  {TRANSLATOR}")
     print(f"Languages:   {SOURCE_LANG} -> {TARGET_LANG}")
-    print(f"Layout analysis: {PDF_LAYOUT_ANALYSIS}")
+    print(f"Layout analysis: {LAYOUT_ANALYSIS}")
     print(f"Debug bbox:  {DEBUG_DRAW_BBOX}")
     print(f"Side-by-side: {SIDE_BY_SIDE}")
     if SIDE_BY_SIDE:
@@ -189,7 +189,7 @@ async def main() -> None:
     config = PipelineConfig(
         source_lang=SOURCE_LANG,
         target_lang=TARGET_LANG,
-        pdf_layout_analysis=PDF_LAYOUT_ANALYSIS,
+        layout_analysis=LAYOUT_ANALYSIS,
         debug_draw_bbox=DEBUG_DRAW_BBOX,
         side_by_side=SIDE_BY_SIDE,
         side_by_side_order=get_side_by_side_order(SIDE_BY_SIDE_ORDER),

@@ -3,6 +3,7 @@
 
 from .font_subsetter import FontSubsetter, SubsetConfig
 from .models import (
+    DEFAULT_TRANSLATABLE_RAW_CATEGORIES,
     BBox,
     CharPosition,
     Color,
@@ -12,6 +13,7 @@ from .models import (
     Page,
     Paragraph,
     PDFDocument,
+    RawLayoutCategory,
     TextObject,
     Transform,
 )
@@ -21,6 +23,7 @@ __all__ = [
     "BBox",
     "CharPosition",
     "Color",
+    "DEFAULT_TRANSLATABLE_RAW_CATEGORIES",
     "Font",
     "FontSubsetter",
     "LayoutBlock",
@@ -29,6 +32,7 @@ __all__ = [
     "Paragraph",
     "PDFDocument",
     "PDFProcessor",
+    "RawLayoutCategory",
     "SubsetConfig",
     "TextObject",
     "Transform",

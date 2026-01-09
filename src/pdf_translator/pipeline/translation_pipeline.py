@@ -72,7 +72,7 @@ class PipelineConfig:
     source_lang: str = "en"
     target_lang: str = "ja"
 
-    pdf_layout_analysis: bool = True  # Use layout analysis for PDF output
+    layout_analysis: bool = True  # Use layout analysis for all outputs
     layout_containment_threshold: float = 0.5
 
     # Categories to translate (raw_category strings)
@@ -263,9 +263,9 @@ class TranslationPipeline:
 
     async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
         # Layout analysis is required for:
-        # 1. PDF layout-aware rendering (when pdf_layout_analysis=True)
+        # 1. PDF layout-aware rendering (when layout_analysis=True)
         # 2. Markdown output (image/table extraction requires layout blocks)
-        need_layout = self._config.pdf_layout_analysis or self._config.markdown_output
+        need_layout = self._config.layout_analysis or self._config.markdown_output
         if not need_layout:
             logger.warning(
                 "Layout analysis disabled. All paragraphs will be translated. "
