@@ -1410,8 +1410,10 @@ class PDFProcessor:
                 else para.original_font_size
             ) or 12.0
 
-            # Load font (use bold/italic variants if paragraph has those styles)
-            text = para.translated_text
+            # Normalize text for PDF rendering (convert newlines to spaces)
+            # This preserves para.translated_text for Markdown output while
+            # avoiding PDF rendering issues with newline characters
+            display_text = normalize_text(para.translated_text or "")
             font_handle = None
             if font_path:
                 base_font_path = Path(font_path) if isinstance(font_path, str) else font_path
@@ -1446,7 +1448,7 @@ class PDFProcessor:
                     ctypes.c_float(initial_font_size),
                 )
                 if text_obj:
-                    text_ws = to_widestring(text)
+                    text_ws = to_widestring(display_text)
                     pdfium.raw.FPDFText_SetText(text_obj, text_ws)
                     pdfium.raw.FPDFPageObj_Transform(
                         text_obj,
@@ -1462,7 +1464,7 @@ class PDFProcessor:
 
             # Use TextLayoutEngine to calculate layout
             layout_result = self._layout_engine.fit_text_in_bbox(
-                text=text,
+                text=display_text,
                 bbox=para.block_bbox,
                 font_handle=font_handle,
                 initial_font_size=initial_font_size,

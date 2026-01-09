@@ -475,6 +475,41 @@ class TestPDFProcessorParagraphs:
             assert isinstance(pdf_bytes, bytes)
             assert len(pdf_bytes) > 0
 
+    def test_apply_paragraphs_normalizes_newlines_for_pdf(self):
+        """Newlines in translated_text should be normalized for PDF rendering.
+
+        The original translated_text should be preserved (for Markdown output),
+        but PDF rendering should use normalized text (newlines -> spaces).
+        """
+        with PDFProcessor(SAMPLE_PDF) as processor:
+            doc = processor.extract_text_objects()
+            page = doc.pages[0]
+            first_obj = page.text_objects[0]
+
+            # Create paragraph with newlines in translated_text
+            text_with_newlines = "First paragraph.\nSecond paragraph."
+            paragraph = Paragraph(
+                id="para_p0_b0",
+                page_number=0,
+                text=first_obj.text,
+                block_bbox=first_obj.bbox,
+                line_count=2,
+                original_font_size=first_obj.font.size if first_obj.font else 12.0,
+                translated_text=text_with_newlines,
+            )
+
+            # Apply paragraphs - should not raise error due to newlines
+            processor.apply_paragraphs([paragraph])
+
+            # Verify original translated_text is preserved (not modified)
+            assert paragraph.translated_text == text_with_newlines
+            assert "\n" in paragraph.translated_text
+
+            # Verify PDF bytes are generated successfully
+            pdf_bytes = processor.to_bytes()
+            assert isinstance(pdf_bytes, bytes)
+            assert len(pdf_bytes) > 0
+
     def test_find_font_variant(self, tmp_path):
         """Test font variant detection for Bold/Italic styles."""
         # Create mock font files
