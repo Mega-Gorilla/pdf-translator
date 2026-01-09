@@ -659,6 +659,8 @@ def _process_block(
             lines=lines,
             page_idx=page_idx,
             block_idx=block_idx,
+            item_idx=0,  # 通常ブロックは1つのParagraphのみ
+            page_height=page_height,
             list_marker=None,
         )
         return [para]
@@ -1583,6 +1585,11 @@ class TestListExtractionE2E:
 - `list_marker` フィールドはオプショナル（`None` がデフォルト）
 - 既存の段落処理は影響なし
 - シリアライズ済み中間JSON は `list_marker` なしでも読み込み可能
+- **Paragraph.id 形式変更**: `para_p{page}_b{block}` → `para_p{page}_b{block}_i{item}`
+  - 通常ブロック: `item_idx=0` で `_i0` サフィックスが追加される
+  - リストブロック: 各アイテムに連番 `_i0`, `_i1`, ... が付与される
+  - **影響**: 中間JSONやデバッグログで参照されるIDが変わる
+  - **対策**: ID形式は内部実装詳細であり、外部APIには影響しない
 
 ---
 
