@@ -368,7 +368,7 @@ def _merge_two_paragraphs(para1: Paragraph, para2: Paragraph) -> Paragraph:
     The merged paragraph uses:
     - ID from para1 (first paragraph)
     - Union of bounding boxes
-    - Concatenated text with space separator
+    - Concatenated text with newline separator
     - Sum of line counts
     - Font size, style, and other attributes from para1
     - Minimum of category confidence (conservative)
@@ -380,8 +380,8 @@ def _merge_two_paragraphs(para1: Paragraph, para2: Paragraph) -> Paragraph:
     Returns:
         New merged Paragraph instance.
     """
-    # Combine text with space
-    merged_text = para1.text + " " + para2.text
+    # Combine text with newline to preserve paragraph structure
+    merged_text = para1.text + "\n" + para2.text
 
     # Union of bounding boxes
     merged_bbox = para1.block_bbox.union(para2.block_bbox)
