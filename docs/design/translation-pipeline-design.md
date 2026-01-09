@@ -1069,13 +1069,13 @@ PP-DocLayout と pdftext は異なる座標系を使用する可能性がある:
 - `LayoutAnalyzer` で PP-DocLayout bbox を PDF 座標系に変換（既存実装）
 - `assign_categories()` では両者が PDF 座標系であることを前提とする
 
-#### 5.2.5 use_layout_analysis=False の場合
+#### 5.2.5 layout_analysis=False の場合
 
 レイアウト解析が無効の場合、`assign_categories()` はスキップされ、
 すべての Paragraph は `category = None` のまま翻訳対象となる。
 
 ```python
-if self._config.use_layout_analysis:
+if self._config.layout_analysis:
     layout_blocks = await self._stage_analyze(pdf_path)
     assign_categories(paragraphs, layout_blocks, self._config.layout_containment_threshold)
 else:
@@ -1309,7 +1309,7 @@ CPU バウンドの処理をブロックしないよう `asyncio.to_thread()` �
 
 ```python
 async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
-    if not self._config.use_layout_analysis:
+    if not self._config.layout_analysis:
         return {}
 
     # CPU バウンドの処理をスレッドプールで実行
@@ -1323,7 +1323,7 @@ async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
 - CPU バウンド処理（PP-DocLayout 推論）をイベントループから分離
 - Pipeline 側の責務として適切
 
-#### 5.4.4 use_layout_analysis=False の動作
+#### 5.4.4 layout_analysis=False の動作
 
 レイアウト解析を無効化した場合の動作を定義する。
 
@@ -1336,7 +1336,7 @@ async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
 
 **実装イメージ**:
 ```python
-if not self._config.use_layout_analysis:
+if not self._config.layout_analysis:
     logger.warning(
         "Layout analysis disabled. All text objects will be translated. "
         "Formulas, tables, and other non-text elements may be incorrectly translated."
@@ -1802,7 +1802,7 @@ class PipelineConfig:
     target_lang: str = "ja"
 
     # レイアウト解析（Optional - 数式・表・図フィルタリング用）
-    use_layout_analysis: bool = True
+    layout_analysis: bool = True
     layout_containment_threshold: float = 0.5
 
     # フォント調整（TextLayoutEngine 用）

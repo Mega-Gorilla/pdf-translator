@@ -27,6 +27,22 @@ from pdf_translator.core.side_by_side import (
     SideBySideGenerator,
     SideBySideOrder,
 )
+from pdf_translator.output.image_extractor import (
+    ExtractedImage,
+    ImageExtractionConfig,
+    ImageExtractor,
+)
+from pdf_translator.output.markdown_writer import (
+    MarkdownConfig,
+    MarkdownOutputMode,
+    MarkdownWriter,
+)
+from pdf_translator.output.table_extractor import (
+    ExtractedTable,
+    TableExtractionConfig,
+    TableExtractor,
+)
+from pdf_translator.output.translated_document import TranslatedDocument
 from pdf_translator.pipeline.errors import (
     ExtractionError,
     LayoutAnalysisError,
@@ -56,7 +72,7 @@ class PipelineConfig:
     source_lang: str = "en"
     target_lang: str = "ja"
 
-    use_layout_analysis: bool = True
+    layout_analysis: bool = True  # Use layout analysis for all outputs
     layout_containment_threshold: float = 0.5
 
     # Categories to translate (raw_category strings)
@@ -96,6 +112,29 @@ class PipelineConfig:
     # Translation failure handling
     strict_mode: bool = False  # If True, raise error on single text failure
 
+    # Markdown output options
+    markdown_output: bool = False  # Generate Markdown output
+    markdown_mode: MarkdownOutputMode = MarkdownOutputMode.TRANSLATED_ONLY
+    markdown_include_metadata: bool = True
+    markdown_include_page_breaks: bool = True
+    markdown_heading_offset: int = 0  # 0-5, shifts heading levels
+    # Categories to skip in Markdown output
+    # None: use DEFAULT_MARKDOWN_SKIP_CATEGORIES
+    # frozenset(): include all categories (skip nothing)
+    # frozenset({...}): use custom skip categories
+    markdown_skip_categories: frozenset[str] | None = None
+    save_intermediate: bool = False  # Save intermediate JSON file
+
+    # Image extraction options (only when markdown_output=True)
+    extract_images: bool = True  # Extract images from PDF
+    image_format: str = "png"  # png or jpeg
+    image_quality: int = 95  # JPEG quality (1-100)
+    image_dpi: int = 150  # Render resolution
+
+    # Table extraction options (only when markdown_output=True)
+    extract_tables: bool = True  # Extract tables from PDF
+    table_mode: str = "heuristic"  # heuristic, pdfplumber, or image
+
 
 @dataclass
 class TranslationResult:
@@ -104,6 +143,8 @@ class TranslationResult:
     pdf_bytes: bytes
     stats: dict[str, Any] | None = None
     side_by_side_pdf_bytes: bytes | None = None  # Only set if side_by_side is enabled
+    markdown: str | None = None  # Only set if markdown_output is enabled
+    paragraphs: list[Paragraph] | None = None  # Translated paragraphs for downstream use
 
 
 class TranslationPipeline:
@@ -120,6 +161,7 @@ class TranslationPipeline:
         self._config = config or PipelineConfig()
         self._progress_callback = progress_callback
         self._analyzer = LayoutAnalyzer()
+        self._page_count: int = 0  # Set by _stage_extract for use in _save_intermediate
 
     async def translate(
         self,
@@ -165,6 +207,13 @@ class TranslationPipeline:
                 pdf_path, pdf_bytes, paragraphs, pre_merge_paragraphs
             )
 
+        # Generate Markdown output if enabled
+        markdown_str: str | None = None
+        if self._config.markdown_output:
+            markdown_str = self._stage_markdown(
+                paragraphs, pdf_path, layout_blocks, output_path
+            )
+
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(pdf_bytes)
@@ -173,6 +222,15 @@ class TranslationPipeline:
             if side_by_side_bytes is not None:
                 sbs_output_path = output_path.with_stem(output_path.stem + "_side_by_side")
                 sbs_output_path.write_bytes(side_by_side_bytes)
+
+            # Save Markdown with ".md" suffix
+            if markdown_str is not None:
+                md_output_path = output_path.with_suffix(".md")
+                md_output_path.write_text(markdown_str, encoding="utf-8")
+
+            # Save intermediate JSON if enabled
+            if self._config.save_intermediate:
+                self._save_intermediate(paragraphs, pdf_path, output_path)
 
         stats = {
             "original_paragraphs": original_count,
@@ -185,6 +243,8 @@ class TranslationPipeline:
             pdf_bytes=pdf_bytes,
             stats=stats,
             side_by_side_pdf_bytes=side_by_side_bytes,
+            markdown=markdown_str,
+            paragraphs=paragraphs,
         )
 
     async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
@@ -197,11 +257,16 @@ class TranslationPipeline:
 
         with PDFProcessor(pdf_path) as processor:
             page_count = processor.page_count
+        self._page_count = page_count  # Store for _save_intermediate
         self._notify("extract", page_count, page_count)
         return paragraphs
 
     async def _stage_analyze(self, pdf_path: Path) -> dict[int, list[LayoutBlock]]:
-        if not self._config.use_layout_analysis:
+        # Layout analysis is required for:
+        # 1. PDF layout-aware rendering (when layout_analysis=True)
+        # 2. Markdown output (image/table extraction requires layout blocks)
+        need_layout = self._config.layout_analysis or self._config.markdown_output
+        if not need_layout:
             logger.warning(
                 "Layout analysis disabled. All paragraphs will be translated. "
                 "Formulas, tables, and figures may be incorrectly translated."
@@ -440,6 +505,134 @@ class TranslationPipeline:
         )
         self._notify("side_by_side", 1, 1)
         return result
+
+    def _stage_markdown(
+        self,
+        paragraphs: list[Paragraph],
+        pdf_path: Path,
+        layout_blocks: dict[int, list[LayoutBlock]],
+        output_path: Path | None,
+    ) -> str:
+        """Generate Markdown output from translated paragraphs.
+
+        Args:
+            paragraphs: List of translated paragraphs.
+            pdf_path: Path to the source PDF (for metadata).
+            layout_blocks: Layout blocks per page (for image/table extraction).
+            output_path: Output path for images directory.
+
+        Returns:
+            Markdown string.
+        """
+        extracted_images: list[ExtractedImage] = []
+        extracted_tables: list[ExtractedTable] = []
+
+        # Determine images output directory
+        if output_path is not None:
+            images_dir = output_path.parent / "images"
+        else:
+            images_dir = pdf_path.parent / "images"
+
+        # Extract images if enabled
+        if self._config.extract_images and layout_blocks:
+            image_config = ImageExtractionConfig(
+                enabled=True,
+                format=self._config.image_format,
+                quality=self._config.image_quality,
+                dpi=self._config.image_dpi,
+            )
+            extractor = ImageExtractor(image_config)
+            extracted_images = extractor.extract(pdf_path, layout_blocks, images_dir)
+            self._notify("extract_images", len(extracted_images), len(extracted_images))
+
+        # Extract tables if enabled
+        if self._config.extract_tables and layout_blocks:
+            table_config = TableExtractionConfig(mode=self._config.table_mode)
+            # Pass image config for table image fallback to use same settings
+            table_image_config = ImageExtractionConfig(
+                format=self._config.image_format,
+                quality=self._config.image_quality,
+                dpi=self._config.image_dpi,
+            )
+            table_extractor = TableExtractor(table_config, image_config=table_image_config)
+
+            # Get text objects for heuristic extraction
+            # TODO: TextObject extraction not yet implemented in pipeline.
+            # Heuristic mode will fall back to pdfplumber or image extraction.
+            # See Issue for proper TextObject integration.
+            text_objects: list[Any] = []
+
+            if self._config.table_mode == "heuristic":
+                logger.warning(
+                    "Table heuristic mode requires TextObject integration (not yet implemented). "
+                    "Falling back to pdfplumber or image extraction for tables."
+                )
+
+            for page_num, blocks in layout_blocks.items():
+                table_blocks = [
+                    b for b in blocks if b.raw_category.value == "table"
+                ]
+                for block in table_blocks:
+                    result = table_extractor.extract(
+                        pdf_path, block, text_objects, images_dir
+                    )
+                    if isinstance(result, ExtractedTable):
+                        extracted_tables.append(result)
+                    else:
+                        # Image fallback
+                        extracted_images.append(result)
+
+            self._notify("extract_tables", len(extracted_tables), len(extracted_tables))
+
+        # Generate Markdown
+        config = MarkdownConfig(
+            output_mode=self._config.markdown_mode,
+            include_metadata=self._config.markdown_include_metadata,
+            include_page_breaks=self._config.markdown_include_page_breaks,
+            heading_offset=self._config.markdown_heading_offset,
+            source_lang=self._config.source_lang,
+            target_lang=self._config.target_lang,
+            source_filename=pdf_path.name,
+            skip_categories=self._config.markdown_skip_categories,
+        )
+        writer = MarkdownWriter(config)
+        markdown = writer.write(paragraphs, extracted_images, extracted_tables)
+        self._notify("markdown", 1, 1)
+        return markdown
+
+    def _save_intermediate(
+        self,
+        paragraphs: list[Paragraph],
+        pdf_path: Path,
+        output_path: Path,
+    ) -> None:
+        """Save intermediate JSON file for debugging or regeneration.
+
+        Args:
+            paragraphs: List of translated paragraphs.
+            pdf_path: Path to the source PDF.
+            output_path: Output path for the translated PDF.
+        """
+        # Use actual PDF page count (stored by _stage_extract)
+        # This is more accurate than counting from paragraphs, as pages without
+        # text content would be missed otherwise.
+        total_pages = self._page_count
+
+        # Get translator backend name
+        backend_name = type(self._translator).__name__.replace("Translator", "").lower()
+
+        doc = TranslatedDocument.from_pipeline_result(
+            paragraphs=paragraphs,
+            source_file=pdf_path.name,
+            source_lang=self._config.source_lang,
+            target_lang=self._config.target_lang,
+            translator_backend=backend_name,
+            total_pages=total_pages,
+        )
+
+        json_output_path = output_path.with_suffix(".json")
+        doc.save(json_output_path)
+        self._notify("save_intermediate", 1, 1)
 
     async def _translate_with_retry(self, texts: list[str]) -> list[str]:
         """Translate texts with retry and fallback logic.

@@ -254,6 +254,7 @@ def assign_categories(
         if best_match is not None:
             para.category = best_match.raw_category.value
             para.category_confidence = best_match.confidence
+            para.layout_block_id = best_match.id
     return paragraphs
 
 
