@@ -32,6 +32,27 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 
 著者情報は専用カテゴリが存在しないため、本Issueのスコープ外とする。
 
+### 翻訳対象カテゴリの現状
+
+現在の `DEFAULT_TRANSLATABLE_RAW_CATEGORIES`:
+
+```python
+DEFAULT_TRANSLATABLE_RAW_CATEGORIES = frozenset({
+    "text",
+    "vertical_text",
+    "abstract",      # ← 翻訳対象に含まれている
+    "aside_text",
+    "figure_title",
+})
+```
+
+| カテゴリ | 翻訳対象 | 備考 |
+|---------|---------|------|
+| `doc_title` | **対象外** | タイトルは翻訳されない |
+| `abstract` | **対象** | Abstractは翻訳される |
+
+この設定により、現状では `title_translated` は常に `None` となる。
+
 ### 検証データ
 
 `sample_llama_translated.json` からの抽出例:
@@ -54,17 +75,123 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 
 ## 設計方針
 
-### 1. 抽出対象の明確化
+### 1. タイトル/Abstractの翻訳経路
 
-| 情報 | ソース | 出力形式 |
-|------|--------|----------|
-| タイトル（原文） | `category: "doc_title"` の Paragraph | `str \| None` |
-| タイトル（翻訳） | 同上の `translated_text` | `str \| None` |
-| Abstract（原文） | `category: "abstract"` の Paragraph | `str \| None` |
-| Abstract（翻訳） | 同上の `translated_text` | `str \| None` |
-| サムネイル | pypdfium2 render（1ページ目） | `bytes` (PNG) |
+**課題**: `doc_title` はデフォルトで翻訳対象外のため、`title_translated` が取得できない。
 
-### 2. サムネイル生成の方針
+**決定: サマリー抽出時に `doc_title` を追加で翻訳する**
+
+```
+翻訳パイプライン
+    ├── _stage_translate()
+    │   └── DEFAULT_TRANSLATABLE_RAW_CATEGORIES に基づき翻訳
+    │       → abstract は翻訳される、doc_title は翻訳されない
+    │
+    └── _stage_summary() [新規]
+        └── doc_title の translated_text が None の場合、追加で翻訳
+            → title_translated を取得
+```
+
+**理由:**
+- `doc_title` を `DEFAULT_TRANSLATABLE_RAW_CATEGORIES` に追加すると、PDFにも翻訳が反映される
+- タイトルは原文のまま残したいケースが多い（論文検索等）
+- サマリー専用に翻訳することで、PDFへの影響を回避
+- 翻訳API呼び出しは1回追加のみ（タイトルは短文）
+
+**代替案（不採用）:**
+- `doc_title` を翻訳対象に追加 → PDFのタイトルも翻訳されてしまう
+- 翻訳文なしで運用 → Webサービスでの検索・表示に支障
+
+### 2. 抽出対象の明確化
+
+| 情報 | ソース | 翻訳経路 | 出力形式 |
+|------|--------|----------|----------|
+| タイトル（原文） | `category: "doc_title"` | - | `str \| None` |
+| タイトル（翻訳） | サマリー抽出時に追加翻訳 | `_stage_summary()` | `str \| None` |
+| Abstract（原文） | `category: "abstract"` | - | `str \| None` |
+| Abstract（翻訳） | `_stage_translate()` で翻訳済み | パイプライン標準 | `str \| None` |
+| サムネイル | pypdfium2 render（1ページ目） | - | `bytes` (PNG) |
+
+### 3. 複数段落の結合ルール
+
+**課題**: Abstract が複数段落に分かれている場合、先頭1件のみの抽出では欠落する。
+
+**決定: 同一カテゴリの段落を結合して抽出**
+
+```python
+def _find_and_merge_by_category(
+    paragraphs: list[Paragraph],
+    category: str,
+) -> tuple[str | None, str | None]:
+    """Find all paragraphs with category and merge them.
+
+    Args:
+        paragraphs: List of paragraphs to search.
+        category: Category to find.
+
+    Returns:
+        Tuple of (merged_original, merged_translated).
+    """
+    # Filter by category
+    matched = [p for p in paragraphs if p.category == category]
+
+    if not matched:
+        return None, None
+
+    # Sort by page_number, then by y-coordinate (descending, PDF coordinates)
+    matched.sort(key=lambda p: (p.page_number, -p.block_bbox.y1))
+
+    # Merge with double newline
+    original = "\n\n".join(p.text for p in matched if p.text)
+    translated = "\n\n".join(
+        p.translated_text for p in matched if p.translated_text
+    )
+
+    return original or None, translated or None
+```
+
+**結合ルール:**
+- 同一カテゴリの全段落を収集
+- ページ番号順、Y座標降順（PDF座標系で上から下）でソート
+- `\n\n` で結合
+
+### 4. サムネイル出力仕様
+
+**課題**: サムネイルの出力形式（base64埋め込み vs ファイルパス）が曖昧。
+
+**決定: ファイル保存を正とし、JSONには相対パスを記録**
+
+```
+output/
+├── paper_translated.pdf
+├── paper_translated.json          # summary.thumbnail_path を含む
+├── paper_translated.md
+└── paper_translated_thumbnail.png # サムネイル画像
+```
+
+**JSON出力:**
+```json
+{
+  "summary": {
+    "title": "LLaMA: Open and Efficient...",
+    "title_translated": "LLaMA: オープンで効率的な...",
+    "abstract": "We introduce LLaMA...",
+    "abstract_translated": "LLaMAを紹介します...",
+    "thumbnail_path": "paper_translated_thumbnail.png",
+    "thumbnail_width": 400,
+    "thumbnail_height": 518,
+    "page_count": 1,
+    "source_lang": "en",
+    "target_lang": "ja"
+  }
+}
+```
+
+**API向け（オプション）:**
+- `DocumentSummary.to_dict(include_thumbnail_base64=True)` でbase64埋め込み可能
+- デフォルトはファイルパス方式（JSON肥大化防止）
+
+### 5. サムネイル生成の方針
 
 - **対象**: 翻訳前のPDF 1ページ目のみ
 - **理由**:
@@ -72,12 +199,11 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
   - 翻訳前サムネイルでドキュメントの識別は十分可能
   - 処理コストの削減
 
-### 3. 既存機能の再利用
+### 6. 既存機能の再利用
 
 | 機能 | 再利用元 |
 |------|---------|
 | ページレンダリング | `ImageExtractor` (pypdfium2使用) |
-| カテゴリフィルタリング | `MarkdownWriter._get_element_type()` |
 | JSON出力 | `TranslatedDocument` |
 
 ---
@@ -109,7 +235,7 @@ class DocumentSummary:
         title_translated: Translated document title.
         abstract: Original abstract text (from abstract category).
         abstract_translated: Translated abstract text.
-        thumbnail: PNG bytes of first page (original PDF).
+        thumbnail_path: Relative path to thumbnail file (primary reference).
         thumbnail_width: Thumbnail width in pixels.
         thumbnail_height: Thumbnail height in pixels.
         page_count: Total number of pages in the document.
@@ -121,12 +247,12 @@ class DocumentSummary:
     title: str | None = None
     title_translated: str | None = None
 
-    # Abstract (from abstract category)
+    # Abstract (from abstract category, may be merged from multiple paragraphs)
     abstract: str | None = None
     abstract_translated: str | None = None
 
     # Thumbnail (first page of original PDF)
-    thumbnail: bytes | None = None
+    thumbnail_path: str | None = None  # Relative path to thumbnail file
     thumbnail_width: int = 0
     thumbnail_height: int = 0
 
@@ -135,12 +261,15 @@ class DocumentSummary:
     source_lang: str = ""
     target_lang: str = ""
 
-    def to_dict(self, include_thumbnail: bool = False) -> dict[str, Any]:
+    # Internal: thumbnail bytes (not serialized by default)
+    _thumbnail_bytes: bytes | None = field(default=None, repr=False)
+
+    def to_dict(self, include_thumbnail_base64: bool = False) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
         Args:
-            include_thumbnail: If True, include base64-encoded thumbnail.
-                Default False to reduce JSON size.
+            include_thumbnail_base64: If True, include base64-encoded thumbnail.
+                Default False - use thumbnail_path instead.
 
         Returns:
             Dictionary representation.
@@ -150,6 +279,7 @@ class DocumentSummary:
             "title_translated": self.title_translated,
             "abstract": self.abstract,
             "abstract_translated": self.abstract_translated,
+            "thumbnail_path": self.thumbnail_path,
             "thumbnail_width": self.thumbnail_width,
             "thumbnail_height": self.thumbnail_height,
             "page_count": self.page_count,
@@ -157,9 +287,11 @@ class DocumentSummary:
             "target_lang": self.target_lang,
         }
 
-        if include_thumbnail and self.thumbnail:
+        if include_thumbnail_base64 and self._thumbnail_bytes:
             import base64
-            result["thumbnail_base64"] = base64.b64encode(self.thumbnail).decode("ascii")
+            result["thumbnail_base64"] = base64.b64encode(
+                self._thumbnail_bytes
+            ).decode("ascii")
 
         return result
 
@@ -173,22 +305,23 @@ class DocumentSummary:
         Returns:
             DocumentSummary instance.
         """
-        thumbnail = None
+        thumbnail_bytes = None
         if "thumbnail_base64" in data:
             import base64
-            thumbnail = base64.b64decode(data["thumbnail_base64"])
+            thumbnail_bytes = base64.b64decode(data["thumbnail_base64"])
 
         return cls(
             title=data.get("title"),
             title_translated=data.get("title_translated"),
             abstract=data.get("abstract"),
             abstract_translated=data.get("abstract_translated"),
-            thumbnail=thumbnail,
+            thumbnail_path=data.get("thumbnail_path"),
             thumbnail_width=data.get("thumbnail_width", 0),
             thumbnail_height=data.get("thumbnail_height", 0),
             page_count=data.get("page_count", 0),
             source_lang=data.get("source_lang", ""),
             target_lang=data.get("target_lang", ""),
+            _thumbnail_bytes=thumbnail_bytes,
         )
 
     def has_content(self) -> bool:
@@ -197,7 +330,7 @@ class DocumentSummary:
         Returns:
             True if at least title, abstract, or thumbnail is present.
         """
-        return bool(self.title or self.abstract or self.thumbnail)
+        return bool(self.title or self.abstract or self.thumbnail_path)
 ```
 
 **理由:**
@@ -341,15 +474,28 @@ class ThumbnailGenerator:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pdf_translator.core.models import Paragraph
 from pdf_translator.output.document_summary import DocumentSummary
 from pdf_translator.output.thumbnail_generator import ThumbnailConfig, ThumbnailGenerator
 
+if TYPE_CHECKING:
+    from pdf_translator.translators.base import TranslatorBackend
+
+logger = logging.getLogger(__name__)
+
 
 class SummaryExtractor:
-    """Extract document summary from translated paragraphs."""
+    """Extract document summary from translated paragraphs.
+
+    Handles:
+    - Title extraction from doc_title category (with additional translation)
+    - Abstract extraction from abstract category (merged if multiple)
+    - Thumbnail generation from first page
+    """
 
     # Categories to extract
     TITLE_CATEGORY = "doc_title"
@@ -366,91 +512,127 @@ class SummaryExtractor:
         """
         self._thumbnail_config = thumbnail_config or ThumbnailConfig()
 
-    def extract(
+    async def extract(
         self,
         paragraphs: list[Paragraph],
         pdf_path: Path,
+        output_dir: Path,
+        output_stem: str,
         source_lang: str = "",
         target_lang: str = "",
         page_count: int = 0,
         generate_thumbnail: bool = True,
+        translator: TranslatorBackend | None = None,
     ) -> DocumentSummary:
         """Extract document summary from paragraphs.
 
         Args:
             paragraphs: List of translated paragraphs.
             pdf_path: Path to original PDF (for thumbnail).
+            output_dir: Directory to save thumbnail.
+            output_stem: Base filename for outputs (e.g., "paper_translated").
             source_lang: Source language code.
             target_lang: Target language code.
             page_count: Total page count.
             generate_thumbnail: Whether to generate thumbnail.
+            translator: Translator backend for title translation.
 
         Returns:
             DocumentSummary with extracted information.
         """
-        # Extract title
-        title_para = self._find_first_by_category(paragraphs, self.TITLE_CATEGORY)
-        title = title_para.text if title_para else None
-        title_translated = title_para.translated_text if title_para else None
+        # Extract and merge title (may be multiple paragraphs)
+        title, title_translated = self._find_and_merge_by_category(
+            paragraphs, self.TITLE_CATEGORY
+        )
 
-        # Extract abstract
-        abstract_para = self._find_first_by_category(paragraphs, self.ABSTRACT_CATEGORY)
-        abstract = abstract_para.text if abstract_para else None
-        abstract_translated = abstract_para.translated_text if abstract_para else None
+        # If title exists but not translated, translate it now
+        if title and not title_translated and translator:
+            try:
+                title_translated = await translator.translate(
+                    title, source_lang, target_lang
+                )
+            except Exception as e:
+                logger.warning("Failed to translate title: %s", e)
+
+        # Extract and merge abstract (may be multiple paragraphs)
+        abstract, abstract_translated = self._find_and_merge_by_category(
+            paragraphs, self.ABSTRACT_CATEGORY
+        )
 
         # Generate thumbnail
-        thumbnail = None
+        thumbnail_path = None
+        thumbnail_bytes = None
         thumb_width = 0
         thumb_height = 0
 
         if generate_thumbnail and pdf_path.exists():
             try:
                 generator = ThumbnailGenerator(self._thumbnail_config)
-                thumbnail, thumb_width, thumb_height = generator.generate(pdf_path)
+                thumbnail_bytes, thumb_width, thumb_height = generator.generate(pdf_path)
+
+                # Save thumbnail file
+                thumbnail_filename = f"{output_stem}_thumbnail.png"
+                thumbnail_file = output_dir / thumbnail_filename
+                thumbnail_file.write_bytes(thumbnail_bytes)
+                thumbnail_path = thumbnail_filename  # Relative path
+
+                logger.debug("Generated thumbnail: %s", thumbnail_file)
             except Exception as e:
-                # Log but don't fail - thumbnail is optional
-                import logging
-                logging.getLogger(__name__).warning(
-                    "Failed to generate thumbnail: %s", e
-                )
+                logger.warning("Failed to generate thumbnail: %s", e)
 
         return DocumentSummary(
             title=title,
             title_translated=title_translated,
             abstract=abstract,
             abstract_translated=abstract_translated,
-            thumbnail=thumbnail,
+            thumbnail_path=thumbnail_path,
             thumbnail_width=thumb_width,
             thumbnail_height=thumb_height,
             page_count=page_count,
             source_lang=source_lang,
             target_lang=target_lang,
+            _thumbnail_bytes=thumbnail_bytes,
         )
 
     @staticmethod
-    def _find_first_by_category(
+    def _find_and_merge_by_category(
         paragraphs: list[Paragraph],
         category: str,
-    ) -> Paragraph | None:
-        """Find first paragraph with specified category.
+    ) -> tuple[str | None, str | None]:
+        """Find all paragraphs with category and merge them.
 
         Args:
             paragraphs: List of paragraphs to search.
             category: Category to find.
 
         Returns:
-            First matching paragraph, or None if not found.
+            Tuple of (merged_original, merged_translated).
         """
-        for para in paragraphs:
-            if para.category == category:
-                return para
-        return None
+        # Filter by category
+        matched = [p for p in paragraphs if p.category == category]
+
+        if not matched:
+            return None, None
+
+        # Sort by page_number, then by y-coordinate (descending, PDF coordinates)
+        matched.sort(key=lambda p: (p.page_number, -p.block_bbox.y1))
+
+        # Merge with double newline
+        original_parts = [p.text for p in matched if p.text]
+        translated_parts = [p.translated_text for p in matched if p.translated_text]
+
+        original = "\n\n".join(original_parts) if original_parts else None
+        translated = "\n\n".join(translated_parts) if translated_parts else None
+
+        return original, translated
 ```
 
 **理由:**
 - 抽出ロジックを独立したクラスに集約
+- **複数段落の結合**: 同一カテゴリの段落を `\n\n` で結合
+- **タイトルの追加翻訳**: `doc_title` は翻訳対象外のため、サマリー抽出時に追加で翻訳
 - サムネイル生成のエラーを吸収（オプショナル機能）
-- 拡張性（将来的に他のメタデータ抽出を追加可能）
+- サムネイルはファイル保存し、相対パスを `thumbnail_path` に記録
 
 ### 4. TranslationResult への統合
 
@@ -491,8 +673,9 @@ class TranslationResult:
   "summary": {
     "title": "LLaMA: Open and Efficient Foundation Language Models",
     "title_translated": "LLaMA: オープンで効率的な基盤言語モデル",
-    "abstract": "We introduce LLaMA...",
-    "abstract_translated": "LLaMAを紹介します...",
+    "abstract": "We introduce LLaMA, a collection of foundation language models...",
+    "abstract_translated": "LLaMAを紹介します。これは7Bから65Bのパラメータを持つ...",
+    "thumbnail_path": "sample_llama_translated_thumbnail.png",
     "thumbnail_width": 400,
     "thumbnail_height": 518,
     "page_count": 1,
@@ -508,10 +691,14 @@ class TranslationResult:
 ```
 output/
 ├── paper_translated.pdf
-├── paper_translated.json
+├── paper_translated.json              # summary.thumbnail_path を含む
 ├── paper_translated.md
-└── paper_translated_thumbnail.png  # 新規
+└── paper_translated_thumbnail.png     # サムネイル画像ファイル
 ```
+
+**Webサービス側での参照:**
+- JSON から `summary.thumbnail_path` を取得
+- 同一ディレクトリ内のファイルとして画像を取得
 
 ### 6. CLI オプション
 
@@ -651,3 +838,4 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 | 日付 | 変更内容 |
 |------|---------|
 | 2026-01-14 | 初版作成 |
+| 2026-01-14 | レビューFB対応: タイトル翻訳経路、サムネイル出力仕様、複数段落結合ルールを明記 |
