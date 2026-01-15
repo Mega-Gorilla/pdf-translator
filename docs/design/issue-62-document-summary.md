@@ -437,7 +437,7 @@ output/
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -701,7 +701,7 @@ class ThumbnailGenerator:
 
 **理由:**
 - `ImageExtractor` と同様のpypdfium2ベースの実装
-- 設定可能なサイズ・フォーマット
+- 設定可能なサイズ（フォーマットはPNG固定）
 - メモリ（bytes）とファイル出力の両方に対応
 
 ### 3. LLM統合モジュール（LiteLLM）
@@ -1530,3 +1530,4 @@ llm = ["litellm>=1.80.0"]
 | 2026-01-15 | LiteLLM採用: 統一LLMインターフェース導入、100+プロバイダー対応、provider/model CLI引数追加 |
 | 2026-01-15 | Re-Review 2対応: モデル自動選択ルール追加、provider/model表記明確化、マルチプロバイダー入力サイズ制御 |
 | 2026-01-15 | Re-Review 3対応: Phase 8 CLI記述統一、LLMConfig import修正、LLM表現汎化 |
+| 2026-01-15 | Re-Review 4対応: サムネイル理由文言修正(PNG固定)、DocumentSummary Literal import追加 |
