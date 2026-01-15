@@ -1,68 +1,68 @@
 # PDF Translator
 
-PDF translation tool with layout preservation - outputs Markdown and PDF.
+レイアウトを保持したままPDFを翻訳するツールです。Markdown、PDF、JSONを出力します。
 
-## Features
+## 機能
 
-- **Layout-preserving translation**: Translates PDF content while maintaining original formatting
-- **Multiple output formats**: Generates translated PDF, Markdown, and structured JSON
-- **Document layout analysis**: Uses ML-based layout detection (PP-DocLayout) for accurate text block identification
-- **Multiple translation backends**: Google Translate (default), DeepL, OpenAI GPT
-- **LLM-powered summaries**: Generate document summaries using Gemini, OpenAI, or Anthropic
-- **Thumbnail generation**: Create thumbnail images from PDF first pages
-- **Image/Table extraction**: Extract images and tables from PDFs into Markdown
-- **Multilingual JSON output**: Separate base document and translation files for efficient multi-language support
+- **レイアウト保持翻訳**: 元のフォーマットを維持しながらPDFコンテンツを翻訳
+- **複数の出力形式**: 翻訳済みPDF、Markdown、構造化JSONを生成
+- **ドキュメントレイアウト解析**: ML基盤のレイアウト検出（PP-DocLayout）による正確なテキストブロック識別
+- **複数の翻訳バックエンド**: Google翻訳（デフォルト）、DeepL、OpenAI GPT
+- **LLM要約生成**: Gemini、OpenAI、Anthropicを使用したドキュメント要約生成
+- **サムネイル生成**: PDFの1ページ目からサムネイル画像を作成
+- **画像・テーブル抽出**: PDFから画像とテーブルを抽出してMarkdownに埋め込み
+- **多言語JSON出力**: 効率的な多言語対応のためのベースドキュメントと翻訳ファイルの分離
 
-## Installation
+## インストール
 
 ```bash
 uv sync
 ```
 
-### Environment Setup
+### 環境設定
 
-Copy the example environment file and configure your API keys:
+サンプル環境ファイルをコピーしてAPIキーを設定します：
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` to add your API keys:
+`.env`を編集してAPIキーを追加：
 
 ```bash
-# Translation backends
-DEEPL_API_KEY=your-deepl-api-key      # For --backend deepl
-OPENAI_API_KEY=your-openai-api-key    # For --backend openai
+# 翻訳バックエンド
+DEEPL_API_KEY=your-deepl-api-key      # --backend deepl 用
+OPENAI_API_KEY=your-openai-api-key    # --backend openai 用
 
-# LLM features (--llm-summary, --llm-fallback)
-GEMINI_API_KEY=your-gemini-api-key    # Default LLM provider
-ANTHROPIC_API_KEY=your-anthropic-key  # For --llm-provider anthropic
+# LLM機能 (--llm-summary, --llm-fallback)
+GEMINI_API_KEY=your-gemini-api-key    # デフォルトLLMプロバイダー
+ANTHROPIC_API_KEY=your-anthropic-key  # --llm-provider anthropic 用
 ```
 
-### GPU Acceleration (Recommended)
+### GPUアクセラレーション（推奨）
 
-PDF Translator uses PP-DocLayout for layout analysis, which benefits significantly from GPU acceleration. With GPU, layout analysis is **4x faster** (benchmark: 9.5s → 2.3s).
+PDF TranslatorはレイアウトンのためにPP-DocLayoutを使用しており、GPUアクセラレーションにより大幅に高速化されます。GPUを使用すると、レイアウト解析が**4倍高速**になります（ベンチマーク: 9.5秒 → 2.3秒）。
 
-> **Important**: `uv sync` installs the CPU version of PaddlePaddle by default. To use GPU acceleration, you must replace it with the GPU version using the steps below. This replacement is required after every `uv sync`.
+> **重要**: `uv sync`はデフォルトでCPU版のPaddlePaddleをインストールします。GPUアクセラレーションを使用するには、以下の手順でGPU版に置き換える必要があります。この置き換えは`uv sync`を実行するたびに必要です。
 
-**Check your CUDA version:**
+**CUDAバージョンの確認：**
 
 ```bash
 nvcc --version
-# or
+# または
 nvidia-smi
 ```
 
-**Install PaddlePaddle GPU version:**
+**PaddlePaddle GPU版のインストール：**
 
 ```bash
-# First, uninstall CPU version
+# まずCPU版をアンインストール
 uv pip uninstall paddlepaddle
 
-# Install pip (required for GPU package installation)
+# pip をインストール（GPUパッケージのインストールに必要）
 uv pip install pip
 
-# Install GPU version for your CUDA version:
+# CUDAバージョンに合わせてGPU版をインストール：
 
 # CUDA 11.8
 uv run pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
@@ -71,92 +71,92 @@ uv run pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/
 uv run pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu123/
 ```
 
-> **Note**: If you encounter dependency errors (e.g., `nvidia-cuda-cccl-cu12`), install the missing package from PyPI first:
+> **注意**: 依存関係エラー（例: `nvidia-cuda-cccl-cu12`）が発生した場合は、まずPyPIから不足パッケージをインストールしてください：
 > ```bash
 > uv run pip install nvidia-cuda-cccl-cu12==12.3.52
 > ```
 
-For other CUDA versions, see [PaddlePaddle Installation Guide](https://www.paddlepaddle.org.cn/install/quick).
+その他のCUDAバージョンについては、[PaddlePaddle インストールガイド](https://www.paddlepaddle.org.cn/install/quick)を参照してください。
 
-**Verify GPU is enabled:**
+**GPUが有効か確認：**
 
 ```bash
 uv run python -c "import paddle; print('CUDA:', paddle.is_compiled_with_cuda()); print('GPU count:', paddle.device.cuda.device_count())"
 ```
 
-Expected output with GPU:
+GPU有効時の期待される出力：
 ```
 CUDA: True
 GPU count: 1
 ```
 
-## Usage
+## 使い方
 
-### Basic Translation
+### 基本的な翻訳
 
 ```bash
-# Basic translation (Google Translate, EN → JA)
+# 基本的な翻訳（Google翻訳、英語 → 日本語）
 uv run translate-pdf paper.pdf
 
-# Specify output file
+# 出力ファイルを指定
 uv run translate-pdf paper.pdf -o ./output/paper.ja.pdf
 
-# Use different backend
+# 別のバックエンドを使用
 uv run translate-pdf paper.pdf --backend deepl
 uv run translate-pdf paper.pdf --backend openai
 
-# Specify languages
-uv run translate-pdf paper.pdf -s en -t zh  # English to Chinese
+# 言語を指定
+uv run translate-pdf paper.pdf -s en -t zh  # 英語から中国語
 ```
 
-### Document Summary & Thumbnail
+### ドキュメント要約とサムネイル
 
-Generate document metadata, thumbnails, and LLM-powered summaries:
+ドキュメントメタデータ、サムネイル、LLM要約を生成：
 
 ```bash
-# Generate thumbnail from first page
+# 1ページ目からサムネイルを生成
 uv run translate-pdf paper.pdf --thumbnail
 
-# Generate LLM-based document summary (requires API key)
+# LLMベースのドキュメント要約を生成（APIキーが必要）
 uv run translate-pdf paper.pdf --llm-summary
 
-# Use LLM fallback for metadata extraction when layout analysis fails
+# レイアウト解析が失敗した場合のLLMフォールバックを有効化
 uv run translate-pdf paper.pdf --llm-fallback
 
-# Combine all summary features
+# すべての要約機能を組み合わせ
 uv run translate-pdf paper.pdf --thumbnail --llm-summary --llm-fallback
 
-# Specify LLM provider and model
+# LLMプロバイダーとモデルを指定
 uv run translate-pdf paper.pdf --llm-summary --llm-provider openai --llm-model gpt-4o
 ```
 
-**Supported LLM providers**: `gemini` (default), `openai`, `anthropic`
+**対応LLMプロバイダー**: `gemini`（デフォルト）、`openai`、`anthropic`
 
-### Markdown Output
+### Markdown出力
 
 ```bash
-# Generate Markdown alongside PDF
+# PDFと一緒にMarkdownを生成
 uv run translate-pdf paper.pdf --markdown
 
-# Markdown with original + translation (parallel mode)
+# 原文と翻訳を並べて表示（parallelモード）
 uv run translate-pdf paper.pdf -m --markdown-mode parallel
 
-# Include all categories in Markdown (headers, footers, etc.)
+# すべてのカテゴリをMarkdownに含める（ヘッダー、フッターなど）
 uv run translate-pdf paper.pdf -m --markdown-include-all
 
-# Disable YAML frontmatter
+# YAMLフロントマターを無効化
 uv run translate-pdf paper.pdf -m --markdown-no-metadata
 ```
 
-#### Markdown Output Modes
+#### Markdown出力モード
 
-| Mode | Original | Translation | Use Case |
-|------|----------|-------------|----------|
-| `translated_only` | Fallback only | Yes | Read translated content (default) |
-| `original_only` | Yes | No | Structured Markdown of source |
-| `parallel` | Yes | Yes | Compare, review, or learn |
+| モード | 原文 | 翻訳 | 用途 |
+|-------|------|------|------|
+| `translated_only` | フォールバックのみ | あり | 翻訳コンテンツの読解（デフォルト） |
+| `original_only` | あり | なし | ソースの構造化Markdown |
+| `parallel` | あり | あり | 比較、レビュー、学習 |
 
-**`translated_only`** (default): Outputs translated text only. Falls back to original if translation is unavailable.
+**`translated_only`**（デフォルト）: 翻訳テキストのみを出力。翻訳がない場合は原文にフォールバック。
 
 ```markdown
 ## Abstract
@@ -164,7 +164,7 @@ AutoGenは、開発者が相互に対話してタスクを実行できる複数�
 LLMアプリケーションを構築できるオープンソースフレームワークです。
 ```
 
-**`parallel`**: Outputs both original and translation for each paragraph. Ideal for comparison or quality review.
+**`parallel`**: 各段落の原文と翻訳を両方出力。比較や品質レビューに最適。
 
 ```markdown
 ## Abstract
@@ -175,94 +175,94 @@ AutoGenは、開発者が相互に対話してタスクを実行できる複数�
 LLMアプリケーションを構築できるオープンソースフレームワークです。
 ```
 
-### Image & Table Extraction
+### 画像・テーブル抽出
 
-When using `--markdown`, images and tables are automatically extracted:
+`--markdown`を使用すると、画像とテーブルが自動的に抽出されます：
 
 ```bash
-# Extract images and tables (default with --markdown)
+# 画像とテーブルを抽出（--markdownでデフォルト有効）
 uv run translate-pdf paper.pdf --markdown
 
-# Disable image extraction
+# 画像抽出を無効化
 uv run translate-pdf paper.pdf --markdown --no-extract-images
 
-# Disable table extraction
+# テーブル抽出を無効化
 uv run translate-pdf paper.pdf --markdown --no-extract-tables
 
-# Customize image output
+# 画像出力をカスタマイズ
 uv run translate-pdf paper.pdf -m --image-format jpeg --image-quality 90 --image-dpi 200
 ```
 
-### Translation Category Control
+### 翻訳カテゴリ制御
 
-By default, only body text categories are translated (`text`, `abstract`, etc.).
-Titles, formulas, and figures are kept in the original language.
+デフォルトでは、本文カテゴリ（`text`、`abstract`など）のみが翻訳されます。
+タイトル、数式、図はオリジナル言語のまま保持されます。
 
 ```bash
-# Translate all categories (including titles, formulas)
+# すべてのカテゴリを翻訳（タイトル、数式を含む）
 uv run translate-pdf paper.pdf --translate-all
 
-# Specify custom categories to translate
+# 翻訳するカスタムカテゴリを指定
 uv run translate-pdf paper.pdf --translate-categories "text,abstract,doc_title"
 ```
 
-### JSON Output (Intermediate Files)
+### JSON出力（中間ファイル）
 
-Save structured JSON files for debugging, regeneration, or web service integration:
+デバッグ、再生成、またはWebサービス統合のための構造化JSONファイルを保存：
 
 ```bash
-# Save intermediate JSON files
+# 中間JSONファイルを保存
 uv run translate-pdf paper.pdf --save-intermediate
 
-# Full example with all metadata
+# すべてのメタデータを含む完全な例
 uv run translate-pdf paper.pdf -t ja --save-intermediate --thumbnail --llm-summary --markdown
 ```
 
-This generates two JSON files:
-- `paper.json` - Base document (original content, metadata, source-language summary)
-- `paper.ja.json` - Translation document (translated content, target-language summary)
+これにより2つのJSONファイルが生成されます：
+- `paper.json` - ベースドキュメント（原文コンテンツ、メタデータ、原文言語の要約）
+- `paper.ja.json` - 翻訳ドキュメント（翻訳コンテンツ、翻訳言語の要約）
 
-### Advanced Options
+### 高度なオプション
 
 ```bash
-# Debug mode (draw bounding boxes)
+# デバッグモード（バウンディングボックスを描画）
 uv run translate-pdf paper.pdf --debug
 
-# Side-by-side comparison PDF
+# 見開き比較PDF
 uv run translate-pdf paper.pdf --side-by-side
 
-# Verbose output
+# 詳細出力
 uv run translate-pdf paper.pdf -v
 ```
 
-See `uv run translate-pdf --help` for all options.
+すべてのオプションは`uv run translate-pdf --help`を参照してください。
 
-## Output Files
+## 出力ファイル
 
-When running with all features enabled:
+すべての機能を有効にして実行した場合：
 
 ```bash
 uv run translate-pdf paper.pdf -t ja --markdown --thumbnail --llm-summary --save-intermediate
 ```
 
-The following files are generated:
+以下のファイルが生成されます：
 
 ```
 output/
-├── paper.ja.pdf              # Translated PDF
-├── paper.ja.md               # Translated Markdown
-├── paper.md                  # Original Markdown
-├── paper.json                # Base document (schema v2.0.0)
-├── paper.ja.json             # Translation document
-├── paper_thumbnail.png       # Thumbnail image
-└── images/                   # Extracted images (if any)
+├── paper.ja.pdf              # 翻訳済みPDF
+├── paper.ja.md               # 翻訳済みMarkdown
+├── paper.md                  # 原文Markdown
+├── paper.json                # ベースドキュメント（スキーマ v2.0.0）
+├── paper.ja.json             # 翻訳ドキュメント
+├── paper_thumbnail.png       # サムネイル画像
+└── images/                   # 抽出された画像（存在する場合）
     ├── paper_p0_img0.png
     └── ...
 ```
 
-### JSON Schema (v2.0.0)
+### JSONスキーマ（v2.0.0）
 
-**Base Document (`paper.json`)**:
+**ベースドキュメント（`paper.json`）**：
 ```json
 {
   "schema_version": "2.0.0",
@@ -273,15 +273,15 @@ output/
     "paragraph_count": 145
   },
   "summary": {
-    "title": "Document Title",
-    "abstract": "Abstract text...",
-    "summary": "LLM-generated summary in source language..."
+    "title": "ドキュメントタイトル",
+    "abstract": "要約テキスト...",
+    "summary": "LLMで生成された原文言語の要約..."
   },
   "paragraphs": [...]
 }
 ```
 
-**Translation Document (`paper.ja.json`)**:
+**翻訳ドキュメント（`paper.ja.json`）**：
 ```json
 {
   "schema_version": "2.0.0",
@@ -293,7 +293,7 @@ output/
   "summary": {
     "title": "翻訳されたタイトル",
     "abstract": "翻訳された要約...",
-    "summary": "LLMで生成された要約（翻訳言語）..."
+    "summary": "LLMで生成された翻訳言語の要約..."
   },
   "paragraphs": {
     "para_p0_b1": "翻訳文1",
@@ -302,12 +302,12 @@ output/
 }
 ```
 
-## Examples
+## サンプル
 
-See the `examples/` directory for sample outputs:
+`examples/`ディレクトリにサンプル出力があります：
 
-- `examples/summary_output/` - Full example with thumbnail, JSON, and Markdown output
+- `examples/summary_output/` - サムネイル、JSON、Markdown出力を含む完全な例
 
-## License
+## ライセンス
 
 Apache-2.0
