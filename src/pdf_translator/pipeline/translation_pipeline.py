@@ -27,6 +27,8 @@ from pdf_translator.core.side_by_side import (
     SideBySideGenerator,
     SideBySideOrder,
 )
+from pdf_translator.llm.client import LLMConfig
+from pdf_translator.output.document_summary import DocumentSummary
 from pdf_translator.output.image_extractor import (
     ExtractedImage,
     ImageExtractionConfig,
@@ -37,11 +39,13 @@ from pdf_translator.output.markdown_writer import (
     MarkdownOutputMode,
     MarkdownWriter,
 )
+from pdf_translator.output.summary_extractor import SummaryExtractor
 from pdf_translator.output.table_extractor import (
     ExtractedTable,
     TableExtractionConfig,
     TableExtractor,
 )
+from pdf_translator.output.thumbnail_generator import ThumbnailConfig
 from pdf_translator.output.translated_document import TranslatedDocument
 from pdf_translator.pipeline.errors import (
     ExtractionError,
@@ -135,6 +139,16 @@ class PipelineConfig:
     extract_tables: bool = True  # Extract tables from PDF
     table_mode: str = "heuristic"  # heuristic, pdfplumber, or image
 
+    # Thumbnail generation options
+    generate_thumbnail: bool = False  # Generate thumbnail from first page
+    thumbnail_width: int = 400  # Thumbnail width in pixels
+
+    # LLM integration options (requires litellm)
+    llm_summary: bool = False  # Generate LLM-based summary
+    llm_fallback: bool = True  # Use LLM for metadata fallback
+    llm_provider: str = "gemini"  # LLM provider (gemini, openai, anthropic, etc.)
+    llm_model: str | None = None  # Model name (None = use provider default)
+
 
 @dataclass
 class TranslationResult:
@@ -144,7 +158,9 @@ class TranslationResult:
     stats: dict[str, Any] | None = None
     side_by_side_pdf_bytes: bytes | None = None  # Only set if side_by_side is enabled
     markdown: str | None = None  # Only set if markdown_output is enabled
+    markdown_original: str | None = None  # Original Markdown (for LLM summary)
     paragraphs: list[Paragraph] | None = None  # Translated paragraphs for downstream use
+    summary: DocumentSummary | None = None  # Document summary for web service
 
 
 class TranslationPipeline:
@@ -209,9 +225,22 @@ class TranslationPipeline:
 
         # Generate Markdown output if enabled
         markdown_str: str | None = None
+        markdown_original: str | None = None
         if self._config.markdown_output:
             markdown_str = self._stage_markdown(
                 paragraphs, pdf_path, layout_blocks, output_path
+            )
+            # Generate original Markdown for LLM summary
+            if self._config.llm_summary:
+                markdown_original = self._stage_markdown(
+                    paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
+                )
+
+        # Generate document summary if enabled
+        summary: DocumentSummary | None = None
+        if self._config.generate_thumbnail or self._config.llm_summary or self._config.llm_fallback:
+            summary = await self._stage_summary(
+                paragraphs, pdf_path, output_path, markdown_original
             )
 
         if output_path is not None:
@@ -228,9 +257,16 @@ class TranslationPipeline:
                 md_output_path = output_path.with_suffix(".md")
                 md_output_path.write_text(markdown_str, encoding="utf-8")
 
+            # Save original Markdown (for LLM summary or user reference)
+            if markdown_original is not None:
+                md_original_path = output_path.parent / (
+                    output_path.stem.replace("_translated", "") + "_original.md"
+                )
+                md_original_path.write_text(markdown_original, encoding="utf-8")
+
             # Save intermediate JSON if enabled
             if self._config.save_intermediate:
-                self._save_intermediate(paragraphs, pdf_path, output_path)
+                self._save_intermediate(paragraphs, pdf_path, output_path, summary)
 
         stats = {
             "original_paragraphs": original_count,
@@ -244,7 +280,9 @@ class TranslationPipeline:
             stats=stats,
             side_by_side_pdf_bytes=side_by_side_bytes,
             markdown=markdown_str,
+            markdown_original=markdown_original,
             paragraphs=paragraphs,
+            summary=summary,
         )
 
     async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
@@ -512,6 +550,7 @@ class TranslationPipeline:
         pdf_path: Path,
         layout_blocks: dict[int, list[LayoutBlock]],
         output_path: Path | None,
+        use_translated: bool = True,
     ) -> str:
         """Generate Markdown output from translated paragraphs.
 
@@ -520,6 +559,7 @@ class TranslationPipeline:
             pdf_path: Path to the source PDF (for metadata).
             layout_blocks: Layout blocks per page (for image/table extraction).
             output_path: Output path for images directory.
+            use_translated: If True, use translated text. If False, use original text.
 
         Returns:
             Markdown string.
@@ -596,15 +636,78 @@ class TranslationPipeline:
             skip_categories=self._config.markdown_skip_categories,
         )
         writer = MarkdownWriter(config)
-        markdown = writer.write(paragraphs, extracted_images, extracted_tables)
+        markdown = writer.write(
+            paragraphs, extracted_images, extracted_tables, use_translated
+        )
         self._notify("markdown", 1, 1)
         return markdown
+
+    async def _stage_summary(
+        self,
+        paragraphs: list[Paragraph],
+        pdf_path: Path,
+        output_path: Path | None,
+        original_markdown: str | None,
+    ) -> DocumentSummary:
+        """Generate document summary with metadata, thumbnail, and LLM summary.
+
+        Args:
+            paragraphs: List of translated paragraphs.
+            pdf_path: Path to original PDF (for thumbnail).
+            output_path: Output path for thumbnail file.
+            original_markdown: Original Markdown content for LLM summary.
+
+        Returns:
+            DocumentSummary with extracted information.
+        """
+        # Determine output directory
+        if output_path is not None:
+            output_dir = output_path.parent
+            output_stem = output_path.stem
+        else:
+            output_dir = pdf_path.parent
+            output_stem = pdf_path.stem + "_translated"
+
+        # Configure thumbnail generation
+        thumbnail_config = ThumbnailConfig(width=self._config.thumbnail_width)
+
+        # Configure LLM integration
+        llm_config: LLMConfig | None = None
+        if self._config.llm_summary or self._config.llm_fallback:
+            llm_config = LLMConfig(
+                provider=self._config.llm_provider,
+                model=self._config.llm_model,
+                use_summary=self._config.llm_summary,
+                use_fallback=self._config.llm_fallback,
+            )
+
+        extractor = SummaryExtractor(
+            thumbnail_config=thumbnail_config,
+            llm_config=llm_config,
+        )
+
+        summary = await extractor.extract(
+            paragraphs=paragraphs,
+            pdf_path=pdf_path,
+            output_dir=output_dir,
+            output_stem=output_stem,
+            source_lang=self._config.source_lang,
+            target_lang=self._config.target_lang,
+            page_count=self._page_count,
+            generate_thumbnail=self._config.generate_thumbnail,
+            translator=self._translator,
+            original_markdown=original_markdown,
+        )
+
+        self._notify("summary", 1, 1)
+        return summary
 
     def _save_intermediate(
         self,
         paragraphs: list[Paragraph],
         pdf_path: Path,
         output_path: Path,
+        summary: DocumentSummary | None = None,
     ) -> None:
         """Save intermediate JSON file for debugging or regeneration.
 
@@ -612,6 +715,7 @@ class TranslationPipeline:
             paragraphs: List of translated paragraphs.
             pdf_path: Path to the source PDF.
             output_path: Output path for the translated PDF.
+            summary: Optional document summary to include.
         """
         # Use actual PDF page count (stored by _stage_extract)
         # This is more accurate than counting from paragraphs, as pages without
@@ -628,6 +732,7 @@ class TranslationPipeline:
             target_lang=self._config.target_lang,
             translator_backend=backend_name,
             total_pages=total_pages,
+            summary=summary,
         )
 
         json_output_path = output_path.with_suffix(".json")

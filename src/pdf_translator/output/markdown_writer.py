@@ -118,6 +118,7 @@ class MarkdownWriter:
         paragraphs: list[Paragraph],
         extracted_images: list[ExtractedImage] | None = None,
         extracted_tables: list[ExtractedTable] | None = None,
+        use_translated: bool = True,
     ) -> str:
         """Generate Markdown string from paragraphs.
 
@@ -125,10 +126,16 @@ class MarkdownWriter:
             paragraphs: List of translated paragraphs.
             extracted_images: List of extracted images (for future use).
             extracted_tables: List of extracted tables (for future use).
+            use_translated: If True, use translated_text. If False, use original text.
+                This parameter temporarily overrides the config's output_mode.
 
         Returns:
             Markdown string.
         """
+        # Save original output_mode and temporarily override if needed
+        original_mode = self._config.output_mode
+        if not use_translated:
+            self._config.output_mode = MarkdownOutputMode.ORIGINAL_ONLY
         parts: list[str] = []
 
         # Generate metadata header
@@ -162,6 +169,9 @@ class MarkdownWriter:
             if md:
                 parts.append(md)
 
+        # Restore original output_mode
+        self._config.output_mode = original_mode
+
         return "\n".join(parts)
 
     def write_to_file(
@@ -170,6 +180,7 @@ class MarkdownWriter:
         output_path: Path,
         extracted_images: list[ExtractedImage] | None = None,
         extracted_tables: list[ExtractedTable] | None = None,
+        use_translated: bool = True,
     ) -> None:
         """Write Markdown to file.
 
@@ -178,8 +189,11 @@ class MarkdownWriter:
             output_path: Output file path.
             extracted_images: List of extracted images (for future use).
             extracted_tables: List of extracted tables (for future use).
+            use_translated: If True, use translated_text. If False, use original text.
         """
-        markdown = self.write(paragraphs, extracted_images, extracted_tables)
+        markdown = self.write(
+            paragraphs, extracted_images, extracted_tables, use_translated
+        )
         output_path.write_text(markdown, encoding="utf-8")
 
     def _generate_metadata(self) -> str:

@@ -31,6 +31,9 @@ from pdf_translator.output.translated_document import (
     TranslatedDocument,
     TranslatedDocumentMetadata,
 )
+from pdf_translator.output.document_summary import DocumentSummary
+from pdf_translator.output.thumbnail_generator import ThumbnailConfig, ThumbnailGenerator
+from pdf_translator.output.summary_extractor import SummaryExtractor
 
 __all__ = [
     # Image extractor
@@ -55,4 +58,11 @@ __all__ = [
     "TRANSLATED_DOC_VERSION",
     "TranslatedDocument",
     "TranslatedDocumentMetadata",
+    # Document summary
+    "DocumentSummary",
+    # Thumbnail generator
+    "ThumbnailConfig",
+    "ThumbnailGenerator",
+    # Summary extractor
+    "SummaryExtractor",
 ]

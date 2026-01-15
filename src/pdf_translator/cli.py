@@ -267,6 +267,43 @@ Environment Variables:
         help="Generate side-by-side comparison PDF",
     )
 
+    # Thumbnail options
+    thumb_group = parser.add_argument_group("Thumbnail options")
+    thumb_group.add_argument(
+        "--thumbnail",
+        action="store_true",
+        help="Generate thumbnail from first page",
+    )
+    thumb_group.add_argument(
+        "--thumbnail-width",
+        type=int,
+        default=400,
+        help="Thumbnail width in pixels (default: 400)",
+    )
+
+    # LLM options
+    llm_group = parser.add_argument_group("LLM options (requires litellm)")
+    llm_group.add_argument(
+        "--llm-summary",
+        action="store_true",
+        help="Generate LLM-based document summary",
+    )
+    llm_group.add_argument(
+        "--llm-provider",
+        default="gemini",
+        help="LLM provider (default: gemini). Options: gemini, openai, anthropic, etc.",
+    )
+    llm_group.add_argument(
+        "--llm-model",
+        default=None,
+        help="LLM model name. Default depends on provider (gemini: gemini-3.0-flash)",
+    )
+    llm_group.add_argument(
+        "--no-llm-fallback",
+        action="store_true",
+        help="Disable LLM fallback for metadata extraction",
+    )
+
     # Debug options
     parser.add_argument(
         "--debug",
@@ -483,6 +520,14 @@ async def run(args: argparse.Namespace) -> int:
         table_mode=args.table_mode,
         # Side-by-side options
         side_by_side=args.side_by_side,
+        # Thumbnail options
+        generate_thumbnail=args.thumbnail,
+        thumbnail_width=args.thumbnail_width,
+        # LLM options
+        llm_summary=args.llm_summary,
+        llm_fallback=not args.no_llm_fallback,
+        llm_provider=args.llm_provider,
+        llm_model=args.llm_model,
         # Debug options
         debug_draw_bbox=args.debug,
     )
@@ -504,6 +549,11 @@ async def run(args: argparse.Namespace) -> int:
         print("Intermediate JSON: enabled")
     if args.side_by_side:
         print("Side-by-side: enabled")
+    if args.thumbnail:
+        print(f"Thumbnail: enabled (width: {args.thumbnail_width})")
+    if args.llm_summary:
+        model_info = args.llm_model or "(default)"
+        print(f"LLM Summary: enabled (provider: {args.llm_provider}, model: {model_info})")
     if args.debug:
         print("Debug mode: enabled")
     print()
@@ -543,6 +593,13 @@ async def run(args: argparse.Namespace) -> int:
     if args.side_by_side and result.side_by_side_pdf_bytes:
         sbs_path = output_path.with_stem(output_path.stem + "_side_by_side")
         print(f"  Side-by-side: {sbs_path}")
+
+    if result.summary:
+        if result.summary.thumbnail_path:
+            thumb_path = output_path.parent / result.summary.thumbnail_path
+            print(f"  Thumbnail: {thumb_path}")
+        if result.summary.summary:
+            print("  LLM Summary: generated")
 
     return 0
 

@@ -36,6 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 deepl = ["aiohttp>=3.9.0"]
 openai = ["openai>=1.0.0", "pydantic>=2.0.0", "tiktoken>=0.7.0"]
+llm = ["litellm>=1.80.0"]
 layout = [
     # PaddlePaddle CPU版（デフォルト）- PyPI から自動インストール
     # GPU版を使用する場合は README の "GPU Acceleration" セクションを参照
