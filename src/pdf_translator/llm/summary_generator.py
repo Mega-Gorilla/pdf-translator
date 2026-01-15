@@ -16,9 +16,9 @@ class LLMSummaryGenerator:
     """Generate document summaries and extract metadata using LLM.
 
     Uses LiteLLM for unified access to multiple LLM providers:
-    - Gemini (default): gemini/gemini-3.0-flash
-    - OpenAI: openai/gpt-5-mini
-    - Anthropic: anthropic/claude-sonnet-4-5
+    - Gemini (default): gemini/gemini-3-flash-preview
+    - OpenAI: openai/gpt-4o-mini
+    - Anthropic: anthropic/claude-sonnet-4-5-20250514
     """
 
     SUMMARY_PROMPT = """Summarize this academic paper in 3-5 sentences, covering:

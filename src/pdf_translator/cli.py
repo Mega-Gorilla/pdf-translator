@@ -296,7 +296,7 @@ Environment Variables:
     llm_group.add_argument(
         "--llm-model",
         default=None,
-        help="LLM model name. Default depends on provider (gemini: gemini-3.0-flash)",
+        help="LLM model name. Default depends on provider (gemini: gemini-3-flash-preview)",
     )
     llm_group.add_argument(
         "--llm-fallback",

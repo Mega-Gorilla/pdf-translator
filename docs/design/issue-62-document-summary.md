@@ -179,7 +179,7 @@ class MarkdownWriter:
 |-------------|--------|---------------------|
 | Gemini | gemini-3-flash-preview | 1,048,576 tokens |
 | OpenAI | gpt-4o-mini | 128,000 tokens |
-| Anthropic | claude-sonnet-4-5 | 200,000 tokens |
+| Anthropic | claude-sonnet-4-5-20250514 | 200,000 tokens |
 
 - 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（全プロバイダーで十分収まる）
 - 超長文書（100ページ超）の場合: 警告ログを出力し、先頭 500,000 文字で切り捨て
