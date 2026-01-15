@@ -2,7 +2,7 @@
 title: sample_llama.pdf
 source_lang: en
 target_lang: ja
-translated_at: 2026-01-15T10:48:36.842561
+translated_at: 2026-01-15T12:37:36.227225
 ---
 
 # **LLaMA: Open and Efficient Foundation Language Models**

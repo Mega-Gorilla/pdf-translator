@@ -1,29 +1,19 @@
 {
-  "version": "1.0.0",
+  "schema_version": "2.0.0",
   "metadata": {
     "source_file": "sample_llama.pdf",
     "source_lang": "en",
-    "target_lang": "ja",
-    "translated_at": "2026-01-15T10:48:55.923540",
-    "translator_backend": "google",
     "page_count": 1,
-    "paragraph_count": 13,
-    "translated_count": 9
+    "paragraph_count": 13
   },
   "summary": {
     "title": "LLaMA: Open and Efficient Foundation Language Models",
-    "title_translated": "LLaMA: オープンで効率的な基礎言語モデル",
     "abstract": "We introduce LLaMA, a collection of founda- tion language models ranging from 7B to 65B parameters. We train our models on trillions of tokens, and show that it is possible to train state-of-the-art models using publicly avail- able datasets exclusively, without resorting to proprietary and inaccessible datasets. In particular, LLaMA-13B outperforms GPT-3 (175B) on most benchmarks, and LLaMA- 65B is competitive with the best models, Chinchilla-70B and PaLM-540B. We release all our models to the research community1 .",
-    "abstract_translated": "7B から 65B のパラメータにわたる基礎言語モデルのコレクションである LLaMA を紹介します。私たちは何兆ものトークンでモデルをトレーニングし、独自のアクセスできないデータセットに頼ることなく、公開されているデータセットのみを使用して最先端のモデルをトレーニングできることを示しました。特に、LLaMA-13B はほとんどのベンチマークで GPT-3 (175B) を上回り、LLaMA-65B は最高のモデルである Chinchilla-70B および PaLM-540B と競合します。私たちはすべてのモデルを研究コミュニティに公開しています1。",
-    "organization": "Meta AI",
-    "summary": "The objective of this research was to develop a collection of high-performing foundation language models, ranging from 7B to 65B parameters, that optimize performance for a limited inference budget. To achieve this, the researchers trained their models on trillions of tokens using exclusively publicly available datasets, challenging the assumption that state-of-the-art results require proprietary data or massive parameter counts. The study found that smaller models trained on more data can outperform much larger counterparts; for instance, LLaMA-13B surpassed the 175B-parameter GPT-3 on most benchmarks. Ultimately, the authors conclude that LLaMA-65B is competitive with top-tier models like PaLM-540B, and they released the collection to the research community to democratize access to efficient, large-scale language modeling.",
-    "summary_translated": "この研究の目的は、限られた推論予算でパフォーマンスを最適化する、7B から 65B のパラメーターにわたる高性能の基礎言語モデルのコレクションを開発することでした。これを達成するために、研究者らは独占的に公開されているデータセットを使用して数兆のトークンでモデルをトレーニングし、最先端の結果には独自のデータや膨大なパラメータ数が必要であるという仮定に挑戦しました。この研究では、より多くのデータでトレーニングされた小規模なモデルが、はるかに大規模なモデルよりも優れたパフォーマンスを発揮できることがわかりました。たとえば、LLaMA-13B は、ほとんどのベンチマークで 175B パラメータの GPT-3 を上回りました。最終的に著者らは、LLaMA-65B が PaLM-540B のような最上位モデルと競合できると結論付け、効率的で大規模な言語モデリングへのアクセスを民主化するために、このコレクションを研究コミュニティにリリースしました。",
-    "thumbnail_path": "test4_translated_thumbnail.png",
+    "summary": "The objective of this research is to develop a series of open-access foundation language models, ranging from 7B to 65B parameters, that achieve state-of-the-art performance within various inference budgets. To achieve this, the authors utilized a modified Transformer architecture and trained the models on trillions of tokens using exclusively publicly available datasets. The study finds that smaller models trained on more data can outperform much larger counterparts; for example, LLaMA-13B surpassed the 175B-parameter GPT-3 on most benchmarks. Ultimately, the 65B-parameter model proved competitive with top-tier proprietary models like Chinchilla and PaLM, demonstrating that high-performance LLMs can be built without private data.",
+    "thumbnail_path": "sample_llama_thumbnail.png",
     "thumbnail_width": 400,
     "thumbnail_height": 566,
     "page_count": 1,
-    "source_lang": "en",
-    "target_lang": "ja",
     "title_source": "layout",
     "abstract_source": "layout"
   },
@@ -44,7 +34,7 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "center",
-      "layout_block_id": "42dd46d2-0f32-41cb-8ec4-e89bf4894e5e",
+      "layout_block_id": "a3ee0753-e633-4a3e-9cfb-7cbe8c3f455b",
       "category": "doc_title",
       "category_confidence": 0.9415737986564636,
       "font_name": "NimbusRomNo9L-Medi"
@@ -65,10 +55,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "4521efdb-b5bf-4460-a046-25e265061d11",
+      "layout_block_id": "046d3090-b7f8-4b64-893d-e28886481ef4",
       "category": "text",
       "category_confidence": 0.9733920693397522,
-      "translated_text": "ユーゴ・トゥヴロン∗ 、ティボー・ラブリル∗ 、ゴーティエ・イザカール∗ 、ザビエ・マルティネ・マリー＝アンヌ・ラショー、ティモシー・ラクロワ、バティスト・ロジエール、ナマン・ゴヤル エリック・ハンブロ、ファイサル・アズハル、オーレリアン・ロドリゲス、アルマン・ジュラン・エドゥアール・グラーヴ∗、ギョーム・ランプル∗",
       "font_name": "NimbusRomNo9L-Medi"
     },
     {
@@ -87,10 +76,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "center",
-      "layout_block_id": "c437236b-0d7f-4ebe-9a88-b548017081ec",
+      "layout_block_id": "c94c1bdb-56d1-4daf-b000-6fd586591a25",
       "category": "text",
       "category_confidence": 0.9053331613540649,
-      "translated_text": "メタAI",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -109,7 +97,7 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "center",
-      "layout_block_id": "363b8373-3bed-447a-9fcc-0dba6c44921e",
+      "layout_block_id": "913289be-d836-4b1f-8db6-7a44f095a0f1",
       "category": "paragraph_title",
       "category_confidence": 0.9132309556007385,
       "font_name": "NimbusRomNo9L-Medi"
@@ -130,10 +118,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "2995588b-2fcd-41ea-b848-6cd246d05cf3",
+      "layout_block_id": "cc05f858-1ae8-4e1d-81bc-6e865e917267",
       "category": "text",
       "category_confidence": 0.9785284399986267,
-      "translated_text": "パフォーマンスに影響を与えるため、より長くトレーニングされた小規模なものほど、最終的には推論のコストが低くなります。たとえば、Hoffmann et al. (2022) は 200B トークンで 10B モデルをトレーニングすることを推奨していますが、7B モデルのパフォーマンスは 1T トークンの後でも向上し続けることがわかりました。",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -152,10 +139,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "fb74289a-68e2-42fc-9c56-c61e91934dcc",
+      "layout_block_id": "728a7795-cf3e-450c-85ec-f50cecb272c2",
       "category": "abstract",
       "category_confidence": 0.9836386442184448,
-      "translated_text": "7B から 65B のパラメータにわたる基礎言語モデルのコレクションである LLaMA を紹介します。私たちは何兆ものトークンでモデルをトレーニングし、独自のアクセスできないデータセットに頼ることなく、公開されているデータセットのみを使用して最先端のモデルをトレーニングできることを示しました。特に、LLaMA-13B はほとんどのベンチマークで GPT-3 (175B) を上回り、LLaMA-65B は最高のモデルである Chinchilla-70B および PaLM-540B と競合します。私たちはすべてのモデルを研究コミュニティに公開しています1。",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -174,10 +160,9 @@
       "is_italic": false,
       "rotation": 270.00000068324533,
       "alignment": "left",
-      "layout_block_id": "293cb507-5fa8-4e5d-b66d-72208943e302",
+      "layout_block_id": "c4c6374f-0ac4-4f7f-a168-68b8b1227cb9",
       "category": "aside_text",
       "category_confidence": 0.9396297931671143,
-      "translated_text": "arXiv:2302.13971v1 [cs.CL] 2023 年 2 月 27 日",
       "font_name": "Times-Roman"
     },
     {
@@ -196,10 +181,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "7707f5cc-0a28-4b42-aca6-eba35f33fdb2",
+      "layout_block_id": "d8d54241-5e6d-46da-9391-3cc7a5719e1e",
       "category": "text",
       "category_confidence": 0.9822850227355957,
-      "translated_text": "この研究の焦点は、通常使用されるトークンよりも多くのトークンでトレーニングすることにより、さまざまな推論予算で可能な限り最高のパフォーマンスを達成する一連の言語モデルをトレーニングすることです。結果として得られる LLaMA と呼ばれるモデルは、既存の最高の LLM と比較して優れたパフォーマンスを備えた 7B ～ 65B パラメーターの範囲にあります。たとえば、LLaMA-13B は、10 倍小さいにもかかわらず、ほとんどのベンチマークで GPT-3 を上回ります。このモデルは単一の GPU 上で実行できるため、LLM へのアクセスと研究の民主化に役立つと考えています。スケールのハイエンドでは、当社の 65B パラメータ モデルは、Chinchilla や PaLM-540B などの最高の大規模言語モデルと競合することもできます。",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -218,7 +202,7 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "center",
-      "layout_block_id": "fa0b918b-cd03-4f23-a025-934cd43fa760",
+      "layout_block_id": "317484a8-5abf-47dc-8b64-faac508d6aeb",
       "category": "paragraph_title",
       "category_confidence": 0.9344824552536011,
       "font_name": "NimbusRomNo9L-Medi"
@@ -239,10 +223,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "7babb7cf-bfdb-485a-826d-deb371a494f9",
+      "layout_block_id": "816b2bb7-1118-46a1-9292-87811e7756b0",
       "category": "text",
       "category_confidence": 0.9880727529525757,
-      "translated_text": "膨大なテキストのコーパスで訓練された大規模言語モデル (LLM) は、テキストの指示またはいくつかの例から新しいタスクを実行する能力を示しています (Brown et al., 2020)。これらの少数ショットの特性は、モデルを十分なサイズにスケーリングするときに初めて現れ (Kaplan et al., 2020)、その結果、これらのモデルをさらにスケーリングすることに焦点を当てた一連の作業が行われました (Chowdhery et al., 2022; Rae et al., 2021)。これらの取り組みは、パラメータが多いほどパフォーマンスが向上するという前提に基づいています。しかし、ホフマンらの最近の研究では、 (2022) は、特定のコンピューティング バジェットにおいて、最高のパフォーマンスは最大のモデルによって達成されるのではなく、より多くのデータでトレーニングされた小規模なモデルによって達成されることを示しています。\nホフマンらのスケーリング則の目的は次のとおりです。 (2022) は、特定のトレーニング コンピューティング予算に合わせてデータセットとモデルのサイズを最適にスケーリングする方法を決定することです。ただし、この目標では推論バジェットを無視しています。推論バジェットは、言語モデルを大規模に提供する場合に重要になります。この文脈では、目標レベルのパフォーマンスが与えられた場合、推奨されるモデルはトレーニングが最も速いモデルではなく、推論が最も速いモデルです。また、一定のレベルに達するために大規模なモデルをトレーニングした方がコストが安くなる場合もありますが、",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -261,10 +244,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "3969a930-3a1e-4e44-af2a-158cda68fc37",
+      "layout_block_id": "b6d6ee8e-c11c-43b8-9bc8-0727ba173d26",
       "category": "text",
       "category_confidence": 0.9859020709991455,
-      "translated_text": "Chinchilla、PaLM、または GPT-3 とは異なり、私たちは公開されているデータのみを使用するため、私たちの作業はオープンソースと互換性がありますが、既存のモデルのほとんどは公開されていない、または文書化されていないデータ (例: 「書籍 – 2TB」または「ソーシャル メディアでの会話」) に依存しています。いくつか存在します\n例外は、特に OPT (Zhang et al., 2022)、GPT-NeoX (Black et al., 2022)、BLOOM (Scao et al., 2022) および GLM (Zeng et al., 2022) ですが、PaLM-62B や Chinchilla と競合するものはありません。",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -283,10 +265,9 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "b1c7b4ef-c45c-4b8f-932e-5c71a11df7f3",
+      "layout_block_id": "bce962e7-9f86-4a8b-9918-4a78c761a8f6",
       "category": "text",
       "category_confidence": 0.9853712320327759,
-      "translated_text": "このペーパーの残りの部分では、変圧器アーキテクチャ (Vaswani et al.、2017) に加えた変更の概要と、トレーニング方法について説明します。次に、モデルのパフォーマンスをレポートし、一連の標準ベンチマークで他の LLM と比較します。最後に、責任ある AI コミュニティからの最新のベンチマークのいくつかを使用して、モデルにエンコードされたバイアスと毒性の一部を明らかにします。",
       "font_name": "NimbusRomNo9L-Regu"
     },
     {
@@ -305,7 +286,7 @@
       "is_italic": false,
       "rotation": 0.0,
       "alignment": "left",
-      "layout_block_id": "1064bc7c-3f16-440f-a323-01497ab71c25",
+      "layout_block_id": "71cff230-1abf-4958-8e98-fb1c5a50fe62",
       "category": "footnote",
       "category_confidence": 0.7735484838485718,
       "font_name": "Inconsolatazi4-Regular"
