@@ -2,9 +2,18 @@
 
 ## 概要
 
-PDF翻訳Webサービス構築に向けて、翻訳結果からドキュメントのサマリー情報（タイトル、Abstract、サムネイル）を抽出・出力する機能を追加する。
+PDF翻訳Webサービス構築に向けて、翻訳結果からドキュメントのサマリー情報（タイトル、Abstract、サムネイル、LLM要約）を抽出・出力する機能を追加する。
 
 **関連 Issue**: [#62](https://github.com/Mega-Gorilla/pdf-translator/issues/62)
+
+### 主要機能
+
+| 機能 | 説明 |
+|------|------|
+| **メタデータ抽出** | タイトル、Abstract、Organization をレイアウト解析 + LLMフォールバックで取得 |
+| **LLM要約生成** | 原文Markdown全文からGemini 3 Flashで要約を生成 |
+| **サムネイル生成** | PDF 1ページ目のサムネイル画像 |
+| **Markdown二重生成** | 原文Markdown + 翻訳Markdownの両方を出力 |
 
 ---
 
@@ -30,7 +39,17 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 | **Abstract** | `abstract` | ◎ 高い |
 | 著者情報 | `text` (汎用) | △ 追加ロジック必要 |
 
-著者情報は専用カテゴリが存在しないため、本Issueのスコープ外とする。
+著者情報は専用カテゴリが存在しないため、レイアウト解析では取得不可。
+
+### LLM統合の必要性
+
+| 課題 | LLMによる解決 |
+|------|--------------|
+| タイトル/Abstract未検出時のフォールバック | 1ページ目テキストからLLMで抽出 |
+| Organization（団体名）の取得 | レイアウト解析では取得不可→LLMで抽出 |
+| ユーザーフレンドリーな要約 | Abstractは技術的すぎる場合あり→LLMで要約生成 |
+
+**LLMモデル選定**: Gemini 3 Flash（コスト効率・速度のバランス）
 
 ### 翻訳対象カテゴリの現状
 
@@ -75,7 +94,170 @@ DEFAULT_TRANSLATABLE_RAW_CATEGORIES = frozenset({
 
 ## 設計方針
 
-### 1. タイトル/Abstractの翻訳経路
+### 1. Markdown二重生成
+
+**課題**: 現在のMarkdown生成は翻訳後テキストのみ出力。LLM要約には原文が必要。
+
+**決定: 原文Markdownと翻訳Markdownの両方を生成**
+
+```
+output/
+├── paper_translated.pdf
+├── paper_translated.json
+├── paper_original.md          # NEW - 原文Markdown
+├── paper_translated.md        # 翻訳Markdown（既存動作を維持）
+└── paper_translated_thumbnail.png
+```
+
+**実装方針:**
+
+```python
+# MarkdownWriter の拡張
+class MarkdownWriter:
+    def write(
+        self,
+        paragraphs: list[Paragraph],
+        use_translated: bool = True,  # NEW parameter
+    ) -> str:
+        """Generate Markdown from paragraphs.
+
+        Args:
+            paragraphs: List of paragraphs.
+            use_translated: If True, use translated_text. If False, use original text.
+        """
+        ...
+```
+
+**理由:**
+- LLM要約生成には原文Markdownが必要（翻訳品質に依存しない）
+- 論文は序論・実験・結論すべてが重要、ページ限定は不適切
+- Markdownは既に無駄な文字列（ヘッダー/フッター等）を除去済み
+- 原文Markdownはユーザーにも有用（翻訳前後の比較）
+
+### 2. LLM要約生成
+
+**決定: 原文Markdown全文をGemini 3 Flashに渡して要約を生成**
+
+```
+処理フロー:
+1. 原文Markdown生成（画像参照は除外）
+2. Gemini 3 Flash に原文Markdown全文を送信
+3. 要約（原文言語）を取得
+4. 要約を翻訳（通常の翻訳パイプラインを使用）
+```
+
+**入力仕様:**
+- 原文Markdown全文（`paper_original.md` の内容）
+- 画像参照 (`![...]()`) は除外してテキストのみ
+- ページ数制限なし（論文全体の文脈が要約に必要）
+
+**出力仕様:**
+- `summary`: 原文言語での要約（3-5文）
+- `summary_translated`: 翻訳言語での要約
+
+**プロンプト設計:**
+
+```
+Summarize this academic paper in 3-5 sentences, covering:
+- Main research objective
+- Key methodology
+- Important findings/conclusions
+
+Paper content:
+{markdown_content}
+```
+
+### 3. LLMフォールバック（メタデータ抽出）
+
+**決定: レイアウト解析失敗時、1ページ目テキストからLLMでメタデータを抽出**
+
+**トリガー条件:**
+- `doc_title` カテゴリが検出されなかった場合 → title をLLMで抽出
+- `abstract` カテゴリが検出されなかった場合 → abstract をLLMで抽出
+- `organization` は常にLLMで抽出（レイアウト解析では取得不可）
+
+**入力仕様:**
+- **1ページ目のテキストのみ**（メタデータは通常1ページ目に存在）
+- トークン制限を考慮し、最小限の入力で効率化
+
+**プロンプト設計:**
+
+```
+Extract the following information from this academic paper's first page.
+Return JSON format with null for missing fields.
+
+Required fields:
+- title: The main title of the paper
+- abstract: The abstract/summary section (if present on first page)
+- organization: The institution/company names (e.g., "Meta AI", "Google Research")
+
+First page content:
+{first_page_text}
+```
+
+**出力形式:**
+
+```json
+{
+  "title": "LLaMA: Open and Efficient Foundation Language Models",
+  "abstract": "We introduce LLaMA...",
+  "organization": "Meta AI"
+}
+```
+
+### 4. 処理フロー
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Translation Pipeline                           │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. PDF Processing (existing)                                       │
+│     └── Extract paragraphs with categories                          │
+│                                                                     │
+│  2. Layout Analysis (existing)                                      │
+│     └── Assign doc_title, abstract categories                       │
+│                                                                     │
+│  3. Translation (existing)                                          │
+│     └── Translate text, abstract (NOT doc_title)                    │
+│                                                                     │
+│  4. Markdown Generation (UPDATED)                                   │
+│     ├── paper_original.md    ← NEW: use_translated=False            │
+│     └── paper_translated.md  ← existing: use_translated=True        │
+│                                                                     │
+│  5. Summary Extraction (NEW)                                        │
+│     │                                                               │
+│     ├── Step 1: Layout-based extraction                             │
+│     │   ├── title ← doc_title category                              │
+│     │   └── abstract ← abstract category                            │
+│     │                                                               │
+│     ├── Step 2: LLM Fallback (if title/abstract missing)            │
+│     │   ├── Input: First page text only                             │
+│     │   ├── Output: title, abstract, organization                   │
+│     │   └── Model: Gemini 3 Flash                                   │
+│     │                                                               │
+│     ├── Step 3: Translate title (if not translated)                 │
+│     │                                                               │
+│     ├── Step 4: LLM Summary Generation                              │
+│     │   ├── Input: paper_original.md (full, images excluded)        │
+│     │   ├── Output: summary (3-5 sentences)                         │
+│     │   └── Model: Gemini 3 Flash                                   │
+│     │                                                               │
+│     ├── Step 5: Translate summary                                   │
+│     │                                                               │
+│     └── Step 6: Generate thumbnail (first page)                     │
+│                                                                     │
+│  6. Output Generation                                               │
+│     ├── paper_translated.pdf                                        │
+│     ├── paper_translated.json   ← includes summary section          │
+│     ├── paper_original.md       ← NEW                               │
+│     ├── paper_translated.md                                         │
+│     └── paper_translated_thumbnail.png                              │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 5. タイトル/Abstractの翻訳経路
 
 **課題**: `doc_title` はデフォルトで翻訳対象外のため、`title_translated` が取得できない。
 
@@ -231,25 +413,37 @@ class DocumentSummary:
     for dashboard display, search, and document management.
 
     Attributes:
-        title: Original document title (from doc_title category).
+        title: Original document title (from doc_title category or LLM fallback).
         title_translated: Translated document title.
-        abstract: Original abstract text (from abstract category).
+        abstract: Original abstract text (from abstract category or LLM fallback).
         abstract_translated: Translated abstract text.
+        organization: Institution/company name (LLM extracted).
+        summary: LLM-generated summary of the document.
+        summary_translated: Translated LLM-generated summary.
         thumbnail_path: Relative path to thumbnail file (primary reference).
         thumbnail_width: Thumbnail width in pixels.
         thumbnail_height: Thumbnail height in pixels.
         page_count: Total number of pages in the document.
         source_lang: Source language code (e.g., "en").
         target_lang: Target language code (e.g., "ja").
+        title_source: Source of title extraction ("layout" or "llm").
+        abstract_source: Source of abstract extraction ("layout" or "llm").
     """
 
-    # Title (from doc_title category)
+    # Title (from doc_title category or LLM fallback)
     title: str | None = None
     title_translated: str | None = None
 
-    # Abstract (from abstract category, may be merged from multiple paragraphs)
+    # Abstract (from abstract category or LLM fallback, may be merged from multiple paragraphs)
     abstract: str | None = None
     abstract_translated: str | None = None
+
+    # Organization (LLM extracted only - not available via layout analysis)
+    organization: str | None = None
+
+    # LLM-generated summary (from full original Markdown)
+    summary: str | None = None
+    summary_translated: str | None = None
 
     # Thumbnail (first page of original PDF)
     thumbnail_path: str | None = None  # Relative path to thumbnail file
@@ -260,6 +454,10 @@ class DocumentSummary:
     page_count: int = 0
     source_lang: str = ""
     target_lang: str = ""
+
+    # Extraction source tracking (for debugging/quality monitoring)
+    title_source: Literal["layout", "llm"] = "layout"
+    abstract_source: Literal["layout", "llm"] = "layout"
 
     # Internal: thumbnail bytes (not serialized by default)
     _thumbnail_bytes: bytes | None = field(default=None, repr=False)
@@ -279,12 +477,17 @@ class DocumentSummary:
             "title_translated": self.title_translated,
             "abstract": self.abstract,
             "abstract_translated": self.abstract_translated,
+            "organization": self.organization,
+            "summary": self.summary,
+            "summary_translated": self.summary_translated,
             "thumbnail_path": self.thumbnail_path,
             "thumbnail_width": self.thumbnail_width,
             "thumbnail_height": self.thumbnail_height,
             "page_count": self.page_count,
             "source_lang": self.source_lang,
             "target_lang": self.target_lang,
+            "title_source": self.title_source,
+            "abstract_source": self.abstract_source,
         }
 
         if include_thumbnail_base64 and self._thumbnail_bytes:
@@ -315,12 +518,17 @@ class DocumentSummary:
             title_translated=data.get("title_translated"),
             abstract=data.get("abstract"),
             abstract_translated=data.get("abstract_translated"),
+            organization=data.get("organization"),
+            summary=data.get("summary"),
+            summary_translated=data.get("summary_translated"),
             thumbnail_path=data.get("thumbnail_path"),
             thumbnail_width=data.get("thumbnail_width", 0),
             thumbnail_height=data.get("thumbnail_height", 0),
             page_count=data.get("page_count", 0),
             source_lang=data.get("source_lang", ""),
             target_lang=data.get("target_lang", ""),
+            title_source=data.get("title_source", "layout"),
+            abstract_source=data.get("abstract_source", "layout"),
             _thumbnail_bytes=thumbnail_bytes,
         )
 
@@ -328,9 +536,11 @@ class DocumentSummary:
         """Check if summary has any meaningful content.
 
         Returns:
-            True if at least title, abstract, or thumbnail is present.
+            True if at least title, abstract, summary, or thumbnail is present.
         """
-        return bool(self.title or self.abstract or self.thumbnail_path)
+        return bool(
+            self.title or self.abstract or self.summary or self.thumbnail_path
+        )
 ```
 
 **理由:**
@@ -465,9 +675,170 @@ class ThumbnailGenerator:
 - 設定可能なサイズ・フォーマット
 - メモリ（bytes）とファイル出力の両方に対応
 
-### 3. サマリー抽出ロジック
+### 3. LLM統合モジュール
 
-**決定: `SummaryExtractor` クラスで抽出ロジックを集約**
+**決定: `LLMSummaryGenerator` クラスで LLM 関連機能を集約**
+
+```python
+# src/pdf_translator/llm/summary_generator.py
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pdf_translator.translators.base import TranslatorBackend
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMConfig:
+    """Configuration for LLM integration.
+
+    Attributes:
+        api_key: Gemini API key (required for LLM features).
+        model: Model name (default: gemini-2.0-flash).
+        use_summary: Enable LLM summary generation.
+        use_fallback: Enable LLM fallback for metadata extraction.
+        summary_max_tokens: Max tokens for summary output.
+    """
+
+    api_key: str | None = None
+    model: str = "gemini-2.0-flash"
+    use_summary: bool = False
+    use_fallback: bool = True
+    summary_max_tokens: int = 500
+
+
+class LLMSummaryGenerator:
+    """Generate document summaries and extract metadata using LLM.
+
+    Uses Gemini 3 Flash for:
+    - Summary generation from full original Markdown
+    - Metadata extraction fallback from first page text
+    """
+
+    SUMMARY_PROMPT = """Summarize this academic paper in 3-5 sentences, covering:
+- Main research objective
+- Key methodology
+- Important findings/conclusions
+
+Paper content:
+{content}"""
+
+    METADATA_PROMPT = """Extract the following information from this academic paper's first page.
+Return JSON format with null for missing fields.
+
+Required fields:
+- title: The main title of the paper
+- abstract: The abstract/summary section (if present on first page)
+- organization: The institution/company names (e.g., "Meta AI", "Google Research")
+
+First page content:
+{content}"""
+
+    def __init__(self, config: LLMConfig) -> None:
+        """Initialize LLMSummaryGenerator.
+
+        Args:
+            config: LLM configuration.
+
+        Raises:
+            ConfigurationError: If API key is missing when LLM features are enabled.
+        """
+        self._config = config
+        self._client = None
+
+        if (config.use_summary or config.use_fallback) and not config.api_key:
+            from pdf_translator.translators.base import ConfigurationError
+            raise ConfigurationError("Gemini API key required for LLM features")
+
+    def _get_client(self):
+        """Get or create Gemini client."""
+        if self._client is None:
+            import google.generativeai as genai
+            genai.configure(api_key=self._config.api_key)
+            self._client = genai.GenerativeModel(self._config.model)
+        return self._client
+
+    async def generate_summary(
+        self,
+        markdown_content: str,
+    ) -> str:
+        """Generate summary from original Markdown content.
+
+        Args:
+            markdown_content: Full original Markdown (images excluded).
+
+        Returns:
+            Summary text in original language.
+        """
+        if not self._config.use_summary:
+            return None
+
+        # Remove image references from Markdown
+        content = re.sub(r"!\[.*?\]\(.*?\)", "", markdown_content)
+
+        prompt = self.SUMMARY_PROMPT.format(content=content)
+
+        try:
+            client = self._get_client()
+            response = await client.generate_content_async(prompt)
+            return response.text.strip()
+        except Exception as e:
+            logger.warning("Failed to generate LLM summary: %s", e)
+            return None
+
+    async def extract_metadata_fallback(
+        self,
+        first_page_text: str,
+    ) -> dict[str, str | None]:
+        """Extract metadata from first page when layout analysis fails.
+
+        Args:
+            first_page_text: Text content of first page only.
+
+        Returns:
+            Dict with title, abstract, organization (any may be None).
+        """
+        if not self._config.use_fallback:
+            return {"title": None, "abstract": None, "organization": None}
+
+        prompt = self.METADATA_PROMPT.format(content=first_page_text)
+
+        try:
+            client = self._get_client()
+            response = await client.generate_content_async(prompt)
+            text = response.text.strip()
+
+            # Parse JSON from response
+            # Handle markdown code blocks if present
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+
+            return json.loads(text)
+        except Exception as e:
+            logger.warning("Failed to extract metadata via LLM: %s", e)
+            return {"title": None, "abstract": None, "organization": None}
+```
+
+**理由:**
+- LLM関連機能を独立したモジュールに集約
+- **要約生成**: 原文Markdown全文を使用（論文全体の文脈が必要）
+- **フォールバック**: 1ページ目のみ使用（メタデータは通常1ページ目に存在）
+- Gemini 3 Flash はコスト効率と速度のバランスが良い
+- API呼び出しエラーは吸収してNoneを返す（オプショナル機能）
+
+### 4. サマリー抽出ロジック
+
+**決定: `SummaryExtractor` クラスでレイアウト抽出 + LLM統合を管理**
 
 ```python
 # src/pdf_translator/output/summary_extractor.py
@@ -476,11 +847,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pdf_translator.core.models import Paragraph
 from pdf_translator.output.document_summary import DocumentSummary
 from pdf_translator.output.thumbnail_generator import ThumbnailConfig, ThumbnailGenerator
+from pdf_translator.llm.summary_generator import LLMConfig, LLMSummaryGenerator
 
 if TYPE_CHECKING:
     from pdf_translator.translators.base import TranslatorBackend
@@ -492,25 +864,32 @@ class SummaryExtractor:
     """Extract document summary from translated paragraphs.
 
     Handles:
-    - Title extraction from doc_title category (with additional translation)
-    - Abstract extraction from abstract category (merged if multiple)
+    - Title extraction from doc_title category (with LLM fallback)
+    - Abstract extraction from abstract category (with LLM fallback)
+    - Organization extraction (LLM only)
+    - LLM summary generation from original Markdown
     - Thumbnail generation from first page
     """
 
-    # Categories to extract
     TITLE_CATEGORY = "doc_title"
     ABSTRACT_CATEGORY = "abstract"
 
     def __init__(
         self,
         thumbnail_config: ThumbnailConfig | None = None,
+        llm_config: LLMConfig | None = None,
     ) -> None:
         """Initialize SummaryExtractor.
 
         Args:
             thumbnail_config: Configuration for thumbnail generation.
+            llm_config: Configuration for LLM integration.
         """
         self._thumbnail_config = thumbnail_config or ThumbnailConfig()
+        self._llm_config = llm_config
+        self._llm_generator = (
+            LLMSummaryGenerator(llm_config) if llm_config else None
+        )
 
     async def extract(
         self,
@@ -523,6 +902,7 @@ class SummaryExtractor:
         page_count: int = 0,
         generate_thumbnail: bool = True,
         translator: TranslatorBackend | None = None,
+        original_markdown: str | None = None,  # NEW: for LLM summary
     ) -> DocumentSummary:
         """Extract document summary from paragraphs.
 
@@ -530,22 +910,50 @@ class SummaryExtractor:
             paragraphs: List of translated paragraphs.
             pdf_path: Path to original PDF (for thumbnail).
             output_dir: Directory to save thumbnail.
-            output_stem: Base filename for outputs (e.g., "paper_translated").
+            output_stem: Base filename for outputs.
             source_lang: Source language code.
             target_lang: Target language code.
             page_count: Total page count.
             generate_thumbnail: Whether to generate thumbnail.
-            translator: Translator backend for title translation.
+            translator: Translator backend for title/summary translation.
+            original_markdown: Original Markdown content for LLM summary.
 
         Returns:
             DocumentSummary with extracted information.
         """
-        # Extract and merge title (may be multiple paragraphs)
+        # Step 1: Extract from layout analysis
         title, title_translated = self._find_and_merge_by_category(
             paragraphs, self.TITLE_CATEGORY
         )
+        abstract, abstract_translated = self._find_and_merge_by_category(
+            paragraphs, self.ABSTRACT_CATEGORY
+        )
 
-        # If title exists but not translated, translate it now
+        title_source: Literal["layout", "llm"] = "layout"
+        abstract_source: Literal["layout", "llm"] = "layout"
+        organization = None
+
+        # Step 2: LLM fallback for missing metadata + organization
+        if self._llm_generator and (not title or not abstract):
+            first_page_text = self._get_first_page_text(paragraphs)
+            if first_page_text:
+                llm_metadata = await self._llm_generator.extract_metadata_fallback(
+                    first_page_text
+                )
+
+                # Use LLM result if layout failed
+                if not title and llm_metadata.get("title"):
+                    title = llm_metadata["title"]
+                    title_source = "llm"
+
+                if not abstract and llm_metadata.get("abstract"):
+                    abstract = llm_metadata["abstract"]
+                    abstract_source = "llm"
+
+                # Organization is always from LLM
+                organization = llm_metadata.get("organization")
+
+        # Step 3: Translate title if needed
         if title and not title_translated and translator:
             try:
                 title_translated = await translator.translate(
@@ -554,43 +962,50 @@ class SummaryExtractor:
             except Exception as e:
                 logger.warning("Failed to translate title: %s", e)
 
-        # Extract and merge abstract (may be multiple paragraphs)
-        abstract, abstract_translated = self._find_and_merge_by_category(
-            paragraphs, self.ABSTRACT_CATEGORY
-        )
-
-        # Generate thumbnail
-        thumbnail_path = None
-        thumbnail_bytes = None
-        thumb_width = 0
-        thumb_height = 0
-
-        if generate_thumbnail and pdf_path.exists():
+        # Step 4: Translate abstract if from LLM fallback
+        if abstract and not abstract_translated and abstract_source == "llm" and translator:
             try:
-                generator = ThumbnailGenerator(self._thumbnail_config)
-                thumbnail_bytes, thumb_width, thumb_height = generator.generate(pdf_path)
-
-                # Save thumbnail file
-                thumbnail_filename = f"{output_stem}_thumbnail.png"
-                thumbnail_file = output_dir / thumbnail_filename
-                thumbnail_file.write_bytes(thumbnail_bytes)
-                thumbnail_path = thumbnail_filename  # Relative path
-
-                logger.debug("Generated thumbnail: %s", thumbnail_file)
+                abstract_translated = await translator.translate(
+                    abstract, source_lang, target_lang
+                )
             except Exception as e:
-                logger.warning("Failed to generate thumbnail: %s", e)
+                logger.warning("Failed to translate abstract: %s", e)
+
+        # Step 5: Generate LLM summary from original Markdown
+        summary = None
+        summary_translated = None
+
+        if self._llm_generator and original_markdown:
+            summary = await self._llm_generator.generate_summary(original_markdown)
+            if summary and translator:
+                try:
+                    summary_translated = await translator.translate(
+                        summary, source_lang, target_lang
+                    )
+                except Exception as e:
+                    logger.warning("Failed to translate summary: %s", e)
+
+        # Step 6: Generate thumbnail
+        thumbnail_path, thumbnail_bytes, thumb_width, thumb_height = (
+            await self._generate_thumbnail(pdf_path, output_dir, output_stem, generate_thumbnail)
+        )
 
         return DocumentSummary(
             title=title,
             title_translated=title_translated,
             abstract=abstract,
             abstract_translated=abstract_translated,
+            organization=organization,
+            summary=summary,
+            summary_translated=summary_translated,
             thumbnail_path=thumbnail_path,
             thumbnail_width=thumb_width,
             thumbnail_height=thumb_height,
             page_count=page_count,
             source_lang=source_lang,
             target_lang=target_lang,
+            title_source=title_source,
+            abstract_source=abstract_source,
             _thumbnail_bytes=thumbnail_bytes,
         )
 
@@ -599,25 +1014,14 @@ class SummaryExtractor:
         paragraphs: list[Paragraph],
         category: str,
     ) -> tuple[str | None, str | None]:
-        """Find all paragraphs with category and merge them.
-
-        Args:
-            paragraphs: List of paragraphs to search.
-            category: Category to find.
-
-        Returns:
-            Tuple of (merged_original, merged_translated).
-        """
-        # Filter by category
+        """Find all paragraphs with category and merge them."""
         matched = [p for p in paragraphs if p.category == category]
 
         if not matched:
             return None, None
 
-        # Sort by page_number, then by y-coordinate (descending, PDF coordinates)
         matched.sort(key=lambda p: (p.page_number, -p.block_bbox.y1))
 
-        # Merge with double newline
         original_parts = [p.text for p in matched if p.text]
         translated_parts = [p.translated_text for p in matched if p.translated_text]
 
@@ -625,18 +1029,49 @@ class SummaryExtractor:
         translated = "\n\n".join(translated_parts) if translated_parts else None
 
         return original, translated
+
+    @staticmethod
+    def _get_first_page_text(paragraphs: list[Paragraph]) -> str:
+        """Get concatenated text from first page for LLM fallback."""
+        first_page = [p for p in paragraphs if p.page_number == 0]
+        first_page.sort(key=lambda p: -p.block_bbox.y1)
+        return "\n\n".join(p.text for p in first_page if p.text)
+
+    async def _generate_thumbnail(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        output_stem: str,
+        generate_thumbnail: bool,
+    ) -> tuple[str | None, bytes | None, int, int]:
+        """Generate thumbnail from PDF first page."""
+        if not generate_thumbnail or not pdf_path.exists():
+            return None, None, 0, 0
+
+        try:
+            generator = ThumbnailGenerator(self._thumbnail_config)
+            thumbnail_bytes, width, height = generator.generate(pdf_path)
+
+            thumbnail_filename = f"{output_stem}_thumbnail.png"
+            thumbnail_file = output_dir / thumbnail_filename
+            thumbnail_file.write_bytes(thumbnail_bytes)
+
+            logger.debug("Generated thumbnail: %s", thumbnail_file)
+            return thumbnail_filename, thumbnail_bytes, width, height
+        except Exception as e:
+            logger.warning("Failed to generate thumbnail: %s", e)
+            return None, None, 0, 0
 ```
 
 **理由:**
-- 抽出ロジックを独立したクラスに集約
-- **複数段落の結合**: 同一カテゴリの段落を `\n\n` で結合
-- **タイトルの追加翻訳**: `doc_title` は翻訳対象外のため、サマリー抽出時に追加で翻訳
-- サムネイル生成のエラーを吸収（オプショナル機能）
-- サムネイルはファイル保存し、相対パスを `thumbnail_path` に記録
+- レイアウト抽出 + LLMフォールバック + LLM要約生成を統合管理
+- **抽出優先順位**: レイアウト解析 → LLMフォールバック
+- **extraction source tracking**: デバッグ・品質管理用
+- **organization**: レイアウト解析では取得不可のため、常にLLMで抽出
 
-### 4. TranslationResult への統合
+### 5. TranslationResult への統合
 
-**決定: `summary` フィールドを追加**
+**決定: `summary` および `markdown_original` フィールドを追加**
 
 ```python
 # src/pdf_translator/pipeline/translation_pipeline.py
@@ -648,14 +1083,15 @@ class TranslationResult:
     pdf_bytes: bytes
     stats: dict[str, Any] | None = None
     side_by_side_pdf_bytes: bytes | None = None
-    markdown: str | None = None
+    markdown: str | None = None              # 翻訳Markdown
+    markdown_original: str | None = None     # NEW: 原文Markdown
     paragraphs: list[Paragraph] | None = None
-    summary: DocumentSummary | None = None  # 新規追加
+    summary: DocumentSummary | None = None   # NEW: サマリー情報
 ```
 
-### 5. JSON出力拡張
+### 6. JSON出力拡張
 
-**決定: `TranslatedDocument` に `summary` セクションを追加**
+**決定: `TranslatedDocument` に `summary` セクションを追加（LLM強化版）**
 
 ```json
 {
@@ -675,37 +1111,44 @@ class TranslationResult:
     "title_translated": "LLaMA: オープンで効率的な基盤言語モデル",
     "abstract": "We introduce LLaMA, a collection of foundation language models...",
     "abstract_translated": "LLaMAを紹介します。これは7Bから65Bのパラメータを持つ...",
+    "organization": "Meta AI",
+    "summary": "This paper introduces LLaMA, a series of foundation language models...",
+    "summary_translated": "本論文はLLaMAを紹介し、7Bから65Bのパラメータを持つ基盤言語モデルシリーズです...",
     "thumbnail_path": "sample_llama_translated_thumbnail.png",
     "thumbnail_width": 400,
     "thumbnail_height": 518,
     "page_count": 1,
     "source_lang": "en",
-    "target_lang": "ja"
+    "target_lang": "ja",
+    "title_source": "layout",
+    "abstract_source": "layout"
   },
   "paragraphs": [ ... ]
 }
 ```
 
-**サムネイルファイルの保存:**
+**出力ファイル構成:**
 
 ```
 output/
 ├── paper_translated.pdf
-├── paper_translated.json              # summary.thumbnail_path を含む
-├── paper_translated.md
-└── paper_translated_thumbnail.png     # サムネイル画像ファイル
+├── paper_translated.json              # summary を含む
+├── paper_original.md                  # NEW: 原文Markdown
+├── paper_translated.md                # 翻訳Markdown
+└── paper_translated_thumbnail.png     # サムネイル画像
 ```
 
 **Webサービス側での参照:**
-- JSON から `summary.thumbnail_path` を取得
-- 同一ディレクトリ内のファイルとして画像を取得
+- JSON から `summary.*` フィールドを取得
+- `summary.thumbnail_path` でサムネイル画像を参照
+- `summary.title_source` / `abstract_source` で抽出品質を確認
 
-### 6. CLI オプション
+### 7. CLI オプション
 
-**決定: `--thumbnail` オプションを追加**
+**決定: サムネイル + LLM関連オプションを追加**
 
 ```bash
-# サムネイル生成なし（デフォルト、後方互換性）
+# 基本使用（サムネイル・LLMなし、後方互換性）
 uv run translate-pdf paper.pdf --save-intermediate
 
 # サムネイル生成あり
@@ -713,10 +1156,27 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail
 
 # サムネイルサイズ指定
 uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width 600
+
+# LLM要約生成あり（Gemini API キー必須）
+uv run translate-pdf paper.pdf --save-intermediate --llm-summary
+
+# LLMフォールバック無効化
+uv run translate-pdf paper.pdf --save-intermediate --no-llm-fallback
+
+# フル機能（Webサービス向け）
+uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
+```
+
+**環境変数:**
+
+```bash
+# Gemini API キー（LLM機能使用時に必須）
+export GEMINI_API_KEY="your-api-key"
 ```
 
 **理由:**
-- 後方互換性のためデフォルトはオフ
+- 後方互換性のためデフォルトはすべてオフ
+- LLM機能はオプトイン（コスト・プライバシー考慮）
 - Webサービス用途では明示的に有効化
 
 ---
@@ -728,7 +1188,7 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 **ファイル:** `src/pdf_translator/output/document_summary.py` (新規)
 
 1. `DocumentSummary` dataclass 作成
-   - フィールド定義
+   - 全フィールド定義（organization, summary, title_source 等を含む）
    - `to_dict()` / `from_dict()` メソッド
    - `has_content()` ヘルパーメソッド
 
@@ -741,44 +1201,80 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
    - `generate()`: bytes出力
    - `generate_to_file()`: ファイル出力
 
-### Phase 3: サマリー抽出
+### Phase 3: LLM統合モジュール
+
+**ファイル:** `src/pdf_translator/llm/__init__.py` (新規ディレクトリ)
+**ファイル:** `src/pdf_translator/llm/summary_generator.py` (新規)
+
+1. `LLMConfig` dataclass 作成
+2. `LLMSummaryGenerator` クラス作成
+   - `generate_summary()`: 原文Markdownから要約生成
+   - `extract_metadata_fallback()`: 1ページ目からメタデータ抽出
+
+**依存パッケージ追加:**
+```toml
+# pyproject.toml
+[project.optional-dependencies]
+llm = ["google-generativeai>=0.8.0"]
+```
+
+### Phase 4: Markdown二重生成
+
+**ファイル:** `src/pdf_translator/output/markdown_writer.py`
+
+1. `write()` メソッドに `use_translated: bool = True` パラメータ追加
+2. `use_translated=False` で原文Markdown生成
+
+### Phase 5: サマリー抽出
 
 **ファイル:** `src/pdf_translator/output/summary_extractor.py` (新規)
 
 1. `SummaryExtractor` クラス作成
    - `extract()`: paragraphs からサマリー抽出
-   - `_find_first_by_category()`: カテゴリ検索
+   - `_find_and_merge_by_category()`: カテゴリ検索・結合
+   - `_get_first_page_text()`: LLMフォールバック用
+   - LLM統合（フォールバック + 要約生成）
 
-### Phase 4: パイプライン統合
+### Phase 6: パイプライン統合
 
 **ファイル:** `src/pdf_translator/pipeline/translation_pipeline.py`
 
-1. `TranslationResult` に `summary` フィールド追加
-2. `PipelineConfig` に `generate_thumbnail` フィールド追加
-3. `_stage_summary()` メソッド追加
-4. `_translate_impl()` でサマリー生成を呼び出し
+1. `TranslationResult` に `summary`, `markdown_original` フィールド追加
+2. `PipelineConfig` に以下を追加:
+   - `generate_thumbnail: bool`
+   - `thumbnail_width: int`
+   - `llm_summary: bool`
+   - `llm_fallback: bool`
+3. `_stage_markdown()` で原文・翻訳両方のMarkdown生成
+4. `_stage_summary()` メソッド追加
+5. `_translate_impl()` でサマリー生成を呼び出し
 
-### Phase 5: JSON出力拡張
+### Phase 7: JSON出力拡張
 
 **ファイル:** `src/pdf_translator/output/translated_document.py`
 
 1. `summary` セクションを JSON に含める
 2. サムネイルファイルの別途保存
+3. 原文Markdownファイルの保存
 
-### Phase 6: CLI対応
+### Phase 8: CLI対応
 
 **ファイル:** `src/pdf_translator/cli.py`
 
 1. `--thumbnail` フラグ追加
 2. `--thumbnail-width` オプション追加
-3. `PipelineConfig` への伝播
+3. `--llm-summary` フラグ追加
+4. `--no-llm-fallback` フラグ追加
+5. `GEMINI_API_KEY` 環境変数読み取り
+6. `PipelineConfig` への伝播
 
-### Phase 7: テスト
+### Phase 9: テスト
 
 **ファイル:**
 - `tests/test_document_summary.py` (新規)
 - `tests/test_thumbnail_generator.py` (新規)
 - `tests/test_summary_extractor.py` (新規)
+- `tests/test_llm_summary_generator.py` (新規)
 
 ---
 
@@ -786,15 +1282,20 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `src/pdf_translator/output/document_summary.py` | **新規** - `DocumentSummary` dataclass |
+| `src/pdf_translator/output/document_summary.py` | **新規** - `DocumentSummary` dataclass（LLM強化版） |
 | `src/pdf_translator/output/thumbnail_generator.py` | **新規** - `ThumbnailGenerator` クラス |
-| `src/pdf_translator/output/summary_extractor.py` | **新規** - `SummaryExtractor` クラス |
-| `src/pdf_translator/pipeline/translation_pipeline.py` | `TranslationResult.summary`, `PipelineConfig.generate_thumbnail` 追加 |
-| `src/pdf_translator/output/translated_document.py` | `summary` セクション追加 |
-| `src/pdf_translator/cli.py` | `--thumbnail`, `--thumbnail-width` オプション追加 |
+| `src/pdf_translator/output/summary_extractor.py` | **新規** - `SummaryExtractor` クラス（LLM統合） |
+| `src/pdf_translator/llm/__init__.py` | **新規** - LLMモジュール初期化 |
+| `src/pdf_translator/llm/summary_generator.py` | **新規** - `LLMSummaryGenerator` クラス |
+| `src/pdf_translator/output/markdown_writer.py` | `use_translated` パラメータ追加 |
+| `src/pdf_translator/pipeline/translation_pipeline.py` | `TranslationResult.summary/markdown_original`, `PipelineConfig` LLM設定追加 |
+| `src/pdf_translator/output/translated_document.py` | `summary` セクション追加、原文Markdown保存 |
+| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--no-llm-fallback` オプション追加 |
+| `pyproject.toml` | `[project.optional-dependencies]` に `llm` 追加 |
 | `tests/test_document_summary.py` | **新規** - DocumentSummary テスト |
 | `tests/test_thumbnail_generator.py` | **新規** - サムネイル生成テスト |
 | `tests/test_summary_extractor.py` | **新規** - サマリー抽出テスト |
+| `tests/test_llm_summary_generator.py` | **新規** - LLM要約生成テスト |
 
 ---
 
@@ -802,15 +1303,19 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 
 | リスク | 発生確率 | 影響度 | 対策 |
 |--------|---------|-------|------|
-| タイトル/Abstract未検出 | 中 | 低 | `None` を返し、Webサービス側でフォールバック |
+| タイトル/Abstract未検出（レイアウト） | 中 | 低 | LLMフォールバックで補完 |
+| LLM API呼び出し失敗 | 低 | 低 | エラーをログし、`None` で続行（オプショナル機能） |
+| LLM APIコスト | 中 | 中 | オプトイン制、summary/fallback 個別制御可能 |
 | サムネイル生成失敗 | 低 | 低 | エラーをログし、`thumbnail=None` で続行 |
 | JSON肥大化（サムネイル埋め込み時） | 中 | 中 | `include_thumbnail=False` をデフォルトに |
 | 既存テスト破壊 | 低 | 低 | 新規フィールドはオプショナル |
+| Gemini APIキー未設定 | 中 | 低 | LLM機能使用時のみエラー、それ以外は正常動作 |
 
 **後方互換性:**
 - `DocumentSummary` は新規追加のため影響なし
-- `TranslationResult.summary` はオプショナル（`None` がデフォルト）
+- `TranslationResult.summary`, `markdown_original` はオプショナル（`None` がデフォルト）
 - CLI オプションはデフォルトオフ
+- LLM機能は `google-generativeai` をオプショナル依存として追加
 
 ---
 
@@ -820,6 +1325,7 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 - [Issue #61](https://github.com/Mega-Gorilla/pdf-translator/issues/61) - ベンチマーク結果
 - `examples/outputs/sample_llama_translated.json` - 現在のJSON出力例
 - `src/pdf_translator/output/image_extractor.py` - pypdfium2レンダリング参考
+- [Gemini API Documentation](https://ai.google.dev/docs) - LLM統合参考
 
 ---
 
@@ -827,9 +1333,10 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 
 | 機能 | 概要 | 優先度 |
 |------|------|--------|
-| 著者情報抽出 | `doc_title` 直後の `text` カテゴリからヒューリスティック抽出 | 低 |
-| キーワード抽出 | Abstract からの自動キーワード抽出 | 低 |
+| 著者情報抽出 | LLMで著者名リストを抽出 | 中 |
+| キーワード抽出 | LLMでキーワードを自動抽出 | 低 |
 | 複数タイトル対応 | 副題がある場合の結合 | 低 |
+| LLMモデル選択 | Gemini以外のモデル対応（OpenAI等） | 低 |
 
 ---
 
@@ -839,3 +1346,4 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 |------|---------|
 | 2026-01-14 | 初版作成 |
 | 2026-01-14 | レビューFB対応: タイトル翻訳経路、サムネイル出力仕様、複数段落結合ルールを明記 |
+| 2026-01-15 | LLM統合追加: Gemini 3 Flashによる要約生成、メタデータフォールバック、Markdown二重生成 |
