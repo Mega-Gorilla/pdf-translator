@@ -31,9 +31,9 @@ class LLMConfig:
 
     # Supported providers and their default models
     PROVIDER_DEFAULTS: ClassVar[dict[str, str]] = {
-        "gemini": "gemini-3.0-flash",
-        "openai": "gpt-5-mini",
-        "anthropic": "claude-sonnet-4-5",
+        "gemini": "gemini-3-flash-preview",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-sonnet-4-5-20250514",
     }
 
     # Environment variable names for API keys
@@ -48,7 +48,7 @@ class LLMConfig:
         """Get effective model name (resolves None to provider default)."""
         if self.model is not None:
             return self.model
-        return self.PROVIDER_DEFAULTS.get(self.provider, "gemini-3.0-flash")
+        return self.PROVIDER_DEFAULTS.get(self.provider, "gemini-3-flash-preview")
 
     @property
     def litellm_model(self) -> str:

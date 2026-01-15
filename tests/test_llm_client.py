@@ -22,17 +22,17 @@ class TestLLMConfig:
     def test_effective_model_gemini(self) -> None:
         """Test effective_model for Gemini provider."""
         config = LLMConfig(provider="gemini")
-        assert config.effective_model == "gemini-3.0-flash"
+        assert config.effective_model == "gemini-3-flash-preview"
 
     def test_effective_model_openai(self) -> None:
         """Test effective_model for OpenAI provider."""
         config = LLMConfig(provider="openai")
-        assert config.effective_model == "gpt-5-mini"
+        assert config.effective_model == "gpt-4o-mini"
 
     def test_effective_model_anthropic(self) -> None:
         """Test effective_model for Anthropic provider."""
         config = LLMConfig(provider="anthropic")
-        assert config.effective_model == "claude-sonnet-4-5"
+        assert config.effective_model == "claude-sonnet-4-5-20250514"
 
     def test_effective_model_custom(self) -> None:
         """Test effective_model with custom model."""
@@ -42,12 +42,12 @@ class TestLLMConfig:
     def test_effective_model_unknown_provider(self) -> None:
         """Test effective_model with unknown provider."""
         config = LLMConfig(provider="unknown")
-        assert config.effective_model == "gemini-3.0-flash"  # Fallback
+        assert config.effective_model == "gemini-3-flash-preview"  # Fallback
 
     def test_litellm_model_default(self) -> None:
         """Test litellm_model string."""
         config = LLMConfig(provider="gemini")
-        assert config.litellm_model == "gemini/gemini-3.0-flash"
+        assert config.litellm_model == "gemini/gemini-3-flash-preview"
 
     def test_litellm_model_custom(self) -> None:
         """Test litellm_model with custom model."""
