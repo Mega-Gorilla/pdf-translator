@@ -248,6 +248,8 @@ class SummaryExtractor:
 
             thumbnail_filename = f"{output_stem}_thumbnail.png"
             thumbnail_file = output_dir / thumbnail_filename
+            # Ensure output directory exists before writing
+            output_dir.mkdir(parents=True, exist_ok=True)
             thumbnail_file.write_bytes(thumbnail_bytes)
 
             logger.debug("Generated thumbnail: %s", thumbnail_file)

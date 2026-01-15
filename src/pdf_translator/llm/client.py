@@ -27,7 +27,7 @@ class LLMConfig:
     model: str | None = None  # None = use PROVIDER_DEFAULTS[provider]
     api_key: str | None = None
     use_summary: bool = False
-    use_fallback: bool = True
+    use_fallback: bool = False  # Opt-in: requires explicit --llm-fallback flag
 
     # Supported providers and their default models
     PROVIDER_DEFAULTS: ClassVar[dict[str, str]] = {

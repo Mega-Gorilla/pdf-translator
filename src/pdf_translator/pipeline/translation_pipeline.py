@@ -145,7 +145,7 @@ class PipelineConfig:
 
     # LLM integration options (requires litellm)
     llm_summary: bool = False  # Generate LLM-based summary
-    llm_fallback: bool = True  # Use LLM for metadata fallback
+    llm_fallback: bool = False  # Use LLM for metadata fallback (opt-in)
     llm_provider: str = "gemini"  # LLM provider (gemini, openai, anthropic, etc.)
     llm_model: str | None = None  # Model name (None = use provider default)
 
@@ -230,11 +230,12 @@ class TranslationPipeline:
             markdown_str = self._stage_markdown(
                 paragraphs, pdf_path, layout_blocks, output_path
             )
-            # Generate original Markdown for LLM summary
-            if self._config.llm_summary:
-                markdown_original = self._stage_markdown(
-                    paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
-                )
+
+        # Generate original Markdown for LLM summary (even without --markdown flag)
+        if self._config.llm_summary:
+            markdown_original = self._stage_markdown(
+                paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
+            )
 
         # Generate document summary if enabled
         summary: DocumentSummary | None = None

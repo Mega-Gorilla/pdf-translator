@@ -17,7 +17,7 @@ class TestLLMConfig:
         assert config.model is None
         assert config.api_key is None
         assert config.use_summary is False
-        assert config.use_fallback is True
+        assert config.use_fallback is False  # Opt-in by default
 
     def test_effective_model_gemini(self) -> None:
         """Test effective_model for Gemini provider."""

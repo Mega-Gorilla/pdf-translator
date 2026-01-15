@@ -299,9 +299,9 @@ Environment Variables:
         help="LLM model name. Default depends on provider (gemini: gemini-3.0-flash)",
     )
     llm_group.add_argument(
-        "--no-llm-fallback",
+        "--llm-fallback",
         action="store_true",
-        help="Disable LLM fallback for metadata extraction",
+        help="Enable LLM fallback for metadata extraction when layout analysis fails",
     )
 
     # Debug options
@@ -525,7 +525,7 @@ async def run(args: argparse.Namespace) -> int:
         thumbnail_width=args.thumbnail_width,
         # LLM options
         llm_summary=args.llm_summary,
-        llm_fallback=not args.no_llm_fallback,
+        llm_fallback=args.llm_fallback,
         llm_provider=args.llm_provider,
         llm_model=args.llm_model,
         # Debug options
