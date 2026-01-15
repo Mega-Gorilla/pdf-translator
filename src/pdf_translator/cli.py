@@ -86,7 +86,7 @@ Environment Variables:
         "-o",
         "--output",
         type=Path,
-        help=f"Output file path (default: {DEFAULT_OUTPUT_DIR}<input>_translated.pdf)",
+        help=f"Output file path (default: {DEFAULT_OUTPUT_DIR}<input>.<target>.pdf)",
     )
 
     # Translation backend
@@ -483,12 +483,12 @@ async def run(args: argparse.Namespace) -> int:
         print(f"Error: Not a PDF file: {input_path}", file=sys.stderr)
         return 1
 
-    # Determine output path
+    # Determine output path (e.g., paper.ja.pdf)
     if args.output:
         output_path: Path = args.output
     else:
         output_dir = Path(DEFAULT_OUTPUT_DIR)
-        output_path = output_dir / f"{input_path.stem}_translated.pdf"
+        output_path = output_dir / f"{input_path.stem}.{args.target}.pdf"
 
     # Create output directory
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,23 +583,34 @@ async def run(args: argparse.Namespace) -> int:
         print(f"  Skipped: {stats.get('skipped_paragraphs', 0)}")
 
     if args.markdown and result.markdown:
+        # Translated markdown: paper.ja.md
         md_path = output_path.with_suffix(".md")
         print(f"  Markdown: {md_path}")
 
     if args.save_intermediate:
-        json_path = output_path.with_suffix(".json")
-        print(f"  JSON: {json_path}")
+        # Get base stem (e.g., "paper" from "paper.ja")
+        base_stem = output_path.stem
+        if "." in base_stem:
+            base_stem = base_stem.rsplit(".", 1)[0]
+        base_json_path = output_path.parent / f"{base_stem}.json"
+        trans_json_path = output_path.parent / f"{base_stem}.{args.target}.json"
+        print(f"  Base JSON: {base_json_path}")
+        print(f"  Translation JSON: {trans_json_path}")
 
     if args.side_by_side and result.side_by_side_pdf_bytes:
         sbs_path = output_path.with_stem(output_path.stem + "_side_by_side")
         print(f"  Side-by-side: {sbs_path}")
 
-    if result.summary:
-        if result.summary.thumbnail_path:
-            thumb_path = output_path.parent / result.summary.thumbnail_path
+    if result.base_document and result.base_document.summary:
+        summary = result.base_document.summary
+        if summary.thumbnail_path:
+            thumb_path = output_path.parent / summary.thumbnail_path
             print(f"  Thumbnail: {thumb_path}")
-        if result.summary.summary:
-            print("  LLM Summary: generated")
+        if summary.summary:
+            print("  LLM Summary (source): generated")
+    if result.translation_document and result.translation_document.summary:
+        if result.translation_document.summary.summary:
+            print("  LLM Summary (target): generated")
 
     return 0
 

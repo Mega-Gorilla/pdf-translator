@@ -222,7 +222,10 @@ class TestPipelineSaveIntermediate:
     """Test _save_intermediate method."""
 
     def test_save_intermediate_creates_json(self) -> None:
-        """Test intermediate JSON file is created."""
+        """Test intermediate JSON files are created (base + translation)."""
+        from pdf_translator.output.base_document import BaseDocument, BaseDocumentMetadata
+        from pdf_translator.output.translation_document import TranslationDocument
+
         mock_translator = MagicMock()
         mock_translator.__class__.__name__ = "GoogleTranslator"
 
@@ -254,28 +257,64 @@ class TestPipelineSaveIntermediate:
             ),
         ]
 
+        # Create BaseDocument
+        metadata = BaseDocumentMetadata(
+            source_file="input.pdf",
+            source_lang="en",
+            page_count=2,
+            paragraph_count=len(paragraphs),
+        )
+        base_document = BaseDocument(
+            metadata=metadata,
+            paragraphs=paragraphs,
+            summary=None,
+        )
+
+        # Create TranslationDocument
+        trans_paragraphs = {p.id: p.translated_text for p in paragraphs if p.translated_text}
+        translation_document = TranslationDocument.from_pipeline_result(
+            paragraphs=trans_paragraphs,
+            target_lang="ja",
+            base_file="input.json",
+            translator_backend="google",
+        )
+
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = Path(tmpdir) / "input.pdf"
-            output_path = Path(tmpdir) / "output.pdf"
+            output_path = Path(tmpdir) / "output.ja.pdf"
 
-            pipeline._save_intermediate(paragraphs, pdf_path, output_path)
+            pipeline._save_intermediate(
+                base_document, translation_document, pdf_path, output_path
+            )
 
-            json_path = Path(tmpdir) / "output.json"
-            assert json_path.exists()
+            # Check base JSON was created
+            base_json_path = Path(tmpdir) / "output.json"
+            assert base_json_path.exists()
 
-            # Verify content
-            with json_path.open() as f:
-                data = json.load(f)
+            with base_json_path.open() as f:
+                base_data = json.load(f)
 
-            assert data["metadata"]["source_file"] == "input.pdf"
-            assert data["metadata"]["source_lang"] == "en"
-            assert data["metadata"]["target_lang"] == "ja"
-            assert data["metadata"]["translator_backend"] == "google"
-            assert data["metadata"]["page_count"] == 2  # Set by _page_count
-            assert len(data["paragraphs"]) == 2
+            assert base_data["metadata"]["source_file"] == "input.pdf"
+            assert base_data["metadata"]["source_lang"] == "en"
+            assert base_data["metadata"]["page_count"] == 2
+            assert len(base_data["paragraphs"]) == 2
+
+            # Check translation JSON was created
+            trans_json_path = Path(tmpdir) / "output.ja.json"
+            assert trans_json_path.exists()
+
+            with trans_json_path.open() as f:
+                trans_data = json.load(f)
+
+            assert trans_data["target_lang"] == "ja"
+            assert trans_data["translator_backend"] == "google"
+            assert trans_data["translated_count"] == 2
 
     def test_save_intermediate_empty_paragraphs(self) -> None:
         """Test intermediate JSON with empty paragraphs."""
+        from pdf_translator.output.base_document import BaseDocument, BaseDocumentMetadata
+        from pdf_translator.output.translation_document import TranslationDocument
+
         mock_translator = MagicMock()
         mock_translator.__class__.__name__ = "DeepLTranslator"
 
@@ -286,16 +325,39 @@ class TestPipelineSaveIntermediate:
         )
         pipeline = TranslationPipeline(mock_translator, config)
 
+        # Create empty BaseDocument
+        metadata = BaseDocumentMetadata(
+            source_file="empty.pdf",
+            source_lang="en",
+            page_count=0,
+            paragraph_count=0,
+        )
+        base_document = BaseDocument(
+            metadata=metadata,
+            paragraphs=[],
+            summary=None,
+        )
+
+        # Create empty TranslationDocument
+        translation_document = TranslationDocument.from_pipeline_result(
+            paragraphs={},
+            target_lang="ja",
+            base_file="empty.json",
+            translator_backend="deepl",
+        )
+
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = Path(tmpdir) / "empty.pdf"
-            output_path = Path(tmpdir) / "output.pdf"
+            output_path = Path(tmpdir) / "output.ja.pdf"
 
-            pipeline._save_intermediate([], pdf_path, output_path)
+            pipeline._save_intermediate(
+                base_document, translation_document, pdf_path, output_path
+            )
 
-            json_path = Path(tmpdir) / "output.json"
-            assert json_path.exists()
+            base_json_path = Path(tmpdir) / "output.json"
+            assert base_json_path.exists()
 
-            with json_path.open() as f:
+            with base_json_path.open() as f:
                 data = json.load(f)
 
             assert data["metadata"]["page_count"] == 0
@@ -427,3 +489,125 @@ class TestPipelineIntegrationMarkdown:
             assert result.paragraphs is not None
 
             pdf_path.unlink(missing_ok=True)
+
+
+class TestCreateDocumentsBaseFile:
+    """Test _create_documents properly sets base_file from output_path."""
+
+    def test_base_file_uses_output_path_stem(self) -> None:
+        """Test base_file is derived from output_path, not pdf_path."""
+        mock_translator = MagicMock()
+        mock_translator.__class__.__name__ = "GoogleTranslator"
+
+        config = PipelineConfig(
+            save_intermediate=True,
+            source_lang="en",
+            target_lang="ja",
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+        pipeline._page_count = 1
+
+        paragraphs = [
+            Paragraph(
+                id="p1",
+                page_number=0,
+                text="Hello",
+                block_bbox=BBox(0, 0, 100, 50),
+                line_count=1,
+                translated_text="こんにちは",
+            ),
+        ]
+
+        # Different names for input and output
+        pdf_path = Path("/input/original_paper.pdf")
+        output_path = Path("/output/custom_name.ja.pdf")
+
+        base_doc, trans_doc = pipeline._create_documents(
+            paragraphs, pdf_path, output_path, None, None
+        )
+
+        # base_file should match output_path stem (without lang suffix), not pdf_path
+        assert trans_doc.base_file == "custom_name.json"
+        # metadata should still reference original source file
+        assert base_doc.metadata.source_file == "original_paper.pdf"
+
+    def test_base_file_fallback_to_pdf_path(self) -> None:
+        """Test base_file falls back to pdf_path when output_path is None."""
+        mock_translator = MagicMock()
+        mock_translator.__class__.__name__ = "GoogleTranslator"
+
+        config = PipelineConfig(
+            save_intermediate=True,
+            source_lang="en",
+            target_lang="ja",
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+        pipeline._page_count = 1
+
+        paragraphs = [
+            Paragraph(
+                id="p1",
+                page_number=0,
+                text="Hello",
+                block_bbox=BBox(0, 0, 100, 50),
+                line_count=1,
+                translated_text="こんにちは",
+            ),
+        ]
+
+        pdf_path = Path("/input/source.pdf")
+        output_path = None
+
+        base_doc, trans_doc = pipeline._create_documents(
+            paragraphs, pdf_path, output_path, None, None
+        )
+
+        # base_file should fallback to pdf_path.stem
+        assert trans_doc.base_file == "source.json"
+
+    def test_base_file_consistency_with_saved_files(self) -> None:
+        """Test base_file in TranslationDocument matches actual saved base JSON filename."""
+        mock_translator = MagicMock()
+        mock_translator.__class__.__name__ = "GoogleTranslator"
+
+        config = PipelineConfig(
+            save_intermediate=True,
+            source_lang="en",
+            target_lang="ja",
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+        pipeline._page_count = 1
+
+        paragraphs = [
+            Paragraph(
+                id="p1",
+                page_number=0,
+                text="Hello",
+                block_bbox=BBox(0, 0, 100, 50),
+                line_count=1,
+                translated_text="こんにちは",
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "input.pdf"
+            output_path = Path(tmpdir) / "custom_output.ja.pdf"
+
+            base_doc, trans_doc = pipeline._create_documents(
+                paragraphs, pdf_path, output_path, None, None
+            )
+
+            # Save the documents
+            pipeline._save_intermediate(base_doc, trans_doc, pdf_path, output_path)
+
+            # Verify base_file in trans_doc matches the actual saved base JSON filename
+            expected_base_json = Path(tmpdir) / trans_doc.base_file
+            assert expected_base_json.exists(), (
+                f"base_file '{trans_doc.base_file}' should match saved file"
+            )
+
+            # Also verify the translation JSON references the correct base
+            trans_json_path = Path(tmpdir) / "custom_output.ja.json"
+            with trans_json_path.open() as f:
+                trans_data = json.load(f)
+            assert trans_data["base_file"] == "custom_output.json"

@@ -5,29 +5,28 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pdf_translator.core.models import Paragraph
 from pdf_translator.llm.client import LLMConfig
 from pdf_translator.llm.summary_generator import LLMSummaryGenerator
-from pdf_translator.output.document_summary import DocumentSummary
+from pdf_translator.output.base_summary import BaseSummary
 from pdf_translator.output.thumbnail_generator import ThumbnailConfig, ThumbnailGenerator
-
-if TYPE_CHECKING:
-    from pdf_translator.translators.base import TranslatorBackend
 
 logger = logging.getLogger(__name__)
 
 
 class SummaryExtractor:
-    """Extract document summary from translated paragraphs.
+    """Extract base document summary from paragraphs.
 
     Handles:
     - Title extraction from doc_title category (with LLM fallback)
     - Abstract extraction from abstract category (with LLM fallback)
     - Organization extraction (LLM only)
-    - LLM summary generation from original Markdown
+    - LLM summary generation from original Markdown (in source language)
     - Thumbnail generation from first page
+
+    Note: Translation is handled separately in the pipeline.
     """
 
     TITLE_CATEGORY = "doc_title"
@@ -50,6 +49,11 @@ class SummaryExtractor:
             LLMSummaryGenerator(llm_config) if llm_config else None
         )
 
+    @property
+    def llm_generator(self) -> LLMSummaryGenerator | None:
+        """Get the LLM generator instance for use in pipeline."""
+        return self._llm_generator
+
     async def extract(
         self,
         paragraphs: list[Paragraph],
@@ -57,34 +61,33 @@ class SummaryExtractor:
         output_dir: Path,
         output_stem: str,
         source_lang: str = "",
-        target_lang: str = "",
         page_count: int = 0,
         generate_thumbnail: bool = True,
-        translator: TranslatorBackend | None = None,
         original_markdown: str | None = None,
-    ) -> DocumentSummary:
-        """Extract document summary from paragraphs.
+    ) -> BaseSummary:
+        """Extract base document summary from paragraphs.
+
+        This method extracts original language content only.
+        Translation is handled separately in the pipeline.
 
         Args:
-            paragraphs: List of translated paragraphs.
+            paragraphs: List of paragraphs (with original text).
             pdf_path: Path to original PDF (for thumbnail).
             output_dir: Directory to save thumbnail.
             output_stem: Base filename for outputs.
             source_lang: Source language code.
-            target_lang: Target language code.
             page_count: Total page count.
             generate_thumbnail: Whether to generate thumbnail.
-            translator: Translator backend for title/summary translation.
             original_markdown: Original Markdown content for LLM summary.
 
         Returns:
-            DocumentSummary with extracted information.
+            BaseSummary with extracted information.
         """
         # Step 1: Extract from layout analysis
-        title, title_translated = self._find_and_merge_by_category(
+        title = self._find_and_merge_by_category(
             paragraphs, self.TITLE_CATEGORY
         )
-        abstract, abstract_translated = self._find_and_merge_by_category(
+        abstract = self._find_and_merge_by_category(
             paragraphs, self.ABSTRACT_CATEGORY
         )
 
@@ -114,64 +117,29 @@ class SummaryExtractor:
                     abstract = llm_metadata["abstract"]
                     abstract_source = "llm"
 
-        # Step 3: Translate title if needed
-        if title and not title_translated and translator:
-            try:
-                title_translated = await translator.translate(
-                    title, source_lang, target_lang
-                )
-            except Exception as e:
-                logger.warning("Failed to translate title: %s", e)
-
-        # Step 4: Translate abstract if from LLM fallback
-        if (
-            abstract
-            and not abstract_translated
-            and abstract_source == "llm"
-            and translator
-        ):
-            try:
-                abstract_translated = await translator.translate(
-                    abstract, source_lang, target_lang
-                )
-            except Exception as e:
-                logger.warning("Failed to translate abstract: %s", e)
-
-        # Step 5: Generate LLM summary from original Markdown
+        # Step 3: Generate LLM summary from original Markdown (in source language)
         summary = None
-        summary_translated = None
-
         if self._llm_generator and original_markdown:
-            summary = await self._llm_generator.generate_summary(original_markdown)
-            if summary and translator:
-                try:
-                    summary_translated = await translator.translate(
-                        summary, source_lang, target_lang
-                    )
-                except Exception as e:
-                    logger.warning("Failed to translate summary: %s", e)
+            summary = await self._llm_generator.generate_summary(
+                original_markdown, target_lang=source_lang
+            )
 
-        # Step 6: Generate thumbnail
+        # Step 4: Generate thumbnail
         thumbnail_path, thumbnail_bytes, thumb_width, thumb_height = (
             await self._generate_thumbnail(
                 pdf_path, output_dir, output_stem, generate_thumbnail
             )
         )
 
-        return DocumentSummary(
+        return BaseSummary(
             title=title,
-            title_translated=title_translated,
             abstract=abstract,
-            abstract_translated=abstract_translated,
             organization=organization,
             summary=summary,
-            summary_translated=summary_translated,
             thumbnail_path=thumbnail_path,
             thumbnail_width=thumb_width,
             thumbnail_height=thumb_height,
             page_count=page_count,
-            source_lang=source_lang,
-            target_lang=target_lang,
             title_source=title_source,
             abstract_source=abstract_source,
             _thumbnail_bytes=thumbnail_bytes,
@@ -181,7 +149,7 @@ class SummaryExtractor:
     def _find_and_merge_by_category(
         paragraphs: list[Paragraph],
         category: str,
-    ) -> tuple[str | None, str | None]:
+    ) -> str | None:
         """Find all paragraphs with category and merge them.
 
         Args:
@@ -189,23 +157,19 @@ class SummaryExtractor:
             category: Category to find.
 
         Returns:
-            Tuple of (merged_original, merged_translated).
+            Merged original text or None if not found.
         """
         matched = [p for p in paragraphs if p.category == category]
 
         if not matched:
-            return None, None
+            return None
 
         # Sort by page_number, then by y-coordinate (descending, PDF coordinates)
         matched.sort(key=lambda p: (p.page_number, -p.block_bbox.y1))
 
         original_parts = [p.text for p in matched if p.text]
-        translated_parts = [p.translated_text for p in matched if p.translated_text]
 
-        original = "\n\n".join(original_parts) if original_parts else None
-        translated = "\n\n".join(translated_parts) if translated_parts else None
-
-        return original, translated
+        return "\n\n".join(original_parts) if original_parts else None
 
     @staticmethod
     def _get_first_page_text(paragraphs: list[Paragraph]) -> str:

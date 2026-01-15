@@ -28,7 +28,9 @@ from pdf_translator.core.side_by_side import (
     SideBySideOrder,
 )
 from pdf_translator.llm.client import LLMConfig
-from pdf_translator.output.document_summary import DocumentSummary
+from pdf_translator.output.base_document import BaseDocument, BaseDocumentMetadata
+from pdf_translator.output.base_document_writer import BaseDocumentWriter
+from pdf_translator.output.base_summary import BaseSummary
 from pdf_translator.output.image_extractor import (
     ExtractedImage,
     ImageExtractionConfig,
@@ -46,7 +48,9 @@ from pdf_translator.output.table_extractor import (
     TableExtractor,
 )
 from pdf_translator.output.thumbnail_generator import ThumbnailConfig
-from pdf_translator.output.translated_document import TranslatedDocument
+from pdf_translator.output.translated_summary import TranslatedSummary
+from pdf_translator.output.translation_document import TranslationDocument
+from pdf_translator.output.translation_writer import TranslationWriter
 from pdf_translator.pipeline.errors import (
     ExtractionError,
     LayoutAnalysisError,
@@ -160,7 +164,8 @@ class TranslationResult:
     markdown: str | None = None  # Only set if markdown_output is enabled
     markdown_original: str | None = None  # Original Markdown (for LLM summary)
     paragraphs: list[Paragraph] | None = None  # Translated paragraphs for downstream use
-    summary: DocumentSummary | None = None  # Document summary for web service
+    base_document: BaseDocument | None = None  # Base document (original content)
+    translation_document: TranslationDocument | None = None  # Translation document (diff)
 
 
 class TranslationPipeline:
@@ -237,11 +242,20 @@ class TranslationPipeline:
                 paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
             )
 
-        # Generate document summary if enabled
-        summary: DocumentSummary | None = None
+        # Generate base summary and translated summary
+        base_summary: BaseSummary | None = None
+        translated_summary: TranslatedSummary | None = None
         if self._config.generate_thumbnail or self._config.llm_summary or self._config.llm_fallback:
-            summary = await self._stage_summary(
+            base_summary, translated_summary = await self._stage_summary(
                 paragraphs, pdf_path, output_path, markdown_original
+            )
+
+        # Create BaseDocument and TranslationDocument
+        base_document: BaseDocument | None = None
+        translation_document: TranslationDocument | None = None
+        if self._config.save_intermediate:
+            base_document, translation_document = self._create_documents(
+                paragraphs, pdf_path, output_path, base_summary, translated_summary
             )
 
         if output_path is not None:
@@ -260,14 +274,19 @@ class TranslationPipeline:
 
             # Save original Markdown (for LLM summary or user reference)
             if markdown_original is not None:
-                md_original_path = output_path.parent / (
-                    output_path.stem.replace("_translated", "") + "_original.md"
-                )
+                # Use base stem without language suffix for original markdown
+                base_stem = output_path.stem
+                # Remove language suffix if present (e.g., "paper.ja" -> "paper")
+                if "." in base_stem:
+                    base_stem = base_stem.rsplit(".", 1)[0]
+                md_original_path = output_path.parent / f"{base_stem}.md"
                 md_original_path.write_text(markdown_original, encoding="utf-8")
 
             # Save intermediate JSON if enabled
-            if self._config.save_intermediate:
-                self._save_intermediate(paragraphs, pdf_path, output_path, summary)
+            if self._config.save_intermediate and base_document and translation_document:
+                self._save_intermediate(
+                    base_document, translation_document, pdf_path, output_path
+                )
 
         stats = {
             "original_paragraphs": original_count,
@@ -283,7 +302,8 @@ class TranslationPipeline:
             markdown=markdown_str,
             markdown_original=markdown_original,
             paragraphs=paragraphs,
-            summary=summary,
+            base_document=base_document,
+            translation_document=translation_document,
         )
 
     async def _stage_extract(self, pdf_path: Path) -> list[Paragraph]:
@@ -649,8 +669,8 @@ class TranslationPipeline:
         pdf_path: Path,
         output_path: Path | None,
         original_markdown: str | None,
-    ) -> DocumentSummary:
-        """Generate document summary with metadata, thumbnail, and LLM summary.
+    ) -> tuple[BaseSummary, TranslatedSummary | None]:
+        """Generate base summary and translated summary.
 
         Args:
             paragraphs: List of translated paragraphs.
@@ -659,15 +679,18 @@ class TranslationPipeline:
             original_markdown: Original Markdown content for LLM summary.
 
         Returns:
-            DocumentSummary with extracted information.
+            Tuple of (BaseSummary, TranslatedSummary or None).
         """
-        # Determine output directory
+        # Determine output directory and stem
         if output_path is not None:
             output_dir = output_path.parent
+            # Get base stem without language suffix
             output_stem = output_path.stem
+            if "." in output_stem:
+                output_stem = output_stem.rsplit(".", 1)[0]
         else:
             output_dir = pdf_path.parent
-            output_stem = pdf_path.stem + "_translated"
+            output_stem = pdf_path.stem
 
         # Configure thumbnail generation
         thumbnail_config = ThumbnailConfig(width=self._config.thumbnail_width)
@@ -687,57 +710,187 @@ class TranslationPipeline:
             llm_config=llm_config,
         )
 
-        summary = await extractor.extract(
+        # Extract base summary (original language)
+        base_summary = await extractor.extract(
             paragraphs=paragraphs,
             pdf_path=pdf_path,
             output_dir=output_dir,
             output_stem=output_stem,
             source_lang=self._config.source_lang,
-            target_lang=self._config.target_lang,
             page_count=self._page_count,
             generate_thumbnail=self._config.generate_thumbnail,
-            translator=self._translator,
             original_markdown=original_markdown,
         )
 
-        self._notify("summary", 1, 1)
-        return summary
+        # Generate translated summary
+        translated_summary = await self._generate_translated_summary(
+            base_summary, original_markdown, extractor.llm_generator
+        )
 
-    def _save_intermediate(
+        self._notify("summary", 1, 1)
+        return base_summary, translated_summary
+
+    async def _generate_translated_summary(
+        self,
+        base_summary: BaseSummary,
+        original_markdown: str | None,
+        llm_generator: Any,
+    ) -> TranslatedSummary | None:
+        """Generate translated summary from base summary.
+
+        Args:
+            base_summary: Base summary with original language content.
+            original_markdown: Original Markdown for LLM summary generation.
+            llm_generator: LLM generator instance for target language summary.
+
+        Returns:
+            TranslatedSummary or None if nothing to translate.
+        """
+        translated_title: str | None = None
+        translated_abstract: str | None = None
+        translated_summary: str | None = None
+
+        # Translate title
+        if base_summary.title:
+            try:
+                translated_title = await self._translator.translate(
+                    base_summary.title,
+                    self._config.source_lang,
+                    self._config.target_lang,
+                )
+            except Exception as e:
+                logger.warning("Failed to translate title: %s", e)
+
+        # Translate abstract
+        if base_summary.abstract:
+            try:
+                translated_abstract = await self._translator.translate(
+                    base_summary.abstract,
+                    self._config.source_lang,
+                    self._config.target_lang,
+                )
+            except Exception as e:
+                logger.warning("Failed to translate abstract: %s", e)
+
+        # Generate summary in target language via LLM
+        if llm_generator and original_markdown:
+            try:
+                translated_summary = await llm_generator.generate_summary(
+                    original_markdown, target_lang=self._config.target_lang
+                )
+            except Exception as e:
+                logger.warning("Failed to generate target language summary: %s", e)
+
+        # Return None if nothing was translated
+        if not any([translated_title, translated_abstract, translated_summary]):
+            return None
+
+        return TranslatedSummary(
+            title=translated_title,
+            abstract=translated_abstract,
+            summary=translated_summary,
+        )
+
+    def _create_documents(
         self,
         paragraphs: list[Paragraph],
         pdf_path: Path,
-        output_path: Path,
-        summary: DocumentSummary | None = None,
-    ) -> None:
-        """Save intermediate JSON file for debugging or regeneration.
+        output_path: Path | None,
+        base_summary: BaseSummary | None,
+        translated_summary: TranslatedSummary | None,
+    ) -> tuple[BaseDocument, TranslationDocument]:
+        """Create BaseDocument and TranslationDocument from pipeline data.
 
         Args:
             paragraphs: List of translated paragraphs.
             pdf_path: Path to the source PDF.
             output_path: Output path for the translated PDF.
-            summary: Optional document summary to include.
-        """
-        # Use actual PDF page count (stored by _stage_extract)
-        # This is more accurate than counting from paragraphs, as pages without
-        # text content would be missed otherwise.
-        total_pages = self._page_count
+            base_summary: Base summary with original language content.
+            translated_summary: Translated summary.
 
+        Returns:
+            Tuple of (BaseDocument, TranslationDocument).
+        """
         # Get translator backend name
         backend_name = type(self._translator).__name__.replace("Translator", "").lower()
 
-        doc = TranslatedDocument.from_pipeline_result(
-            paragraphs=paragraphs,
+        # Calculate base_stem from output_path to ensure consistency
+        # with the actual saved file names in _save_intermediate
+        if output_path is not None:
+            base_stem = output_path.stem
+            # Remove language suffix if present (e.g., "paper.ja" -> "paper")
+            if "." in base_stem:
+                base_stem = base_stem.rsplit(".", 1)[0]
+        else:
+            # Fallback to pdf_path.stem if no output_path
+            base_stem = pdf_path.stem
+
+        # Create metadata
+        metadata = BaseDocumentMetadata(
             source_file=pdf_path.name,
             source_lang=self._config.source_lang,
-            target_lang=self._config.target_lang,
-            translator_backend=backend_name,
-            total_pages=total_pages,
-            summary=summary,
+            page_count=self._page_count,
+            paragraph_count=len(paragraphs),
         )
 
-        json_output_path = output_path.with_suffix(".json")
-        doc.save(json_output_path)
+        # Create BaseDocument
+        base_document = BaseDocument(
+            metadata=metadata,
+            paragraphs=paragraphs,
+            summary=base_summary,
+        )
+
+        # Create translation paragraphs dict (only translated text)
+        trans_paragraphs: dict[str, str] = {}
+        for para in paragraphs:
+            if para.translated_text and para.id:
+                trans_paragraphs[para.id] = para.translated_text
+
+        # Create TranslationDocument
+        translation_document = TranslationDocument.from_pipeline_result(
+            paragraphs=trans_paragraphs,
+            target_lang=self._config.target_lang,
+            base_file=f"{base_stem}.json",
+            translator_backend=backend_name,
+            summary=translated_summary,
+        )
+
+        return base_document, translation_document
+
+    def _save_intermediate(
+        self,
+        base_document: BaseDocument,
+        translation_document: TranslationDocument,
+        pdf_path: Path,
+        output_path: Path,
+    ) -> None:
+        """Save intermediate JSON files for debugging or regeneration.
+
+        Args:
+            base_document: Base document with original content.
+            translation_document: Translation document with translated content.
+            pdf_path: Path to the source PDF.
+            output_path: Output path for the translated PDF.
+        """
+        output_dir = output_path.parent
+
+        # Get base stem without language suffix
+        base_stem = output_path.stem
+        if "." in base_stem:
+            base_stem = base_stem.rsplit(".", 1)[0]
+
+        # Save base document (paper.json)
+        base_writer = BaseDocumentWriter()
+        base_path = base_writer.get_output_path(output_dir, base_stem)
+        base_writer.write(base_document, base_path)
+
+        # Save translation document (paper.ja.json)
+        trans_writer = TranslationWriter()
+        trans_path = trans_writer.get_output_path(
+            output_dir, base_stem, self._config.target_lang
+        )
+        trans_writer.write(translation_document, trans_path)
+
         self._notify("save_intermediate", 1, 1)
 
     async def _translate_with_retry(self, texts: list[str]) -> list[str]:

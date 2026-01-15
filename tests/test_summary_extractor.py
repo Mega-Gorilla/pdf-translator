@@ -3,7 +3,6 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -68,21 +67,17 @@ class TestSummaryExtractor:
                 output_dir=Path(tmpdir),
                 output_stem="test",
                 source_lang="en",
-                target_lang="ja",
                 page_count=1,
                 generate_thumbnail=False,
             )
 
+        # BaseSummary only contains original language content
         assert summary.title == "Test Document Title"
-        assert summary.title_translated is None  # No translator provided
         assert summary.abstract == "This is the abstract of the document."
-        assert summary.abstract_translated == "これはドキュメントの要約です。"
         assert summary.title_source == "layout"
         assert summary.abstract_source == "layout"
         assert summary.thumbnail_path is None
         assert summary.page_count == 1
-        assert summary.source_lang == "en"
-        assert summary.target_lang == "ja"
 
     async def test_extract_with_thumbnail(
         self, sample_paragraphs: list[Paragraph], sample_pdf: Path
@@ -97,7 +92,6 @@ class TestSummaryExtractor:
                 output_dir=Path(tmpdir),
                 output_stem="test",
                 source_lang="en",
-                target_lang="ja",
                 page_count=1,
                 generate_thumbnail=True,
             )
@@ -110,35 +104,6 @@ class TestSummaryExtractor:
             # Verify thumbnail file was created
             thumb_file = Path(tmpdir) / "test_thumbnail.png"
             assert thumb_file.exists()
-
-    async def test_extract_with_translator(
-        self, sample_paragraphs: list[Paragraph]
-    ) -> None:
-        """Test extraction with translator for title."""
-        extractor = SummaryExtractor()
-
-        # Create mock translator
-        mock_translator = AsyncMock()
-        mock_translator.translate = AsyncMock(return_value="テストドキュメントタイトル")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            summary = await extractor.extract(
-                paragraphs=sample_paragraphs,
-                pdf_path=Path("nonexistent.pdf"),
-                output_dir=Path(tmpdir),
-                output_stem="test",
-                source_lang="en",
-                target_lang="ja",
-                page_count=1,
-                generate_thumbnail=False,
-                translator=mock_translator,
-            )
-
-        assert summary.title == "Test Document Title"
-        assert summary.title_translated == "テストドキュメントタイトル"
-        mock_translator.translate.assert_called_once_with(
-            "Test Document Title", "en", "ja"
-        )
 
     async def test_extract_multiple_abstract_paragraphs(self) -> None:
         """Test extraction with multiple abstract paragraphs."""
@@ -175,6 +140,7 @@ class TestSummaryExtractor:
             )
 
         # Paragraphs should be merged with double newline
+        assert summary.abstract is not None
         assert "First abstract paragraph." in summary.abstract
         assert "Second abstract paragraph." in summary.abstract
         assert "\n\n" in summary.abstract
@@ -227,12 +193,11 @@ class TestFindAndMergeByCategory:
             ),
         ]
 
-        original, translated = SummaryExtractor._find_and_merge_by_category(
+        result = SummaryExtractor._find_and_merge_by_category(
             paragraphs, "doc_title"
         )
 
-        assert original == "Test Title"
-        assert translated == "テストタイトル"
+        assert result == "Test Title"
 
     def test_multiple_paragraphs(self) -> None:
         """Test with multiple matching paragraphs."""
@@ -257,13 +222,14 @@ class TestFindAndMergeByCategory:
             ),
         ]
 
-        original, translated = SummaryExtractor._find_and_merge_by_category(
+        result = SummaryExtractor._find_and_merge_by_category(
             paragraphs, "abstract"
         )
 
-        assert "First paragraph" in original
-        assert "Second paragraph" in original
-        assert "\n\n" in original
+        assert result is not None
+        assert "First paragraph" in result
+        assert "Second paragraph" in result
+        assert "\n\n" in result
 
     def test_no_matching_category(self) -> None:
         """Test with no matching category."""
@@ -279,12 +245,11 @@ class TestFindAndMergeByCategory:
             ),
         ]
 
-        original, translated = SummaryExtractor._find_and_merge_by_category(
+        result = SummaryExtractor._find_and_merge_by_category(
             paragraphs, "doc_title"
         )
 
-        assert original is None
-        assert translated is None
+        assert result is None
 
 
 class TestGetFirstPageText:

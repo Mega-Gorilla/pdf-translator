@@ -1531,3 +1531,4 @@ llm = ["litellm>=1.80.0"]
 | 2026-01-15 | Re-Review 2対応: モデル自動選択ルール追加、provider/model表記明確化、マルチプロバイダー入力サイズ制御 |
 | 2026-01-15 | Re-Review 3対応: Phase 8 CLI記述統一、LLMConfig import修正、LLM表現汎化 |
 | 2026-01-15 | Re-Review 4対応: サムネイル理由文言修正(PNG固定)、DocumentSummary Literal import追加 |
+| 2026-01-15 | **Issue #66 により構造変更**: DocumentSummary → BaseSummary/TranslatedSummary に分離。詳細は [issue-66-multilingual-json.md](./issue-66-multilingual-json.md) 参照 |
