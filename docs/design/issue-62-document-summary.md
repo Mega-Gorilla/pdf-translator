@@ -178,8 +178,8 @@ class MarkdownWriter:
 | プロバイダー | モデル | コンテキストウィンドウ |
 |-------------|--------|---------------------|
 | Gemini | gemini-3.0-flash | 1,048,576 tokens |
-| OpenAI | gpt-4o-mini | 128,000 tokens |
-| Anthropic | claude-3-5-sonnet | 200,000 tokens |
+| OpenAI | gpt-5-mini | 128,000 tokens |
+| Anthropic | claude-sonnet-4-5 | 200,000 tokens |
 
 - 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（全プロバイダーで十分収まる）
 - 超長文書（100ページ超）の場合: 警告ログを出力し、先頭 500,000 文字で切り捨て
@@ -741,8 +741,8 @@ class LLMConfig:
     # Supported providers and their default models
     PROVIDER_DEFAULTS: ClassVar[dict[str, str]] = {
         "gemini": "gemini-3.0-flash",
-        "openai": "gpt-4o-mini",
-        "anthropic": "claude-3-5-sonnet-20241022",
+        "openai": "gpt-5-mini",
+        "anthropic": "claude-sonnet-4-5",
     }
 
     # Environment variable names for API keys
@@ -848,8 +848,8 @@ class LLMSummaryGenerator:
 
     Uses LiteLLM for unified access to multiple LLM providers:
     - Gemini (default): gemini/gemini-3.0-flash
-    - OpenAI: openai/gpt-4o-mini
-    - Anthropic: anthropic/claude-3-5-sonnet-20241022
+    - OpenAI: openai/gpt-5-mini
+    - Anthropic: anthropic/claude-sonnet-4-5
     """
 
     SUMMARY_PROMPT = """Summarize this academic paper in 3-5 sentences, covering:
@@ -1280,8 +1280,8 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 uv run translate-pdf paper.pdf --save-intermediate --llm-summary
 
 # LLMプロバイダー・モデル選択
-uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider openai --llm-model gpt-4o-mini
-uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider anthropic --llm-model claude-3-5-sonnet-20241022
+uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider openai --llm-model gpt-5-mini
+uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider anthropic --llm-model claude-sonnet-4-5
 
 # LLMフォールバック無効化
 uv run translate-pdf paper.pdf --save-intermediate --no-llm-fallback
@@ -1303,13 +1303,13 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
 
 **モデル自動選択ルール:**
 - `--llm-model` を省略した場合、`--llm-provider` に応じてデフォルトモデルを自動選択
-- 例: `--llm-provider openai` → `gpt-4o-mini` が自動設定
+- 例: `--llm-provider openai` → `gpt-5-mini` が自動設定
 
 | --llm-provider | --llm-model 省略時のデフォルト |
 |----------------|------------------------------|
 | gemini | gemini-3.0-flash |
-| openai | gpt-4o-mini |
-| anthropic | claude-3-5-sonnet-20241022 |
+| openai | gpt-5-mini |
+| anthropic | claude-sonnet-4-5 |
 
 **環境変数:**
 
@@ -1325,8 +1325,8 @@ export ANTHROPIC_API_KEY="your-anthropic-key"  # Anthropic使用時
 | プロバイダー | --llm-provider | 主要モデル例 |
 |-------------|---------------|-------------|
 | Google Gemini | gemini | gemini-3.0-flash, gemini-1.5-pro |
-| OpenAI | openai | gpt-4o-mini, gpt-4o |
-| Anthropic | anthropic | claude-3-5-sonnet-20241022 |
+| OpenAI | openai | gpt-5-mini, gpt-4o |
+| Anthropic | anthropic | claude-sonnet-4-5 |
 | AWS Bedrock | bedrock | anthropic.claude-v2 |
 | Azure OpenAI | azure | gpt-4 |
 
