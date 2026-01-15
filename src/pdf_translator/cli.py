@@ -606,6 +606,14 @@ async def run(args: argparse.Namespace) -> int:
 
 def main() -> NoReturn:
     """Main entry point."""
+    # Load environment variables from .env file if present
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass  # python-dotenv is optional
+
     args = parse_args()
 
     # Configure logging
