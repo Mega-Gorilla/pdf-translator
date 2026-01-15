@@ -158,12 +158,12 @@ class MarkdownWriter:
 
 ### 2. LLM要約生成
 
-**決定: 原文Markdown全文をGemini 3.0 Flashに渡して要約を生成**
+**決定: 原文Markdown全文をLLMに渡して要約を生成（デフォルト: Gemini 3.0 Flash）**
 
 ```
 処理フロー:
 1. 原文Markdown生成（画像参照は除外）
-2. Gemini 3.0 Flash に原文Markdown全文を送信
+2. LLM に原文Markdown全文を送信（--llm-provider/--llm-model で指定）
 3. 要約（原文言語）を取得
 4. 要約を翻訳（通常の翻訳パイプラインを使用）
 ```
@@ -269,14 +269,14 @@ First page content:
 │     ├── Step 2: LLM Fallback (if title/abstract missing)            │
 │     │   ├── Input: First page text only                             │
 │     │   ├── Output: title, abstract, organization                   │
-│     │   └── Model: Gemini 3.0 Flash                                   │
+│     │   └── Model: --llm-provider/--llm-model (default: gemini)     │
 │     │                                                               │
 │     ├── Step 3: Translate title (if not translated)                 │
 │     │                                                               │
 │     ├── Step 4: LLM Summary Generation                              │
 │     │   ├── Input: paper_original.md (full, images excluded)        │
 │     │   ├── Output: summary (3-5 sentences)                         │
-│     │   └── Model: Gemini 3.0 Flash                                   │
+│     │   └── Model: --llm-provider/--llm-model (default: gemini)     │
 │     │                                                               │
 │     ├── Step 5: Translate summary                                   │
 │     │                                                               │
@@ -715,7 +715,8 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -1435,7 +1436,7 @@ llm = ["litellm>=1.80.0"]
 2. `--thumbnail-width` オプション追加
 3. `--llm-summary` フラグ追加
 4. `--llm-provider` オプション追加（デフォルト: gemini）
-5. `--llm-model` オプション追加（デフォルト: gemini-3.0-flash）
+5. `--llm-model` オプション追加（省略時: providerごとのデフォルトを自動選択）
 6. `--no-llm-fallback` フラグ追加
 7. プロバイダー対応APIキー環境変数読み取り（GEMINI_API_KEY, OPENAI_API_KEY, etc.）
 8. `PipelineConfig` への伝播
@@ -1528,3 +1529,4 @@ llm = ["litellm>=1.80.0"]
 | 2026-01-15 | Re-Review対応: Organization常時抽出、入力サイズ制御追記、summary_max_tokens削除、サムネイルPNG固定、モデル名統一 |
 | 2026-01-15 | LiteLLM採用: 統一LLMインターフェース導入、100+プロバイダー対応、provider/model CLI引数追加 |
 | 2026-01-15 | Re-Review 2対応: モデル自動選択ルール追加、provider/model表記明確化、マルチプロバイダー入力サイズ制御 |
+| 2026-01-15 | Re-Review 3対応: Phase 8 CLI記述統一、LLMConfig import修正、LLM表現汎化 |
