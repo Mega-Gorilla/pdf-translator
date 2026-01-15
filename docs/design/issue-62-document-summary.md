@@ -11,9 +11,10 @@ PDF翻訳Webサービス構築に向けて、翻訳結果からドキュメン�
 | 機能 | 説明 |
 |------|------|
 | **メタデータ抽出** | タイトル、Abstract、Organization をレイアウト解析 + LLMフォールバックで取得 |
-| **LLM要約生成** | 原文Markdown全文からGemini 2.0 Flashで要約を生成 |
+| **LLM要約生成** | 原文Markdown全文からLLMで要約を生成（LiteLLM経由で複数プロバイダー対応） |
 | **サムネイル生成** | PDF 1ページ目のサムネイル画像 |
 | **Markdown二重生成** | 原文Markdown + 翻訳Markdownの両方を出力 |
+| **統一LLMインターフェース** | LiteLLMによりGemini/OpenAI/Anthropic等を統一的に利用可能 |
 
 ---
 
@@ -49,7 +50,28 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 | Organization（団体名）の取得 | レイアウト解析では取得不可→LLMで抽出 |
 | ユーザーフレンドリーな要約 | Abstractは技術的すぎる場合あり→LLMで要約生成 |
 
-**LLMモデル選定**: Gemini 2.0 Flash（コスト効率・速度のバランス）
+### LLMライブラリ選定: LiteLLM
+
+複数のLLMプロバイダーを統一的に扱うため、[LiteLLM](https://github.com/BerriAI/litellm) を採用する。
+
+**選定理由:**
+
+| 観点 | LiteLLM |
+|------|---------|
+| **プロバイダー対応** | 100+ (Gemini, OpenAI, Anthropic, AWS Bedrock, Azure等) |
+| **非同期サポート** | ✅ `acompletion()` で完全対応 |
+| **ライセンス** | MIT License (Apache-2.0互換) |
+| **メンテナンス** | 活発 (33.8k stars, 1,179 contributors) |
+| **新モデル対応** | ライブラリ更新のみで対応可能 |
+
+**比較検討した他ライブラリ:**
+
+| ライブラリ | 不採用理由 |
+|-----------|-----------|
+| aisuite (Andrew Ng) | 非同期非対応、メンテナンス懸念（最終更新2024/12） |
+| any-llm (Mozilla) | 比較的新しく、プロバイダー数が少ない |
+
+**デフォルトモデル**: `gemini/gemini-3.0-flash`（コスト効率・速度のバランス）
 
 ### 翻訳対象カテゴリの現状
 
@@ -136,12 +158,12 @@ class MarkdownWriter:
 
 ### 2. LLM要約生成
 
-**決定: 原文Markdown全文をGemini 2.0 Flashに渡して要約を生成**
+**決定: 原文Markdown全文をGemini 3.0 Flashに渡して要約を生成**
 
 ```
 処理フロー:
 1. 原文Markdown生成（画像参照は除外）
-2. Gemini 2.0 Flash に原文Markdown全文を送信
+2. Gemini 3.0 Flash に原文Markdown全文を送信
 3. 要約（原文言語）を取得
 4. 要約を翻訳（通常の翻訳パイプラインを使用）
 ```
@@ -152,7 +174,7 @@ class MarkdownWriter:
 - ページ数制限なし（論文全体の文脈が要約に必要）
 
 **入力サイズ制御:**
-- Gemini 2.0 Flash のコンテキストウィンドウ: 1,048,576 tokens
+- Gemini 3.0 Flash のコンテキストウィンドウ: 1,048,576 tokens
 - 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（十分収まる）
 - 超長文書（100ページ超）の場合: 警告ログを出力し、先頭 500,000 文字で切り捨て
 - コスト最適化: 入力トークン単価が低いため、全文送信でも許容範囲
@@ -240,14 +262,14 @@ First page content:
 │     ├── Step 2: LLM Fallback (if title/abstract missing)            │
 │     │   ├── Input: First page text only                             │
 │     │   ├── Output: title, abstract, organization                   │
-│     │   └── Model: Gemini 2.0 Flash                                   │
+│     │   └── Model: Gemini 3.0 Flash                                   │
 │     │                                                               │
 │     ├── Step 3: Translate title (if not translated)                 │
 │     │                                                               │
 │     ├── Step 4: LLM Summary Generation                              │
 │     │   ├── Input: paper_original.md (full, images excluded)        │
 │     │   ├── Output: summary (3-5 sentences)                         │
-│     │   └── Model: Gemini 2.0 Flash                                   │
+│     │   └── Model: Gemini 3.0 Flash                                   │
 │     │                                                               │
 │     ├── Step 5: Translate summary                                   │
 │     │                                                               │
@@ -675,9 +697,123 @@ class ThumbnailGenerator:
 - 設定可能なサイズ・フォーマット
 - メモリ（bytes）とファイル出力の両方に対応
 
-### 3. LLM統合モジュール
+### 3. LLM統合モジュール（LiteLLM）
 
-**決定: `LLMSummaryGenerator` クラスで LLM 関連機能を集約**
+**決定: LiteLLMを使用した統一LLMクライアントを実装**
+
+```python
+# src/pdf_translator/llm/client.py
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMConfig:
+    """Configuration for LLM integration via LiteLLM.
+
+    Attributes:
+        provider: LLM provider ("gemini", "openai", "anthropic", etc.).
+        model: Model name within provider.
+        api_key: API key (optional, can use environment variables).
+        use_summary: Enable LLM summary generation.
+        use_fallback: Enable LLM fallback for metadata extraction.
+    """
+
+    provider: str = "gemini"
+    model: str = "gemini-3.0-flash"
+    api_key: str | None = None
+    use_summary: bool = False
+    use_fallback: bool = True
+
+    # Supported providers and their default models
+    PROVIDER_DEFAULTS: dict[str, str] = field(default_factory=lambda: {
+        "gemini": "gemini-3.0-flash",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-3-5-sonnet-20241022",
+    })
+
+    # Environment variable names for API keys
+    API_KEY_ENV_VARS: dict[str, str] = field(default_factory=lambda: {
+        "gemini": "GEMINI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    })
+
+    @property
+    def litellm_model(self) -> str:
+        """Get LiteLLM model string (provider/model format)."""
+        return f"{self.provider}/{self.model}"
+
+    def get_api_key_env_var(self) -> str:
+        """Get environment variable name for API key."""
+        return self.API_KEY_ENV_VARS.get(
+            self.provider,
+            f"{self.provider.upper()}_API_KEY"
+        )
+
+
+class LLMClient:
+    """Unified LLM client using LiteLLM.
+
+    Provides a simple interface for text generation across multiple providers.
+    Supports: Gemini, OpenAI, Anthropic, AWS Bedrock, Azure, and 100+ others.
+    """
+
+    def __init__(self, config: LLMConfig) -> None:
+        """Initialize LLMClient.
+
+        Args:
+            config: LLM configuration.
+
+        Raises:
+            ImportError: If litellm is not installed.
+        """
+        self._config = config
+        self._setup_api_key()
+
+    def _setup_api_key(self) -> None:
+        """Set up API key in environment if provided."""
+        if self._config.api_key:
+            env_var = self._config.get_api_key_env_var()
+            os.environ[env_var] = self._config.api_key
+
+    async def generate(
+        self,
+        prompt: str,
+        system: str | None = None,
+    ) -> str:
+        """Generate text from prompt using LiteLLM.
+
+        Args:
+            prompt: User prompt.
+            system: Optional system prompt.
+
+        Returns:
+            Generated text.
+
+        Raises:
+            Exception: On LLM API errors.
+        """
+        from litellm import acompletion
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        response = await acompletion(
+            model=self._config.litellm_model,
+            messages=messages,
+        )
+
+        return response.choices[0].message.content
+```
 
 ```python
 # src/pdf_translator/llm/summary_generator.py
@@ -687,38 +823,19 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pdf_translator.translators.base import TranslatorBackend
+from pdf_translator.llm.client import LLMClient, LLMConfig
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class LLMConfig:
-    """Configuration for LLM integration.
-
-    Attributes:
-        api_key: Gemini API key (required for LLM features).
-        model: Model name (default: gemini-2.0-flash).
-        use_summary: Enable LLM summary generation.
-        use_fallback: Enable LLM fallback for metadata extraction.
-    """
-
-    api_key: str | None = None
-    model: str = "gemini-2.0-flash"
-    use_summary: bool = False
-    use_fallback: bool = True
 
 
 class LLMSummaryGenerator:
     """Generate document summaries and extract metadata using LLM.
 
-    Uses Gemini 2.0 Flash for:
-    - Summary generation from full original Markdown
-    - Metadata extraction fallback from first page text
+    Uses LiteLLM for unified access to multiple LLM providers:
+    - Gemini (default): gemini/gemini-3.0-flash
+    - OpenAI: openai/gpt-4o-mini
+    - Anthropic: anthropic/claude-3-5-sonnet-20241022
     """
 
     SUMMARY_PROMPT = """Summarize this academic paper in 3-5 sentences, covering:
@@ -745,49 +862,37 @@ First page content:
 
         Args:
             config: LLM configuration.
-
-        Raises:
-            ConfigurationError: If API key is missing when LLM features are enabled.
         """
         self._config = config
-        self._client = None
-
-        if (config.use_summary or config.use_fallback) and not config.api_key:
-            from pdf_translator.translators.base import ConfigurationError
-            raise ConfigurationError("Gemini API key required for LLM features")
-
-    def _get_client(self):
-        """Get or create Gemini client."""
-        if self._client is None:
-            import google.generativeai as genai
-            genai.configure(api_key=self._config.api_key)
-            self._client = genai.GenerativeModel(self._config.model)
-        return self._client
+        self._client = LLMClient(config) if (config.use_summary or config.use_fallback) else None
 
     async def generate_summary(
         self,
         markdown_content: str,
-    ) -> str:
+    ) -> str | None:
         """Generate summary from original Markdown content.
 
         Args:
             markdown_content: Full original Markdown (images excluded).
 
         Returns:
-            Summary text in original language.
+            Summary text in original language, or None if disabled/failed.
         """
-        if not self._config.use_summary:
+        if not self._config.use_summary or not self._client:
             return None
 
         # Remove image references from Markdown
         content = re.sub(r"!\[.*?\]\(.*?\)", "", markdown_content)
 
+        # Truncate if too long (500K chars safety limit)
+        if len(content) > 500_000:
+            logger.warning("Markdown content truncated from %d to 500K chars", len(content))
+            content = content[:500_000]
+
         prompt = self.SUMMARY_PROMPT.format(content=content)
 
         try:
-            client = self._get_client()
-            response = await client.generate_content_async(prompt)
-            return response.text.strip()
+            return await self._client.generate(prompt)
         except Exception as e:
             logger.warning("Failed to generate LLM summary: %s", e)
             return None
@@ -804,15 +909,13 @@ First page content:
         Returns:
             Dict with title, abstract, organization (any may be None).
         """
-        if not self._config.use_fallback:
+        if not self._config.use_fallback or not self._client:
             return {"title": None, "abstract": None, "organization": None}
 
         prompt = self.METADATA_PROMPT.format(content=first_page_text)
 
         try:
-            client = self._get_client()
-            response = await client.generate_content_async(prompt)
-            text = response.text.strip()
+            text = await self._client.generate(prompt)
 
             # Parse JSON from response
             # Handle markdown code blocks if present
@@ -828,10 +931,12 @@ First page content:
 ```
 
 **理由:**
-- LLM関連機能を独立したモジュールに集約
+- **LiteLLM採用**: 100+プロバイダーを統一インターフェースで利用可能
+- **プロバイダー切り替え**: `provider` + `model` の組み合わせで任意のモデルを指定
+- **後方互換**: デフォルトは `gemini/gemini-3.0-flash`（既存設計と同じ動作）
 - **要約生成**: 原文Markdown全文を使用（論文全体の文脈が必要）
 - **フォールバック**: 1ページ目のみ使用（メタデータは通常1ページ目に存在）
-- Gemini 2.0 Flash はコスト効率と速度のバランスが良い
+- Gemini 3.0 Flash はコスト効率と速度のバランスが良い
 - API呼び出しエラーは吸収してNoneを返す（オプショナル機能）
 
 ### 4. サマリー抽出ロジック
@@ -1145,7 +1250,7 @@ output/
 
 ### 7. CLI オプション
 
-**決定: サムネイル + LLM関連オプションを追加**
+**決定: サムネイル + LLM関連オプションを追加（LiteLLM経由でプロバイダー選択可能）**
 
 ```bash
 # 基本使用（サムネイル・LLMなし、後方互換性）
@@ -1157,8 +1262,12 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail
 # サムネイルサイズ指定
 uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width 600
 
-# LLM要約生成あり（Gemini API キー必須）
+# LLM要約生成あり（デフォルト: Gemini 3.0 Flash）
 uv run translate-pdf paper.pdf --save-intermediate --llm-summary
+
+# LLMプロバイダー・モデル選択
+uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider openai --llm-model gpt-4o-mini
+uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider anthropic --llm-model claude-3-5-sonnet-20241022
 
 # LLMフォールバック無効化
 uv run translate-pdf paper.pdf --save-intermediate --no-llm-fallback
@@ -1167,16 +1276,42 @@ uv run translate-pdf paper.pdf --save-intermediate --no-llm-fallback
 uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
 ```
 
+**CLIオプション一覧:**
+
+| オプション | 説明 | デフォルト |
+|-----------|------|-----------|
+| `--thumbnail` | サムネイル生成を有効化 | 無効 |
+| `--thumbnail-width` | サムネイル幅（ピクセル） | 400 |
+| `--llm-summary` | LLM要約生成を有効化 | 無効 |
+| `--llm-provider` | LLMプロバイダー (gemini, openai, anthropic, etc.) | gemini |
+| `--llm-model` | LLMモデル名 | gemini-3.0-flash |
+| `--no-llm-fallback` | LLMメタデータフォールバックを無効化 | 有効 |
+
 **環境変数:**
 
 ```bash
-# Gemini API キー（LLM機能使用時に必須）
-export GEMINI_API_KEY="your-api-key"
+# プロバイダーに応じたAPIキー（LLM機能使用時に必須）
+export GEMINI_API_KEY="your-gemini-key"      # Gemini使用時
+export OPENAI_API_KEY="your-openai-key"      # OpenAI使用時
+export ANTHROPIC_API_KEY="your-anthropic-key"  # Anthropic使用時
 ```
+
+**LiteLLMサポートプロバイダー例:**
+
+| プロバイダー | --llm-provider | 主要モデル例 |
+|-------------|---------------|-------------|
+| Google Gemini | gemini | gemini-3.0-flash, gemini-1.5-pro |
+| OpenAI | openai | gpt-4o-mini, gpt-4o |
+| Anthropic | anthropic | claude-3-5-sonnet-20241022 |
+| AWS Bedrock | bedrock | anthropic.claude-v2 |
+| Azure OpenAI | azure | gpt-4 |
+
+※ LiteLLMは100+プロバイダーをサポート。詳細は [LiteLLM Providers](https://docs.litellm.ai/docs/providers) 参照。
 
 **理由:**
 - 後方互換性のためデフォルトはすべてオフ
 - LLM機能はオプトイン（コスト・プライバシー考慮）
+- LiteLLM経由で任意のLLMプロバイダー/モデルを選択可能
 - Webサービス用途では明示的に有効化
 
 ---
@@ -1201,13 +1336,18 @@ export GEMINI_API_KEY="your-api-key"
    - `generate()`: bytes出力
    - `generate_to_file()`: ファイル出力
 
-### Phase 3: LLM統合モジュール
+### Phase 3: LLM統合モジュール（LiteLLM）
 
-**ファイル:** `src/pdf_translator/llm/__init__.py` (新規ディレクトリ)
-**ファイル:** `src/pdf_translator/llm/summary_generator.py` (新規)
+**ファイル:**
+- `src/pdf_translator/llm/__init__.py` (新規ディレクトリ)
+- `src/pdf_translator/llm/client.py` (新規) - LiteLLM統一クライアント
+- `src/pdf_translator/llm/summary_generator.py` (新規) - 要約・メタデータ抽出
 
-1. `LLMConfig` dataclass 作成
-2. `LLMSummaryGenerator` クラス作成
+1. `LLMConfig` dataclass 作成（provider/model 分離設計）
+2. `LLMClient` クラス作成
+   - `generate()`: LiteLLM経由でテキスト生成
+   - プロバイダー自動切り替え（gemini, openai, anthropic 等）
+3. `LLMSummaryGenerator` クラス作成
    - `generate_summary()`: 原文Markdownから要約生成
    - `extract_metadata_fallback()`: 1ページ目からメタデータ抽出
 
@@ -1215,8 +1355,14 @@ export GEMINI_API_KEY="your-api-key"
 ```toml
 # pyproject.toml
 [project.optional-dependencies]
-llm = ["google-generativeai>=0.8.0"]
+llm = ["litellm>=1.80.0"]
 ```
+
+**LiteLLM採用理由:**
+- 100+プロバイダーを統一APIで利用可能
+- `acompletion()` で非同期対応
+- MIT License（Apache-2.0互換）
+- 新モデル追加時もライブラリ更新のみで対応
 
 ### Phase 4: Markdown二重生成
 
@@ -1264,9 +1410,11 @@ llm = ["google-generativeai>=0.8.0"]
 1. `--thumbnail` フラグ追加
 2. `--thumbnail-width` オプション追加
 3. `--llm-summary` フラグ追加
-4. `--no-llm-fallback` フラグ追加
-5. `GEMINI_API_KEY` 環境変数読み取り
-6. `PipelineConfig` への伝播
+4. `--llm-provider` オプション追加（デフォルト: gemini）
+5. `--llm-model` オプション追加（デフォルト: gemini-3.0-flash）
+6. `--no-llm-fallback` フラグ追加
+7. プロバイダー対応APIキー環境変数読み取り（GEMINI_API_KEY, OPENAI_API_KEY, etc.）
+8. `PipelineConfig` への伝播
 
 ### Phase 9: テスト
 
@@ -1286,16 +1434,18 @@ llm = ["google-generativeai>=0.8.0"]
 | `src/pdf_translator/output/thumbnail_generator.py` | **新規** - `ThumbnailGenerator` クラス |
 | `src/pdf_translator/output/summary_extractor.py` | **新規** - `SummaryExtractor` クラス（LLM統合） |
 | `src/pdf_translator/llm/__init__.py` | **新規** - LLMモジュール初期化 |
+| `src/pdf_translator/llm/client.py` | **新規** - `LLMConfig`, `LLMClient` クラス（LiteLLM統一インターフェース） |
 | `src/pdf_translator/llm/summary_generator.py` | **新規** - `LLMSummaryGenerator` クラス |
 | `src/pdf_translator/output/markdown_writer.py` | `use_translated` パラメータ追加 |
 | `src/pdf_translator/pipeline/translation_pipeline.py` | `TranslationResult.summary/markdown_original`, `PipelineConfig` LLM設定追加 |
 | `src/pdf_translator/output/translated_document.py` | `summary` セクション追加、原文Markdown保存 |
-| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--no-llm-fallback` オプション追加 |
-| `pyproject.toml` | `[project.optional-dependencies]` に `llm` 追加 |
+| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--llm-provider`, `--llm-model`, `--no-llm-fallback` オプション追加 |
+| `pyproject.toml` | `[project.optional-dependencies]` に `llm = ["litellm>=1.80.0"]` 追加 |
 | `tests/test_document_summary.py` | **新規** - DocumentSummary テスト |
 | `tests/test_thumbnail_generator.py` | **新規** - サムネイル生成テスト |
 | `tests/test_summary_extractor.py` | **新規** - サマリー抽出テスト |
 | `tests/test_llm_summary_generator.py` | **新規** - LLM要約生成テスト |
+| `tests/test_llm_client.py` | **新規** - LLMClient テスト |
 
 ---
 
@@ -1309,13 +1459,14 @@ llm = ["google-generativeai>=0.8.0"]
 | サムネイル生成失敗 | 低 | 低 | エラーをログし、`thumbnail=None` で続行 |
 | JSON肥大化（サムネイル埋め込み時） | 中 | 中 | `include_thumbnail=False` をデフォルトに |
 | 既存テスト破壊 | 低 | 低 | 新規フィールドはオプショナル |
-| Gemini APIキー未設定 | 中 | 低 | LLM機能使用時のみエラー、それ以外は正常動作 |
+| LLM APIキー未設定 | 中 | 低 | LLM機能使用時のみエラー、それ以外は正常動作。プロバイダーに応じた環境変数名を案内 |
+| LiteLLMバージョン互換性 | 低 | 低 | `>=1.80.0` でバージョン固定、CIでテスト |
 
 **後方互換性:**
 - `DocumentSummary` は新規追加のため影響なし
 - `TranslationResult.summary`, `markdown_original` はオプショナル（`None` がデフォルト）
 - CLI オプションはデフォルトオフ
-- LLM機能は `google-generativeai` をオプショナル依存として追加
+- LLM機能は `litellm` をオプショナル依存として追加（MIT License、Apache-2.0互換）
 
 ---
 
@@ -1325,7 +1476,9 @@ llm = ["google-generativeai>=0.8.0"]
 - [Issue #61](https://github.com/Mega-Gorilla/pdf-translator/issues/61) - ベンチマーク結果
 - `examples/outputs/sample_llama_translated.json` - 現在のJSON出力例
 - `src/pdf_translator/output/image_extractor.py` - pypdfium2レンダリング参考
-- [Gemini API Documentation](https://ai.google.dev/docs) - LLM統合参考
+- [LiteLLM Documentation](https://docs.litellm.ai/) - 統一LLMライブラリ
+- [LiteLLM Providers](https://docs.litellm.ai/docs/providers) - サポートプロバイダー一覧
+- [LiteLLM GitHub](https://github.com/BerriAI/litellm) - MIT License
 
 ---
 
@@ -1336,7 +1489,8 @@ llm = ["google-generativeai>=0.8.0"]
 | 著者情報抽出 | LLMで著者名リストを抽出 | 中 |
 | キーワード抽出 | LLMでキーワードを自動抽出 | 低 |
 | 複数タイトル対応 | 副題がある場合の結合 | 低 |
-| LLMモデル選択 | Gemini以外のモデル対応（OpenAI等） | 低 |
+
+※ LLMモデル選択はLiteLLM採用により実装済み（100+プロバイダー対応）
 
 ---
 
@@ -1346,5 +1500,6 @@ llm = ["google-generativeai>=0.8.0"]
 |------|---------|
 | 2026-01-14 | 初版作成 |
 | 2026-01-14 | レビューFB対応: タイトル翻訳経路、サムネイル出力仕様、複数段落結合ルールを明記 |
-| 2026-01-15 | LLM統合追加: Gemini 2.0 Flashによる要約生成、メタデータフォールバック、Markdown二重生成 |
+| 2026-01-15 | LLM統合追加: Gemini 3.0 Flashによる要約生成、メタデータフォールバック、Markdown二重生成 |
 | 2026-01-15 | Re-Review対応: Organization常時抽出、入力サイズ制御追記、summary_max_tokens削除、サムネイルPNG固定、モデル名統一 |
+| 2026-01-15 | LiteLLM採用: 統一LLMインターフェース導入、100+プロバイダー対応、provider/model CLI引数追加 |
