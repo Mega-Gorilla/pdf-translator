@@ -15,6 +15,8 @@ PDF Translator is a PDF translation tool that preserves document layout while tr
 - **PP-DocLayout / DocLayout-YOLO**: Document layout analysis
 - **spaCy**: Natural language processing
 - **deep-translator**: Google Translate backend
+- **litellm**: Unified LLM client (Gemini, OpenAI, Anthropic)
+- **python-dotenv**: Environment variable loading from .env files
 
 ## Commands
 
@@ -53,33 +55,52 @@ uv run ruff check src/ --fix
 
 ### Data Flow
 ```
-PDF → PDFProcessor.extract_text_objects() → PDFDocument (intermediate JSON)
-    → Translation → PDFProcessor.apply() → Modified PDF
+PDF → ParagraphExtractor → Paragraph[] → TranslationPipeline
+    → Translation → PDF/Markdown/JSON output
 ```
 
 ### Key Components
 
-**core/models.py** - Intermediate data format (PDFDocument schema v1.0.0):
-- `PDFDocument` → `Page` → `TextObject` (with BBox, Font, Color, Transform)
+**core/models.py** - Data models:
+- `Paragraph` - Translated paragraph with layout info
+- `BBox`, `Font`, `Color` - PDF object properties
 - `LayoutBlock` for PP-DocLayout integration
-- JSON serialization for pipeline data exchange
 
 **core/pdf_processor.py** - PDF manipulation via pypdfium2:
 - Template PDF approach: preserve non-text elements, modify text layer only
 - Stable object IDs (`text_p{page}_i{index}`) for remove/insert workflow
 - Control character normalization for PDF-specific encoding issues
 
+**pipeline/translation_pipeline.py** - Main orchestration:
+- `TranslationPipeline` - Coordinates extraction, translation, and output
+- `PipelineConfig` - Configuration for all pipeline options
+- `TranslationResult` - Result with PDF bytes, Markdown, and JSON documents
+
 **translators/** - Async translation backends (Protocol-based):
 - `TranslatorBackend` protocol: `translate()` and `translate_batch()`
 - Implementations: Google (default), DeepL, OpenAI
 - Error types: `TranslationError` (retryable), `ConfigurationError` (not retryable)
 
+**output/** - Output generation:
+- `BaseSummary` / `TranslatedSummary` - Document summary dataclasses
+- `BaseDocument` / `TranslationDocument` - JSON schema v2.0.0 dataclasses
+- `SummaryExtractor` - Extract title, abstract from layout
+- `MarkdownWriter` - Generate Markdown output
+- `ThumbnailGenerator` - Generate PDF thumbnails
+
+**llm/** - LLM integration:
+- `LLMClient` - Unified client via litellm (Gemini, OpenAI, Anthropic)
+- `LLMSummaryGenerator` - Generate document summaries
+
 ### Directory Structure
 ```
 src/pdf_translator/
 ├── core/           # PDF processing (pypdfium2), data models
-├── nlp/            # Text processing (spaCy) - planned
+├── pipeline/       # Translation pipeline orchestration
 ├── translators/    # Translation backends (google, deepl, openai)
+├── output/         # Output generation (Markdown, JSON, thumbnail)
+├── llm/            # LLM integration (summary generation)
+├── nlp/            # Text processing (spaCy)
 └── resources/      # Fonts, data files
 ```
 

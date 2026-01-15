@@ -5,14 +5,38 @@ PDF translation tool with layout preservation - outputs Markdown and PDF.
 ## Features
 
 - **Layout-preserving translation**: Translates PDF content while maintaining original formatting
-- **Multiple output formats**: Generates both translated PDF and Markdown
-- **Document layout analysis**: Uses ML-based layout detection for accurate text block identification
+- **Multiple output formats**: Generates translated PDF, Markdown, and structured JSON
+- **Document layout analysis**: Uses ML-based layout detection (PP-DocLayout) for accurate text block identification
 - **Multiple translation backends**: Google Translate (default), DeepL, OpenAI GPT
+- **LLM-powered summaries**: Generate document summaries using Gemini, OpenAI, or Anthropic
+- **Thumbnail generation**: Create thumbnail images from PDF first pages
+- **Image/Table extraction**: Extract images and tables from PDFs into Markdown
+- **Multilingual JSON output**: Separate base document and translation files for efficient multi-language support
 
 ## Installation
 
 ```bash
 uv sync
+```
+
+### Environment Setup
+
+Copy the example environment file and configure your API keys:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to add your API keys:
+
+```bash
+# Translation backends
+DEEPL_API_KEY=your-deepl-api-key      # For --backend deepl
+OPENAI_API_KEY=your-openai-api-key    # For --backend openai
+
+# LLM features (--llm-summary, --llm-fallback)
+GEMINI_API_KEY=your-gemini-api-key    # Default LLM provider
+ANTHROPIC_API_KEY=your-anthropic-key  # For --llm-provider anthropic
 ```
 
 ### GPU Acceleration (Recommended)
@@ -72,27 +96,56 @@ GPU count: 1
 
 ```bash
 # Basic translation (Google Translate, EN → JA)
-translate-pdf paper.pdf
+uv run translate-pdf paper.pdf
 
 # Specify output file
-translate-pdf paper.pdf -o ./output/translated.pdf
+uv run translate-pdf paper.pdf -o ./output/paper.ja.pdf
 
 # Use different backend
-translate-pdf paper.pdf --backend deepl
-translate-pdf paper.pdf --backend openai
+uv run translate-pdf paper.pdf --backend deepl
+uv run translate-pdf paper.pdf --backend openai
+
+# Specify languages
+uv run translate-pdf paper.pdf -s en -t zh  # English to Chinese
 ```
+
+### Document Summary & Thumbnail
+
+Generate document metadata, thumbnails, and LLM-powered summaries:
+
+```bash
+# Generate thumbnail from first page
+uv run translate-pdf paper.pdf --thumbnail
+
+# Generate LLM-based document summary (requires API key)
+uv run translate-pdf paper.pdf --llm-summary
+
+# Use LLM fallback for metadata extraction when layout analysis fails
+uv run translate-pdf paper.pdf --llm-fallback
+
+# Combine all summary features
+uv run translate-pdf paper.pdf --thumbnail --llm-summary --llm-fallback
+
+# Specify LLM provider and model
+uv run translate-pdf paper.pdf --llm-summary --llm-provider openai --llm-model gpt-4o
+```
+
+**Supported LLM providers**: `gemini` (default), `openai`, `anthropic`
 
 ### Markdown Output
 
 ```bash
 # Generate Markdown alongside PDF
-translate-pdf paper.pdf --markdown
+uv run translate-pdf paper.pdf --markdown
 
 # Markdown with original + translation (parallel mode)
-translate-pdf paper.pdf -m --markdown-mode parallel
+uv run translate-pdf paper.pdf -m --markdown-mode parallel
 
 # Include all categories in Markdown (headers, footers, etc.)
-translate-pdf paper.pdf -m --markdown-include-all
+uv run translate-pdf paper.pdf -m --markdown-include-all
+
+# Disable YAML frontmatter
+uv run translate-pdf paper.pdf -m --markdown-no-metadata
 ```
 
 #### Markdown Output Modes
@@ -111,14 +164,6 @@ AutoGenは、開発者が相互に対話してタスクを実行できる複数�
 LLMアプリケーションを構築できるオープンソースフレームワークです。
 ```
 
-**`original_only`**: Outputs original text only. Useful for extracting structured content without translation.
-
-```markdown
-## Abstract
-AutoGen is an open-source framework that allows developers to build LLM applications
-via multiple agents that can converse with each other to accomplish tasks.
-```
-
 **`parallel`**: Outputs both original and translation for each paragraph. Ideal for comparison or quality review.
 
 ```markdown
@@ -130,6 +175,24 @@ AutoGenは、開発者が相互に対話してタスクを実行できる複数�
 LLMアプリケーションを構築できるオープンソースフレームワークです。
 ```
 
+### Image & Table Extraction
+
+When using `--markdown`, images and tables are automatically extracted:
+
+```bash
+# Extract images and tables (default with --markdown)
+uv run translate-pdf paper.pdf --markdown
+
+# Disable image extraction
+uv run translate-pdf paper.pdf --markdown --no-extract-images
+
+# Disable table extraction
+uv run translate-pdf paper.pdf --markdown --no-extract-tables
+
+# Customize image output
+uv run translate-pdf paper.pdf -m --image-format jpeg --image-quality 90 --image-dpi 200
+```
+
 ### Translation Category Control
 
 By default, only body text categories are translated (`text`, `abstract`, etc.).
@@ -137,26 +200,113 @@ Titles, formulas, and figures are kept in the original language.
 
 ```bash
 # Translate all categories (including titles, formulas)
-translate-pdf paper.pdf --translate-all
+uv run translate-pdf paper.pdf --translate-all
 
 # Specify custom categories to translate
-translate-pdf paper.pdf --translate-categories "text,abstract,doc_title"
+uv run translate-pdf paper.pdf --translate-categories "text,abstract,doc_title"
 ```
+
+### JSON Output (Intermediate Files)
+
+Save structured JSON files for debugging, regeneration, or web service integration:
+
+```bash
+# Save intermediate JSON files
+uv run translate-pdf paper.pdf --save-intermediate
+
+# Full example with all metadata
+uv run translate-pdf paper.pdf -t ja --save-intermediate --thumbnail --llm-summary --markdown
+```
+
+This generates two JSON files:
+- `paper.json` - Base document (original content, metadata, source-language summary)
+- `paper.ja.json` - Translation document (translated content, target-language summary)
 
 ### Advanced Options
 
 ```bash
 # Debug mode (draw bounding boxes)
-translate-pdf paper.pdf --debug
+uv run translate-pdf paper.pdf --debug
 
 # Side-by-side comparison PDF
-translate-pdf paper.pdf --side-by-side
+uv run translate-pdf paper.pdf --side-by-side
 
-# Save intermediate JSON for later regeneration
-translate-pdf paper.pdf --save-intermediate
+# Verbose output
+uv run translate-pdf paper.pdf -v
 ```
 
-See `translate-pdf --help` for all options.
+See `uv run translate-pdf --help` for all options.
+
+## Output Files
+
+When running with all features enabled:
+
+```bash
+uv run translate-pdf paper.pdf -t ja --markdown --thumbnail --llm-summary --save-intermediate
+```
+
+The following files are generated:
+
+```
+output/
+├── paper.ja.pdf              # Translated PDF
+├── paper.ja.md               # Translated Markdown
+├── paper.md                  # Original Markdown
+├── paper.json                # Base document (schema v2.0.0)
+├── paper.ja.json             # Translation document
+├── paper_thumbnail.png       # Thumbnail image
+└── images/                   # Extracted images (if any)
+    ├── paper_p0_img0.png
+    └── ...
+```
+
+### JSON Schema (v2.0.0)
+
+**Base Document (`paper.json`)**:
+```json
+{
+  "schema_version": "2.0.0",
+  "metadata": {
+    "source_file": "paper.pdf",
+    "source_lang": "en",
+    "page_count": 10,
+    "paragraph_count": 145
+  },
+  "summary": {
+    "title": "Document Title",
+    "abstract": "Abstract text...",
+    "summary": "LLM-generated summary in source language..."
+  },
+  "paragraphs": [...]
+}
+```
+
+**Translation Document (`paper.ja.json`)**:
+```json
+{
+  "schema_version": "2.0.0",
+  "target_lang": "ja",
+  "base_file": "paper.json",
+  "translated_at": "2026-01-15T12:00:00",
+  "translator_backend": "google",
+  "translated_count": 120,
+  "summary": {
+    "title": "翻訳されたタイトル",
+    "abstract": "翻訳された要約...",
+    "summary": "LLMで生成された要約（翻訳言語）..."
+  },
+  "paragraphs": {
+    "para_p0_b1": "翻訳文1",
+    "para_p0_b2": "翻訳文2"
+  }
+}
+```
+
+## Examples
+
+See the `examples/` directory for sample outputs:
+
+- `examples/summary_output/` - Full example with thumbnail, JSON, and Markdown output
 
 ## License
 
