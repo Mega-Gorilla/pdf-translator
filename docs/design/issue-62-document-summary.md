@@ -71,7 +71,7 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 | aisuite (Andrew Ng) | 非同期非対応、メンテナンス懸念（最終更新2024/12） |
 | any-llm (Mozilla) | 比較的新しく、プロバイダー数が少ない |
 
-**デフォルトモデル**: `gemini/gemini-3.0-flash`（コスト効率・速度のバランス）
+**デフォルトモデル**: `gemini-3.0-flash`（provider: gemini、コスト効率・速度のバランス）
 
 ### 翻訳対象カテゴリの現状
 
@@ -174,10 +174,17 @@ class MarkdownWriter:
 - ページ数制限なし（論文全体の文脈が要約に必要）
 
 **入力サイズ制御:**
-- Gemini 3.0 Flash のコンテキストウィンドウ: 1,048,576 tokens
-- 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（十分収まる）
+
+| プロバイダー | モデル | コンテキストウィンドウ |
+|-------------|--------|---------------------|
+| Gemini | gemini-3.0-flash | 1,048,576 tokens |
+| OpenAI | gpt-4o-mini | 128,000 tokens |
+| Anthropic | claude-3-5-sonnet | 200,000 tokens |
+
+- 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（全プロバイダーで十分収まる）
 - 超長文書（100ページ超）の場合: 警告ログを出力し、先頭 500,000 文字で切り捨て
-- コスト最適化: 入力トークン単価が低いため、全文送信でも許容範囲
+- **デフォルト動作**: Geminiの大容量コンテキストを前提とした設計
+- **他プロバイダー使用時の注意**: 非常に長い文書でOpenAI/Anthropicを使用する場合、コンテキスト上限に注意が必要。必要に応じて切り捨て閾値を調整可能（将来拡張）
 
 **出力仕様:**
 - `summary`: 原文言語での要約（3-5文）
@@ -719,36 +726,43 @@ class LLMConfig:
 
     Attributes:
         provider: LLM provider ("gemini", "openai", "anthropic", etc.).
-        model: Model name within provider.
+        model: Model name within provider. If None, uses PROVIDER_DEFAULTS.
         api_key: API key (optional, can use environment variables).
         use_summary: Enable LLM summary generation.
         use_fallback: Enable LLM fallback for metadata extraction.
     """
 
     provider: str = "gemini"
-    model: str = "gemini-3.0-flash"
+    model: str | None = None  # None = use PROVIDER_DEFAULTS[provider]
     api_key: str | None = None
     use_summary: bool = False
     use_fallback: bool = True
 
     # Supported providers and their default models
-    PROVIDER_DEFAULTS: dict[str, str] = field(default_factory=lambda: {
+    PROVIDER_DEFAULTS: ClassVar[dict[str, str]] = {
         "gemini": "gemini-3.0-flash",
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-5-sonnet-20241022",
-    })
+    }
 
     # Environment variable names for API keys
-    API_KEY_ENV_VARS: dict[str, str] = field(default_factory=lambda: {
+    API_KEY_ENV_VARS: ClassVar[dict[str, str]] = {
         "gemini": "GEMINI_API_KEY",
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
-    })
+    }
+
+    @property
+    def effective_model(self) -> str:
+        """Get effective model name (resolves None to provider default)."""
+        if self.model is not None:
+            return self.model
+        return self.PROVIDER_DEFAULTS.get(self.provider, "gemini-3.0-flash")
 
     @property
     def litellm_model(self) -> str:
         """Get LiteLLM model string (provider/model format)."""
-        return f"{self.provider}/{self.model}"
+        return f"{self.provider}/{self.effective_model}"
 
     def get_api_key_env_var(self) -> str:
         """Get environment variable name for API key."""
@@ -1284,8 +1298,18 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
 | `--thumbnail-width` | サムネイル幅（ピクセル） | 400 |
 | `--llm-summary` | LLM要約生成を有効化 | 無効 |
 | `--llm-provider` | LLMプロバイダー (gemini, openai, anthropic, etc.) | gemini |
-| `--llm-model` | LLMモデル名 | gemini-3.0-flash |
+| `--llm-model` | LLMモデル名（provider抜き）。省略時はproviderごとのデフォルトを使用 | (providerによる) |
 | `--no-llm-fallback` | LLMメタデータフォールバックを無効化 | 有効 |
+
+**モデル自動選択ルール:**
+- `--llm-model` を省略した場合、`--llm-provider` に応じてデフォルトモデルを自動選択
+- 例: `--llm-provider openai` → `gpt-4o-mini` が自動設定
+
+| --llm-provider | --llm-model 省略時のデフォルト |
+|----------------|------------------------------|
+| gemini | gemini-3.0-flash |
+| openai | gpt-4o-mini |
+| anthropic | claude-3-5-sonnet-20241022 |
 
 **環境変数:**
 
@@ -1503,3 +1527,4 @@ llm = ["litellm>=1.80.0"]
 | 2026-01-15 | LLM統合追加: Gemini 3.0 Flashによる要約生成、メタデータフォールバック、Markdown二重生成 |
 | 2026-01-15 | Re-Review対応: Organization常時抽出、入力サイズ制御追記、summary_max_tokens削除、サムネイルPNG固定、モデル名統一 |
 | 2026-01-15 | LiteLLM採用: 統一LLMインターフェース導入、100+プロバイダー対応、provider/model CLI引数追加 |
+| 2026-01-15 | Re-Review 2対応: モデル自動選択ルール追加、provider/model表記明確化、マルチプロバイダー入力サイズ制御 |
