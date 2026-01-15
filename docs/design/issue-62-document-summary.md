@@ -1284,8 +1284,8 @@ uv run translate-pdf paper.pdf --save-intermediate --llm-summary
 uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider openai --llm-model gpt-5-mini
 uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider anthropic --llm-model claude-sonnet-4-5
 
-# LLMフォールバック無効化
-uv run translate-pdf paper.pdf --save-intermediate --no-llm-fallback
+# LLMフォールバック有効化（メタデータ抽出にLLMを使用）
+uv run translate-pdf paper.pdf --save-intermediate --llm-fallback
 
 # フル機能（Webサービス向け）
 uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
@@ -1300,7 +1300,7 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
 | `--llm-summary` | LLM要約生成を有効化 | 無効 |
 | `--llm-provider` | LLMプロバイダー (gemini, openai, anthropic, etc.) | gemini |
 | `--llm-model` | LLMモデル名（provider抜き）。省略時はproviderごとのデフォルトを使用 | (providerによる) |
-| `--no-llm-fallback` | LLMメタデータフォールバックを無効化 | 有効 |
+| `--llm-fallback` | LLMメタデータフォールバックを有効化 | 無効 |
 
 **モデル自動選択ルール:**
 - `--llm-model` を省略した場合、`--llm-provider` に応じてデフォルトモデルを自動選択
@@ -1437,7 +1437,7 @@ llm = ["litellm>=1.80.0"]
 3. `--llm-summary` フラグ追加
 4. `--llm-provider` オプション追加（デフォルト: gemini）
 5. `--llm-model` オプション追加（省略時: providerごとのデフォルトを自動選択）
-6. `--no-llm-fallback` フラグ追加
+6. `--llm-fallback` フラグ追加
 7. プロバイダー対応APIキー環境変数読み取り（GEMINI_API_KEY, OPENAI_API_KEY, etc.）
 8. `PipelineConfig` への伝播
 
@@ -1464,7 +1464,7 @@ llm = ["litellm>=1.80.0"]
 | `src/pdf_translator/output/markdown_writer.py` | `use_translated` パラメータ追加 |
 | `src/pdf_translator/pipeline/translation_pipeline.py` | `TranslationResult.summary/markdown_original`, `PipelineConfig` LLM設定追加 |
 | `src/pdf_translator/output/translated_document.py` | `summary` セクション追加、原文Markdown保存 |
-| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--llm-provider`, `--llm-model`, `--no-llm-fallback` オプション追加 |
+| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--llm-provider`, `--llm-model`, `--llm-fallback` オプション追加 |
 | `pyproject.toml` | `[project.optional-dependencies]` に `llm = ["litellm>=1.80.0"]` 追加 |
 | `tests/test_document_summary.py` | **新規** - DocumentSummary テスト |
 | `tests/test_thumbnail_generator.py` | **新規** - サムネイル生成テスト |
