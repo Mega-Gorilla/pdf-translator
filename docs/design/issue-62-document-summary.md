@@ -11,7 +11,7 @@ PDF翻訳Webサービス構築に向けて、翻訳結果からドキュメン�
 | 機能 | 説明 |
 |------|------|
 | **メタデータ抽出** | タイトル、Abstract、Organization をレイアウト解析 + LLMフォールバックで取得 |
-| **LLM要約生成** | 原文Markdown全文からGemini 3 Flashで要約を生成 |
+| **LLM要約生成** | 原文Markdown全文からGemini 2.0 Flashで要約を生成 |
 | **サムネイル生成** | PDF 1ページ目のサムネイル画像 |
 | **Markdown二重生成** | 原文Markdown + 翻訳Markdownの両方を出力 |
 
@@ -49,7 +49,7 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 | Organization（団体名）の取得 | レイアウト解析では取得不可→LLMで抽出 |
 | ユーザーフレンドリーな要約 | Abstractは技術的すぎる場合あり→LLMで要約生成 |
 
-**LLMモデル選定**: Gemini 3 Flash（コスト効率・速度のバランス）
+**LLMモデル選定**: Gemini 2.0 Flash（コスト効率・速度のバランス）
 
 ### 翻訳対象カテゴリの現状
 
@@ -136,12 +136,12 @@ class MarkdownWriter:
 
 ### 2. LLM要約生成
 
-**決定: 原文Markdown全文をGemini 3 Flashに渡して要約を生成**
+**決定: 原文Markdown全文をGemini 2.0 Flashに渡して要約を生成**
 
 ```
 処理フロー:
 1. 原文Markdown生成（画像参照は除外）
-2. Gemini 3 Flash に原文Markdown全文を送信
+2. Gemini 2.0 Flash に原文Markdown全文を送信
 3. 要約（原文言語）を取得
 4. 要約を翻訳（通常の翻訳パイプラインを使用）
 ```
@@ -150,6 +150,12 @@ class MarkdownWriter:
 - 原文Markdown全文（`paper_original.md` の内容）
 - 画像参照 (`![...]()`) は除外してテキストのみ
 - ページ数制限なし（論文全体の文脈が要約に必要）
+
+**入力サイズ制御:**
+- Gemini 2.0 Flash のコンテキストウィンドウ: 1,048,576 tokens
+- 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（十分収まる）
+- 超長文書（100ページ超）の場合: 警告ログを出力し、先頭 500,000 文字で切り捨て
+- コスト最適化: 入力トークン単価が低いため、全文送信でも許容範囲
 
 **出力仕様:**
 - `summary`: 原文言語での要約（3-5文）
@@ -234,14 +240,14 @@ First page content:
 │     ├── Step 2: LLM Fallback (if title/abstract missing)            │
 │     │   ├── Input: First page text only                             │
 │     │   ├── Output: title, abstract, organization                   │
-│     │   └── Model: Gemini 3 Flash                                   │
+│     │   └── Model: Gemini 2.0 Flash                                   │
 │     │                                                               │
 │     ├── Step 3: Translate title (if not translated)                 │
 │     │                                                               │
 │     ├── Step 4: LLM Summary Generation                              │
 │     │   ├── Input: paper_original.md (full, images excluded)        │
 │     │   ├── Output: summary (3-5 sentences)                         │
-│     │   └── Model: Gemini 3 Flash                                   │
+│     │   └── Model: Gemini 2.0 Flash                                   │
 │     │                                                               │
 │     ├── Step 5: Translate summary                                   │
 │     │                                                               │
@@ -575,14 +581,13 @@ class ThumbnailConfig:
     Attributes:
         width: Target thumbnail width in pixels.
             Height is calculated to maintain aspect ratio.
-        format: Output format ("png" or "jpeg").
-        quality: JPEG quality (1-100). Ignored for PNG.
         page_number: Page to render (0-indexed). Default: 0 (first page).
+
+    Note:
+        Output format is fixed to PNG for simplicity and transparency support.
     """
 
     width: int = 400
-    format: str = "png"
-    quality: int = 85
     page_number: int = 0
 
 
@@ -639,15 +644,10 @@ class ThumbnailGenerator:
             actual_width = pil_image.width
             actual_height = pil_image.height
 
-            # Convert to bytes
+            # Convert to PNG bytes
             import io
             buffer = io.BytesIO()
-
-            if self._config.format.lower() == "jpeg":
-                pil_image = pil_image.convert("RGB")  # JPEG doesn't support alpha
-                pil_image.save(buffer, format="JPEG", quality=self._config.quality)
-            else:
-                pil_image.save(buffer, format="PNG")
+            pil_image.save(buffer, format="PNG")
 
             return buffer.getvalue(), actual_width, actual_height
 
@@ -705,20 +705,18 @@ class LLMConfig:
         model: Model name (default: gemini-2.0-flash).
         use_summary: Enable LLM summary generation.
         use_fallback: Enable LLM fallback for metadata extraction.
-        summary_max_tokens: Max tokens for summary output.
     """
 
     api_key: str | None = None
     model: str = "gemini-2.0-flash"
     use_summary: bool = False
     use_fallback: bool = True
-    summary_max_tokens: int = 500
 
 
 class LLMSummaryGenerator:
     """Generate document summaries and extract metadata using LLM.
 
-    Uses Gemini 3 Flash for:
+    Uses Gemini 2.0 Flash for:
     - Summary generation from full original Markdown
     - Metadata extraction fallback from first page text
     """
@@ -833,7 +831,7 @@ First page content:
 - LLM関連機能を独立したモジュールに集約
 - **要約生成**: 原文Markdown全文を使用（論文全体の文脈が必要）
 - **フォールバック**: 1ページ目のみ使用（メタデータは通常1ページ目に存在）
-- Gemini 3 Flash はコスト効率と速度のバランスが良い
+- Gemini 2.0 Flash はコスト効率と速度のバランスが良い
 - API呼び出しエラーは吸収してNoneを返す（オプショナル機能）
 
 ### 4. サマリー抽出ロジック
@@ -933,15 +931,20 @@ class SummaryExtractor:
         abstract_source: Literal["layout", "llm"] = "layout"
         organization = None
 
-        # Step 2: LLM fallback for missing metadata + organization
-        if self._llm_generator and (not title or not abstract):
+        # Step 2: LLM metadata extraction
+        # - Organization: Always extracted via LLM (not available in layout)
+        # - Title/Abstract: Fallback when layout analysis fails
+        if self._llm_generator:
             first_page_text = self._get_first_page_text(paragraphs)
             if first_page_text:
                 llm_metadata = await self._llm_generator.extract_metadata_fallback(
                     first_page_text
                 )
 
-                # Use LLM result if layout failed
+                # Organization is always from LLM (no layout category exists)
+                organization = llm_metadata.get("organization")
+
+                # Use LLM result only if layout failed
                 if not title and llm_metadata.get("title"):
                     title = llm_metadata["title"]
                     title_source = "llm"
@@ -949,9 +952,6 @@ class SummaryExtractor:
                 if not abstract and llm_metadata.get("abstract"):
                     abstract = llm_metadata["abstract"]
                     abstract_source = "llm"
-
-                # Organization is always from LLM
-                organization = llm_metadata.get("organization")
 
         # Step 3: Translate title if needed
         if title and not title_translated and translator:
@@ -1346,4 +1346,5 @@ llm = ["google-generativeai>=0.8.0"]
 |------|---------|
 | 2026-01-14 | 初版作成 |
 | 2026-01-14 | レビューFB対応: タイトル翻訳経路、サムネイル出力仕様、複数段落結合ルールを明記 |
-| 2026-01-15 | LLM統合追加: Gemini 3 Flashによる要約生成、メタデータフォールバック、Markdown二重生成 |
+| 2026-01-15 | LLM統合追加: Gemini 2.0 Flashによる要約生成、メタデータフォールバック、Markdown二重生成 |
+| 2026-01-15 | Re-Review対応: Organization常時抽出、入力サイズ制御追記、summary_max_tokens削除、サムネイルPNG固定、モデル名統一 |
