@@ -71,7 +71,7 @@ PP-DocLayoutV2のカテゴリを分析した結果、以下が**明確かつ確�
 | aisuite (Andrew Ng) | 非同期非対応、メンテナンス懸念（最終更新2024/12） |
 | any-llm (Mozilla) | 比較的新しく、プロバイダー数が少ない |
 
-**デフォルトモデル**: `gemini-3.0-flash`（provider: gemini、コスト効率・速度のバランス）
+**デフォルトモデル**: `gemini-3-flash-preview`（provider: gemini、コスト効率・速度のバランス）
 
 ### 翻訳対象カテゴリの現状
 
@@ -177,9 +177,9 @@ class MarkdownWriter:
 
 | プロバイダー | モデル | コンテキストウィンドウ |
 |-------------|--------|---------------------|
-| Gemini | gemini-3.0-flash | 1,048,576 tokens |
-| OpenAI | gpt-5-mini | 128,000 tokens |
-| Anthropic | claude-sonnet-4-5 | 200,000 tokens |
+| Gemini | gemini-3-flash-preview | 1,048,576 tokens |
+| OpenAI | gpt-4o-mini | 128,000 tokens |
+| Anthropic | claude-sonnet-4-5-20250514 | 200,000 tokens |
 
 - 典型的な論文（10-50ページ）: 約 10,000-50,000 tokens（全プロバイダーで十分収まる）
 - 超長文書（100ページ超）の場合: 警告ログを出力し、先頭 500,000 文字で切り捨て
@@ -741,8 +741,8 @@ class LLMConfig:
 
     # Supported providers and their default models
     PROVIDER_DEFAULTS: ClassVar[dict[str, str]] = {
-        "gemini": "gemini-3.0-flash",
-        "openai": "gpt-5-mini",
+        "gemini": "gemini-3-flash-preview",
+        "openai": "gpt-4o-mini",
         "anthropic": "claude-sonnet-4-5",
     }
 
@@ -758,7 +758,7 @@ class LLMConfig:
         """Get effective model name (resolves None to provider default)."""
         if self.model is not None:
             return self.model
-        return self.PROVIDER_DEFAULTS.get(self.provider, "gemini-3.0-flash")
+        return self.PROVIDER_DEFAULTS.get(self.provider, "gemini-3-flash-preview")
 
     @property
     def litellm_model(self) -> str:
@@ -848,8 +848,8 @@ class LLMSummaryGenerator:
     """Generate document summaries and extract metadata using LLM.
 
     Uses LiteLLM for unified access to multiple LLM providers:
-    - Gemini (default): gemini/gemini-3.0-flash
-    - OpenAI: openai/gpt-5-mini
+    - Gemini (default): gemini/gemini-3-flash-preview
+    - OpenAI: openai/gpt-4o-mini
     - Anthropic: anthropic/claude-sonnet-4-5
     """
 
@@ -948,7 +948,7 @@ First page content:
 **理由:**
 - **LiteLLM採用**: 100+プロバイダーを統一インターフェースで利用可能
 - **プロバイダー切り替え**: `provider` + `model` の組み合わせで任意のモデルを指定
-- **後方互換**: デフォルトは `gemini/gemini-3.0-flash`（既存設計と同じ動作）
+- **後方互換**: デフォルトは `gemini/gemini-3-flash-preview`（既存設計と同じ動作）
 - **要約生成**: 原文Markdown全文を使用（論文全体の文脈が必要）
 - **フォールバック**: 1ページ目のみ使用（メタデータは通常1ページ目に存在）
 - Gemini 3.0 Flash はコスト効率と速度のバランスが良い
@@ -1281,11 +1281,11 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --thumbnail-width
 uv run translate-pdf paper.pdf --save-intermediate --llm-summary
 
 # LLMプロバイダー・モデル選択
-uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider openai --llm-model gpt-5-mini
+uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider openai --llm-model gpt-4o-mini
 uv run translate-pdf paper.pdf --save-intermediate --llm-summary --llm-provider anthropic --llm-model claude-sonnet-4-5
 
-# LLMフォールバック無効化
-uv run translate-pdf paper.pdf --save-intermediate --no-llm-fallback
+# LLMフォールバック有効化（メタデータ抽出にLLMを使用）
+uv run translate-pdf paper.pdf --save-intermediate --llm-fallback
 
 # フル機能（Webサービス向け）
 uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
@@ -1300,16 +1300,16 @@ uv run translate-pdf paper.pdf --save-intermediate --thumbnail --llm-summary
 | `--llm-summary` | LLM要約生成を有効化 | 無効 |
 | `--llm-provider` | LLMプロバイダー (gemini, openai, anthropic, etc.) | gemini |
 | `--llm-model` | LLMモデル名（provider抜き）。省略時はproviderごとのデフォルトを使用 | (providerによる) |
-| `--no-llm-fallback` | LLMメタデータフォールバックを無効化 | 有効 |
+| `--llm-fallback` | LLMメタデータフォールバックを有効化 | 無効 |
 
 **モデル自動選択ルール:**
 - `--llm-model` を省略した場合、`--llm-provider` に応じてデフォルトモデルを自動選択
-- 例: `--llm-provider openai` → `gpt-5-mini` が自動設定
+- 例: `--llm-provider openai` → `gpt-4o-mini` が自動設定
 
 | --llm-provider | --llm-model 省略時のデフォルト |
 |----------------|------------------------------|
-| gemini | gemini-3.0-flash |
-| openai | gpt-5-mini |
+| gemini | gemini-3-flash-preview |
+| openai | gpt-4o-mini |
 | anthropic | claude-sonnet-4-5 |
 
 **環境変数:**
@@ -1325,8 +1325,8 @@ export ANTHROPIC_API_KEY="your-anthropic-key"  # Anthropic使用時
 
 | プロバイダー | --llm-provider | 主要モデル例 |
 |-------------|---------------|-------------|
-| Google Gemini | gemini | gemini-3.0-flash, gemini-1.5-pro |
-| OpenAI | openai | gpt-5-mini, gpt-4o |
+| Google Gemini | gemini | gemini-3-flash-preview, gemini-1.5-pro |
+| OpenAI | openai | gpt-4o-mini, gpt-4o |
 | Anthropic | anthropic | claude-sonnet-4-5 |
 | AWS Bedrock | bedrock | anthropic.claude-v2 |
 | Azure OpenAI | azure | gpt-4 |
@@ -1437,7 +1437,7 @@ llm = ["litellm>=1.80.0"]
 3. `--llm-summary` フラグ追加
 4. `--llm-provider` オプション追加（デフォルト: gemini）
 5. `--llm-model` オプション追加（省略時: providerごとのデフォルトを自動選択）
-6. `--no-llm-fallback` フラグ追加
+6. `--llm-fallback` フラグ追加
 7. プロバイダー対応APIキー環境変数読み取り（GEMINI_API_KEY, OPENAI_API_KEY, etc.）
 8. `PipelineConfig` への伝播
 
@@ -1464,7 +1464,7 @@ llm = ["litellm>=1.80.0"]
 | `src/pdf_translator/output/markdown_writer.py` | `use_translated` パラメータ追加 |
 | `src/pdf_translator/pipeline/translation_pipeline.py` | `TranslationResult.summary/markdown_original`, `PipelineConfig` LLM設定追加 |
 | `src/pdf_translator/output/translated_document.py` | `summary` セクション追加、原文Markdown保存 |
-| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--llm-provider`, `--llm-model`, `--no-llm-fallback` オプション追加 |
+| `src/pdf_translator/cli.py` | `--thumbnail`, `--llm-summary`, `--llm-provider`, `--llm-model`, `--llm-fallback` オプション追加 |
 | `pyproject.toml` | `[project.optional-dependencies]` に `llm = ["litellm>=1.80.0"]` 追加 |
 | `tests/test_document_summary.py` | **新規** - DocumentSummary テスト |
 | `tests/test_thumbnail_generator.py` | **新規** - サムネイル生成テスト |

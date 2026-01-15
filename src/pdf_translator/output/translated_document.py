@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from pdf_translator.core.models import Paragraph
+from pdf_translator.output.document_summary import DocumentSummary
 
 TRANSLATED_DOC_VERSION = "1.0.0"
 
@@ -69,6 +70,7 @@ class TranslatedDocument:
 
     metadata: TranslatedDocumentMetadata
     paragraphs: list[Paragraph]
+    summary: DocumentSummary | None = None
 
     def to_json(self, indent: int = 2) -> str:
         """Export to JSON string.
@@ -79,11 +81,13 @@ class TranslatedDocument:
         Returns:
             JSON string representation.
         """
-        data = {
+        data: dict[str, Any] = {
             "version": TRANSLATED_DOC_VERSION,
             "metadata": self.metadata.to_dict(),
-            "paragraphs": [p.to_dict() for p in self.paragraphs],
         }
+        if self.summary is not None:
+            data["summary"] = self.summary.to_dict()
+        data["paragraphs"] = [p.to_dict() for p in self.paragraphs]
         return json.dumps(data, indent=indent, ensure_ascii=False)
 
     def save(self, path: Path) -> None:
@@ -113,9 +117,13 @@ class TranslatedDocument:
             raise ValueError(
                 f"Unsupported version: {version} (expected {TRANSLATED_DOC_VERSION})"
             )
+        summary = None
+        if "summary" in data:
+            summary = DocumentSummary.from_dict(data["summary"])
         return cls(
             metadata=TranslatedDocumentMetadata.from_dict(data["metadata"]),
             paragraphs=[Paragraph.from_dict(p) for p in data["paragraphs"]],
+            summary=summary,
         )
 
     @classmethod
@@ -139,6 +147,7 @@ class TranslatedDocument:
         target_lang: str,
         translator_backend: str,
         total_pages: int,
+        summary: DocumentSummary | None = None,
     ) -> TranslatedDocument:
         """Create from pipeline result.
 
@@ -149,6 +158,7 @@ class TranslatedDocument:
             target_lang: Target language code.
             translator_backend: Translator backend name.
             total_pages: Total PDF page count (including empty pages).
+            summary: Optional document summary with metadata and thumbnail.
 
         Returns:
             TranslatedDocument instance.
@@ -168,4 +178,4 @@ class TranslatedDocument:
             paragraph_count=len(paragraphs),
             translated_count=translated_count,
         )
-        return cls(metadata=metadata, paragraphs=paragraphs)
+        return cls(metadata=metadata, paragraphs=paragraphs, summary=summary)
