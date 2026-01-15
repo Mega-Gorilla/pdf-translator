@@ -255,7 +255,7 @@ class TranslationPipeline:
         translation_document: TranslationDocument | None = None
         if self._config.save_intermediate:
             base_document, translation_document = self._create_documents(
-                paragraphs, pdf_path, base_summary, translated_summary
+                paragraphs, pdf_path, output_path, base_summary, translated_summary
             )
 
         if output_path is not None:
@@ -795,6 +795,7 @@ class TranslationPipeline:
         self,
         paragraphs: list[Paragraph],
         pdf_path: Path,
+        output_path: Path | None,
         base_summary: BaseSummary | None,
         translated_summary: TranslatedSummary | None,
     ) -> tuple[BaseDocument, TranslationDocument]:
@@ -803,6 +804,7 @@ class TranslationPipeline:
         Args:
             paragraphs: List of translated paragraphs.
             pdf_path: Path to the source PDF.
+            output_path: Output path for the translated PDF.
             base_summary: Base summary with original language content.
             translated_summary: Translated summary.
 
@@ -811,6 +813,17 @@ class TranslationPipeline:
         """
         # Get translator backend name
         backend_name = type(self._translator).__name__.replace("Translator", "").lower()
+
+        # Calculate base_stem from output_path to ensure consistency
+        # with the actual saved file names in _save_intermediate
+        if output_path is not None:
+            base_stem = output_path.stem
+            # Remove language suffix if present (e.g., "paper.ja" -> "paper")
+            if "." in base_stem:
+                base_stem = base_stem.rsplit(".", 1)[0]
+        else:
+            # Fallback to pdf_path.stem if no output_path
+            base_stem = pdf_path.stem
 
         # Create metadata
         metadata = BaseDocumentMetadata(
@@ -837,7 +850,7 @@ class TranslationPipeline:
         translation_document = TranslationDocument.from_pipeline_result(
             paragraphs=trans_paragraphs,
             target_lang=self._config.target_lang,
-            base_file=f"{pdf_path.stem}.json",
+            base_file=f"{base_stem}.json",
             translator_backend=backend_name,
             summary=translated_summary,
         )

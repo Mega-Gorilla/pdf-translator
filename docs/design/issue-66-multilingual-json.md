@@ -202,13 +202,16 @@ class TranslationDocument:
 PDF → レイアウト解析 → 翻訳 → BaseDocument + TranslationDocument 出力
 ```
 
-### 追加翻訳（--base-file）
+### 追加翻訳（--base-file）【将来対応】
+
+> **Note**: `--base-file` オプションは将来のPRで実装予定です。
+> 本PRでは基本構造（BaseDocument + TranslationDocument）の実装のみを行います。
 
 ```
 PDF + 既存BaseDocument → 翻訳のみ → TranslationDocument 出力
 ```
 
-**--base-file 処理:**
+**--base-file 処理（将来実装時）:**
 
 | 処理 | 通常 | --base-file |
 |------|------|-------------|
