@@ -5,6 +5,12 @@ This module provides output format support including Markdown generation,
 image extraction, and table extraction.
 """
 
+from pdf_translator.output.base_document import (
+    BaseDocument,
+    BaseDocumentMetadata,
+)
+from pdf_translator.output.base_document_writer import BaseDocumentWriter
+from pdf_translator.output.base_summary import BaseSummary
 from pdf_translator.output.image_extractor import (
     ExtractedImage,
     ImageExtractionConfig,
@@ -19,6 +25,7 @@ from pdf_translator.output.markdown_writer import (
     MarkdownOutputMode,
     MarkdownWriter,
 )
+from pdf_translator.output.summary_extractor import SummaryExtractor
 from pdf_translator.output.table_extractor import (
     ExtractedTable,
     TableCell,
@@ -26,16 +33,21 @@ from pdf_translator.output.table_extractor import (
     TableExtractionError,
     TableExtractor,
 )
-from pdf_translator.output.translated_document import (
-    TRANSLATED_DOC_VERSION,
-    TranslatedDocument,
-    TranslatedDocumentMetadata,
-)
-from pdf_translator.output.document_summary import DocumentSummary
 from pdf_translator.output.thumbnail_generator import ThumbnailConfig, ThumbnailGenerator
-from pdf_translator.output.summary_extractor import SummaryExtractor
+from pdf_translator.output.translated_summary import TranslatedSummary
+from pdf_translator.output.translation_document import (
+    SCHEMA_VERSION,
+    TranslationDocument,
+)
+from pdf_translator.output.translation_writer import TranslationWriter
 
 __all__ = [
+    # Base document
+    "BaseDocument",
+    "BaseDocumentMetadata",
+    "BaseDocumentWriter",
+    # Base summary
+    "BaseSummary",
     # Image extractor
     "ImageExtractor",
     "ImageExtractionConfig",
@@ -54,12 +66,12 @@ __all__ = [
     "DEFAULT_CATEGORY_MAPPING",
     "DEFAULT_MARKDOWN_SKIP_CATEGORIES",
     "DEFAULT_NONE_CATEGORY_MAPPING",
-    # Translated document
-    "TRANSLATED_DOC_VERSION",
-    "TranslatedDocument",
-    "TranslatedDocumentMetadata",
-    # Document summary
-    "DocumentSummary",
+    # Translation document
+    "SCHEMA_VERSION",
+    "TranslationDocument",
+    "TranslationWriter",
+    # Translated summary
+    "TranslatedSummary",
     # Thumbnail generator
     "ThumbnailConfig",
     "ThumbnailGenerator",

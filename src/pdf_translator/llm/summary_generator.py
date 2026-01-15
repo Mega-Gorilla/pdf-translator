@@ -19,12 +19,48 @@ class LLMSummaryGenerator:
     - Gemini (default): gemini/gemini-3-flash-preview
     - OpenAI: openai/gpt-4o-mini
     - Anthropic: anthropic/claude-sonnet-4-5-20250514
+
+    Supports multilingual summary generation via target_lang parameter.
     """
+
+    # Language code to language name mapping for common languages
+    LANGUAGE_NAMES: dict[str, str] = {
+        "en": "English",
+        "ja": "Japanese",
+        "zh": "Chinese",
+        "ko": "Korean",
+        "de": "German",
+        "fr": "French",
+        "es": "Spanish",
+        "it": "Italian",
+        "pt": "Portuguese",
+        "ru": "Russian",
+        "ar": "Arabic",
+        "hi": "Hindi",
+        "th": "Thai",
+        "vi": "Vietnamese",
+        "id": "Indonesian",
+        "ms": "Malay",
+        "nl": "Dutch",
+        "pl": "Polish",
+        "tr": "Turkish",
+        "uk": "Ukrainian",
+    }
 
     SUMMARY_PROMPT = """Summarize this academic paper in 3-5 sentences, covering:
 - Main research objective
 - Key methodology
 - Important findings/conclusions
+
+Paper content:
+{content}"""
+
+    SUMMARY_PROMPT_WITH_LANG = """Summarize this academic paper in {language} in 3-5 sentences, covering:
+- Main research objective
+- Key methodology
+- Important findings/conclusions
+
+Write the summary in {language}.
 
 Paper content:
 {content}"""
@@ -54,14 +90,17 @@ First page content:
     async def generate_summary(
         self,
         markdown_content: str,
+        target_lang: str | None = None,
     ) -> str | None:
         """Generate summary from original Markdown content.
 
         Args:
             markdown_content: Full original Markdown (images excluded).
+            target_lang: Target language code for summary output.
+                If None, generates summary in original paper's language.
 
         Returns:
-            Summary text in original language, or None if disabled/failed.
+            Summary text in target language, or None if disabled/failed.
         """
         if not self._config.use_summary or not self._client:
             return None
@@ -76,7 +115,14 @@ First page content:
             )
             content = content[:500_000]
 
-        prompt = self.SUMMARY_PROMPT.format(content=content)
+        # Use language-specific prompt if target_lang is specified
+        if target_lang:
+            language = self.LANGUAGE_NAMES.get(target_lang, target_lang)
+            prompt = self.SUMMARY_PROMPT_WITH_LANG.format(
+                language=language, content=content
+            )
+        else:
+            prompt = self.SUMMARY_PROMPT.format(content=content)
 
         try:
             return await self._client.generate(prompt)
