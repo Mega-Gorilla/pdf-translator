@@ -611,3 +611,128 @@ class TestCreateDocumentsBaseFile:
             with trans_json_path.open() as f:
                 trans_data = json.load(f)
             assert trans_data["base_file"] == "custom_output.json"
+
+
+class TestMarkdownOutputGeneratesOriginal:
+    """Test that markdown_output=True generates original Markdown."""
+
+    def _create_mock_translator(self) -> MagicMock:
+        """Create a properly configured mock translator."""
+        mock_translator = MagicMock()
+        mock_translator.__class__.__name__ = "GoogleTranslator"
+        mock_translator.max_text_length = None
+        mock_translator.translate_batch = AsyncMock(return_value=["翻訳されたテキスト"])
+        mock_translator.translate = AsyncMock(return_value="翻訳されたテキスト")
+        mock_translator.max_batch_tokens = None
+        mock_translator.count_tokens = None
+        return mock_translator
+
+    @pytest.mark.asyncio
+    async def test_markdown_output_generates_original_markdown(self) -> None:
+        """Test markdown_output=True generates original Markdown content."""
+        mock_translator = self._create_mock_translator()
+
+        config = PipelineConfig(
+            markdown_output=True,
+            source_lang="en",
+            target_lang="ja",
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+
+        test_paragraph = Paragraph(
+            id="test_1",
+            page_number=0,
+            text="Original text",
+            block_bbox=BBox(10, 10, 200, 50),
+            line_count=1,
+            category="text",
+        )
+
+        with (
+            patch(
+                "pdf_translator.pipeline.translation_pipeline.ParagraphExtractor"
+            ) as mock_extractor,
+            patch(
+                "pdf_translator.pipeline.translation_pipeline.PDFProcessor"
+            ) as mock_processor,
+            patch.object(pipeline._analyzer, "analyze_all", return_value={}),
+            tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f,
+        ):
+            f.write(b"%PDF-1.4 dummy")
+            f.flush()
+            pdf_path = Path(f.name)
+
+            mock_extractor.extract_from_pdf.return_value = [test_paragraph]
+
+            mock_proc_instance = MagicMock()
+            mock_proc_instance.page_count = 1
+            mock_proc_instance.to_bytes.return_value = b"translated pdf"
+            mock_proc_instance.__enter__ = MagicMock(return_value=mock_proc_instance)
+            mock_proc_instance.__exit__ = MagicMock(return_value=False)
+            mock_processor.return_value = mock_proc_instance
+
+            result = await pipeline.translate(pdf_path)
+
+            # Both translated and original markdown should be generated
+            assert result.markdown is not None
+            assert result.markdown_original is not None
+            # Original should contain original text
+            assert "Original text" in result.markdown_original
+
+            pdf_path.unlink(missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_markdown_output_saves_original_file(self) -> None:
+        """Test markdown_output=True saves original Markdown file."""
+        mock_translator = self._create_mock_translator()
+
+        config = PipelineConfig(
+            markdown_output=True,
+            source_lang="en",
+            target_lang="ja",
+        )
+        pipeline = TranslationPipeline(mock_translator, config)
+
+        test_paragraph = Paragraph(
+            id="test_1",
+            page_number=0,
+            text="Original text for file",
+            block_bbox=BBox(10, 10, 200, 50),
+            line_count=1,
+            category="text",
+        )
+
+        with (
+            patch(
+                "pdf_translator.pipeline.translation_pipeline.ParagraphExtractor"
+            ) as mock_extractor,
+            patch(
+                "pdf_translator.pipeline.translation_pipeline.PDFProcessor"
+            ) as mock_processor,
+            patch.object(pipeline._analyzer, "analyze_all", return_value={}),
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            pdf_path = Path(tmpdir) / "test.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 dummy")
+            output_path = Path(tmpdir) / "test.ja.pdf"
+
+            mock_extractor.extract_from_pdf.return_value = [test_paragraph]
+
+            mock_proc_instance = MagicMock()
+            mock_proc_instance.page_count = 1
+            mock_proc_instance.to_bytes.return_value = b"translated pdf"
+            mock_proc_instance.__enter__ = MagicMock(return_value=mock_proc_instance)
+            mock_proc_instance.__exit__ = MagicMock(return_value=False)
+            mock_processor.return_value = mock_proc_instance
+
+            await pipeline.translate(pdf_path, output_path)
+
+            # Check original Markdown file was saved (test.md)
+            original_md_path = Path(tmpdir) / "test.md"
+            assert original_md_path.exists(), "Original Markdown file should be created"
+            original_content = original_md_path.read_text()
+            assert "Original text for file" in original_content
+
+            # Also check translated Markdown file was saved (test.ja.md)
+            translated_md_path = Path(tmpdir) / "test.ja.md"
+            assert translated_md_path.exists(), "Translated Markdown file should be created"

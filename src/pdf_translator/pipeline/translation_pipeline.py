@@ -236,8 +236,13 @@ class TranslationPipeline:
                 paragraphs, pdf_path, layout_blocks, output_path
             )
 
-        # Generate original Markdown for LLM summary (even without --markdown flag)
-        if self._config.llm_summary:
+        # Generate original Markdown when markdown_output is enabled
+        if self._config.markdown_output:
+            markdown_original = self._stage_markdown(
+                paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
+            )
+        # Also generate for LLM summary (even without --markdown flag)
+        elif self._config.llm_summary:
             markdown_original = self._stage_markdown(
                 paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
             )
