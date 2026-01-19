@@ -232,12 +232,28 @@ class TranslationPipeline:
         markdown_str: str | None = None
         markdown_original: str | None = None
         if self._config.markdown_output:
-            markdown_str = self._stage_markdown(
-                paragraphs, pdf_path, layout_blocks, output_path
+            # Extract images/tables once for reuse
+            extracted_images, extracted_tables = self._extract_images_and_tables(
+                pdf_path, layout_blocks, output_path
             )
-
-        # Generate original Markdown for LLM summary (even without --markdown flag)
-        if self._config.llm_summary:
+            # Generate translated Markdown (notify=False, we notify once at the end)
+            markdown_str = self._stage_markdown(
+                paragraphs, pdf_path, layout_blocks, output_path,
+                use_translated=True,
+                extracted_images=extracted_images,
+                extracted_tables=extracted_tables,
+                notify=False,
+            )
+            # Generate original Markdown (reuse extracted assets, notify once for both)
+            markdown_original = self._stage_markdown(
+                paragraphs, pdf_path, layout_blocks, output_path,
+                use_translated=False,
+                extracted_images=extracted_images,
+                extracted_tables=extracted_tables,
+                notify=True,
+            )
+        elif self._config.llm_summary:
+            # Generate original Markdown for LLM summary (even without --markdown flag)
             markdown_original = self._stage_markdown(
                 paragraphs, pdf_path, layout_blocks, output_path, use_translated=False
             )
@@ -565,25 +581,21 @@ class TranslationPipeline:
         self._notify("side_by_side", 1, 1)
         return result
 
-    def _stage_markdown(
+    def _extract_images_and_tables(
         self,
-        paragraphs: list[Paragraph],
         pdf_path: Path,
         layout_blocks: dict[int, list[LayoutBlock]],
         output_path: Path | None,
-        use_translated: bool = True,
-    ) -> str:
-        """Generate Markdown output from translated paragraphs.
+    ) -> tuple[list[ExtractedImage], list[ExtractedTable]]:
+        """Extract images and tables from PDF.
 
         Args:
-            paragraphs: List of translated paragraphs.
-            pdf_path: Path to the source PDF (for metadata).
+            pdf_path: Path to the source PDF.
             layout_blocks: Layout blocks per page (for image/table extraction).
             output_path: Output path for images directory.
-            use_translated: If True, use translated text. If False, use original text.
 
         Returns:
-            Markdown string.
+            Tuple of (extracted_images, extracted_tables).
         """
         extracted_images: list[ExtractedImage] = []
         extracted_tables: list[ExtractedTable] = []
@@ -645,6 +657,40 @@ class TranslationPipeline:
 
             self._notify("extract_tables", len(extracted_tables), len(extracted_tables))
 
+        return extracted_images, extracted_tables
+
+    def _stage_markdown(
+        self,
+        paragraphs: list[Paragraph],
+        pdf_path: Path,
+        layout_blocks: dict[int, list[LayoutBlock]],
+        output_path: Path | None,
+        use_translated: bool = True,
+        extracted_images: list[ExtractedImage] | None = None,
+        extracted_tables: list[ExtractedTable] | None = None,
+        notify: bool = True,
+    ) -> str:
+        """Generate Markdown output from translated paragraphs.
+
+        Args:
+            paragraphs: List of translated paragraphs.
+            pdf_path: Path to the source PDF (for metadata).
+            layout_blocks: Layout blocks per page (for image/table extraction).
+            output_path: Output path for images directory.
+            use_translated: If True, use translated text. If False, use original text.
+            extracted_images: Pre-extracted images (to avoid re-extraction).
+            extracted_tables: Pre-extracted tables (to avoid re-extraction).
+            notify: If True, send progress notification. Set False to avoid duplicates.
+
+        Returns:
+            Markdown string.
+        """
+        # Use provided images/tables or extract them
+        if extracted_images is None or extracted_tables is None:
+            extracted_images, extracted_tables = self._extract_images_and_tables(
+                pdf_path, layout_blocks, output_path
+            )
+
         # Generate Markdown
         config = MarkdownConfig(
             output_mode=self._config.markdown_mode,
@@ -660,7 +706,8 @@ class TranslationPipeline:
         markdown = writer.write(
             paragraphs, extracted_images, extracted_tables, use_translated
         )
-        self._notify("markdown", 1, 1)
+        if notify:
+            self._notify("markdown", 1, 1)
         return markdown
 
     async def _stage_summary(
