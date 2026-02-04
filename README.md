@@ -1,6 +1,7 @@
 # PDF Translator
 
-レイアウトを保持したままPDFを翻訳するツールです。Markdown、PDF、JSONを出力します。
+レイアウトを保持したまま論文PDFを翻訳するツールです。Markdown、PDF、JSONを出力します。
+※論文翻訳での使用を前提として開発されています。
 
 ## 機能
 
